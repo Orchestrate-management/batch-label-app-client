@@ -1,7 +1,8 @@
-import React from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { AppShell } from './components/AppShell';
+import { AuthProvider, RequireAuth } from './lib/auth';
+import { EntitlementProvider } from './lib/entitlement';
 import { WorkspaceProvider } from './lib/workspace';
 import { Studio } from './pages/Studio';
 import { Materials } from './pages/Materials';
@@ -11,7 +12,27 @@ import { ArtefactDesigner } from './pages/ArtefactDesigner';
 import { Records } from './pages/Records';
 import { Settings } from './pages/Settings';
 
+/**
+ * Nothing in this app is public.
+ *
+ * RequireAuth wraps everything, including the shell, so there is no route — not
+ * even a 404 — that renders product data without a session. The entitlement read
+ * sits inside it because it is a query for a specific signed-in user and there is
+ * nothing to ask before we have one.
+ */
 export function App() {
+  return (
+    <AuthProvider>
+      <RequireAuth>
+        <EntitlementProvider>
+          <AppRoutes />
+        </EntitlementProvider>
+      </RequireAuth>
+    </AuthProvider>);
+
+}
+
+function AppRoutes() {
   return (
     <WorkspaceProvider>
       <BrowserRouter>
@@ -45,7 +66,7 @@ export function App() {
               border: '1px solid rgb(var(--paper-line))',
               borderRadius: '0.875rem',
               color: 'rgb(var(--ink))',
-              fontFamily: 'Inter, sans-serif'
+              fontFamily: '"IBM Plex Sans", sans-serif'
             }
           }} />
         
