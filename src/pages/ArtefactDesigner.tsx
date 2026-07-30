@@ -234,7 +234,7 @@ export function ArtefactDesigner() {
                     value={fontPt}
                     onChange={(event) => setFontPt(Number(event.target.value))}
                     aria-label="Font size in points"
-                    className="h-1.5 w-full appearance-none rounded-full bg-paper-line accent-[#1A6A62]" />
+                    className="h-1.5 w-full appearance-none rounded-full bg-paper-line accent-teal" />
                   
                   <span className="tabular w-12 text-right text-sm text-ink">{fontPt} pt</span>
                 </div>
@@ -249,7 +249,7 @@ export function ArtefactDesigner() {
                     value={lineSpacing}
                     onChange={(event) => setLineSpacing(Number(event.target.value))}
                     aria-label="Line spacing"
-                    className="h-1.5 w-full appearance-none rounded-full bg-paper-line accent-[#1A6A62]" />
+                    className="h-1.5 w-full appearance-none rounded-full bg-paper-line accent-teal" />
                   
                   <span className="tabular w-12 text-right text-sm text-ink">
                     {lineSpacing.toFixed(2)}
@@ -289,7 +289,7 @@ export function ArtefactDesigner() {
                   onChange={(event) =>
                   setHidden((prev) => ({ ...prev, [block.key]: !event.target.checked }))
                   }
-                  className="h-4 w-4 flex-none accent-[#1A6A62] disabled:opacity-40" />
+                  className="h-4 w-4 flex-none accent-teal disabled:opacity-40" />
                 
                 </li>
               )}
@@ -460,13 +460,13 @@ function Ruler({
               {
                 width: '0.2mm',
                 height: major ? '3mm' : '1.6mm',
-                background: '#5F6E6A',
+                background: 'rgb(var(--ink-tertiary))',
                 opacity: major ? 0.6 : 0.35
               } :
               {
                 height: '0.2mm',
                 width: major ? '3mm' : '1.6mm',
-                background: '#5F6E6A',
+                background: 'rgb(var(--ink-tertiary))',
                 opacity: major ? 0.6 : 0.35
               }
               } />

@@ -501,7 +501,7 @@ function PreferencesTab() {
               type="checkbox"
               checked={enabledCategories.includes(category.id)}
               onChange={() => toggleCategory(category.id)}
-              className="h-4 w-4 flex-none accent-[#1A6A62]" />
+              className="h-4 w-4 flex-none accent-teal" />
             
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-ink">{category.name}</p>
