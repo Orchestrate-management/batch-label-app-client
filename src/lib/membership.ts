@@ -84,8 +84,13 @@ function text(value: unknown): string | null {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
 }
 
+/**
+ * Normalises a column before comparing it. Trims as well as lower-cases:
+ * readMembershipRow already trims what it reads, but mapEntitlement is a public
+ * pure function and must not depend on having been fed by it.
+ */
 function key(value: string | null): string {
-  return (value ?? '').toLowerCase();
+  return (value ?? '').trim().toLowerCase();
 }
 
 /** Tolerant reader: anything unexpected becomes null rather than throwing. */

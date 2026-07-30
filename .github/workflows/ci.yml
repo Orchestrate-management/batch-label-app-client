@@ -1,0 +1,53 @@
+name: CI
+
+# The full quality gate on every push and every pull request. `vercel-build`
+# runs typecheck and the tests too, so a red suite cannot reach production even
+# if this workflow is skipped.
+on:
+  push:
+  pull_request:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint, typecheck, test & build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Test (with coverage)
+        run: npm run test:coverage
+
+      # No environment is set here on purpose. The build must not need Supabase
+      # credentials — they are read at runtime from import.meta.env, and a build
+      # that silently baked in a key would be a worse problem than a red build.
+      - name: Build
+        run: npx vite build
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: ignore
