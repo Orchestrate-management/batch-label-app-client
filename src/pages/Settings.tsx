@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { NavLink, useParams } from 'react-router-dom';
 import { CheckIcon, PhoneIcon, PlusIcon } from 'lucide-react';
 import { toast } from 'sonner';
@@ -60,8 +60,6 @@ const TABS = [
   'Small, reversible choices. Which categories are switched on, and what the export defaults to.'
 }] as
 const;
-
-type TabId = (typeof TABS)[number]['id'];
 
 /**
  * Ordered by consequence: what prints first, small reversible choices last.

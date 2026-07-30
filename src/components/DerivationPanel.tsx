@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { ChevronRightIcon, TriangleAlertIcon } from 'lucide-react';
 import { Derivation, DerivedItem, WhyLine } from '../lib/derive';
 import { regimeById } from '../lib/regimes';

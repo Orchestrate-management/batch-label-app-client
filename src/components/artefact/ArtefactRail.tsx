@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { ChevronUpIcon, RulerIcon } from 'lucide-react';
 import { ArtefactInstance, Market, Product } from '../../lib/model';
 import { Derivation, clpMinimumDimensions } from '../../lib/derive';
