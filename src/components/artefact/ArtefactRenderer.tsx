@@ -1,4 +1,3 @@
-import React from 'react';
 import { ArtefactInstance, Market, Product } from '../../lib/model';
 import { Derivation } from '../../lib/derive';
 import { BUSINESS, addressForMarket } from '../../lib/products';

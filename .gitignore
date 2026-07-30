@@ -10,7 +10,13 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+coverage
 *.local
+
+# Environment. .env.example is the documented template and IS committed.
+.env
+.env.*
+!.env.example
 
 # Editor directories and files
 .vscode/*

@@ -506,7 +506,7 @@ function MixtureEditor({
             value={spec.load}
             onChange={(event) => set('load', Number(event.target.value))}
             aria-label="Fragrance load percentage"
-            className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-paper-line accent-[#1A6A62]" />
+            className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-paper-line accent-teal" />
           
           <p className="mt-2 text-2xs text-ink-tertiary">
             IFRA category 12 maximum for this oil is{' '}

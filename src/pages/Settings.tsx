@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { NavLink, useParams } from 'react-router-dom';
-import { CheckIcon, PhoneIcon, PlusIcon } from 'lucide-react';
+import { CheckIcon, ExternalLinkIcon, PhoneIcon, PlusIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '../components/AppShell';
+import { PlanNotice } from '../components/PlanNotice';
 import {
   Button,
   Callout,
@@ -20,13 +21,14 @@ import {
   BUSINESS,
   CATEGORIES,
   COMPETENT_PERSON,
-  INVOICES,
   PLANS,
   STOCK,
-  TEAM,
-  planById } from
+  TEAM } from
 '../lib/products';
-import { TeamMember, formatDate } from '../lib/model';
+import { TeamMember } from '../lib/model';
+import { useEntitlement } from '../lib/entitlement';
+import { entitlementMessage, planLabel } from '../lib/membership';
+import { ACCOUNT_URL, PRICING_URL } from '../lib/marketing';
 import { regimeById } from '../lib/regimes';
 import { useProducts, useWorkspace } from '../lib/workspace';
 
@@ -60,8 +62,6 @@ const TABS = [
   'Small, reversible choices. Which categories are switched on, and what the export defaults to.'
 }] as
 const;
-
-type TabId = (typeof TABS)[number]['id'];
 
 /**
  * Ordered by consequence: what prints first, small reversible choices last.
@@ -338,38 +338,105 @@ function TeamTab() {
 
 /* --------------------------------------------------------------- billing */
 
+/**
+ * The one screen in this app that reads a real server-side fact.
+ *
+ * Everything shown here comes from the maker's brand_memberships row, which is
+ * written only by the marketing site's Stripe webhook under the service role.
+ * This client cannot write it — RLS grants SELECT on your own row and no INSERT
+ * or UPDATE to anyone — so there is nothing here that changes a plan, only
+ * things that link to where a plan can be changed.
+ *
+ * The card on file, the invoice history and the plan switcher that used to live
+ * here were stubs. They have gone rather than been left looking real next to a
+ * genuine plan status: a fake "Visa ending 4417" beside a true "past due" is
+ * worse than no payment section at all. Both now link to www, where the actual
+ * Stripe customer portal is.
+ */
 function BillingTab() {
   const products = useProducts();
-  const plan = planById(BILLING.planId);
+  const entitlement = useEntitlement();
+
+  // The stub plans still describe what each tier includes, so we use them for
+  // the product allowance when the plan we were given matches one. An unknown
+  // plan key (a new tier added in Stripe before this app knows about it) shows
+  // usage without a ceiling rather than inventing one.
+  const knownPlan = PLANS.find((option) => option.id === entitlement.plan) ?? null;
   const used = products.length;
-  const pct = Math.min(100, Math.round(used / plan.productLimit * 100));
+  const pct = knownPlan ? Math.min(100, Math.round(used / knownPlan.productLimit * 100)) : 0;
+
+  const statusTone =
+  entitlement.status === 'active' ?
+  'good' :
+  entitlement.status === 'free' || entitlement.status === 'no_membership' ?
+  'neutral' :
+  'warn';
 
   return (
     <>
+      <section aria-labelledby="plan-heading">
+        <SectionTitle className="mb-3">
+          <span id="plan-heading">Plan</span>
+        </SectionTitle>
+        <Card className="px-5 py-5">
+          {entitlement.loading ?
+          <p className="text-sm text-ink-secondary">Checking your plan…</p> :
+
+          <>
+              <div className="flex flex-wrap items-baseline justify-between gap-3">
+                <p className="font-display text-base font-medium text-ink">
+                  {planLabel(entitlement)}
+                </p>
+                <Pill tone={statusTone}>
+                  {entitlement.status === 'active' &&
+                <CheckIcon className="h-3 w-3" strokeWidth={1.5} aria-hidden="true" />
+                }
+                  {entitlement.planStatus ?? entitlement.status.replace(/_/g, ' ')}
+                </Pill>
+              </div>
+              <p className="mt-2 max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
+                {entitlementMessage(entitlement)}
+              </p>
+              {entitlement.businessName &&
+            <p className="mt-3 text-2xs text-ink-tertiary">
+                  Billed as {entitlement.businessName}
+                </p>
+            }
+            </>
+          }
+        </Card>
+        <PlanNotice className="mt-4" feature="Exporting a finished artefact" />
+      </section>
+
       <section aria-labelledby="usage-heading">
         <SectionTitle className="mb-3">
           <span id="usage-heading">Usage</span>
         </SectionTitle>
         <Card className="px-5 py-5">
-          <div className="flex flex-wrap items-baseline justify-between gap-3">
-            <p className="text-sm text-ink">
-              <span className="tabular font-medium">{used}</span> of{' '}
-              <span className="tabular">{plan.productLimit}</span> products on {plan.name}
-            </p>
-            <p className="tabular text-2xs text-ink-tertiary">
-              Renews {formatDate(BILLING.renews)}
-            </p>
-          </div>
+          <p className="text-sm text-ink">
+            <span className="tabular font-medium">{used}</span>
+            {knownPlan ?
+            <>
+                {' of '}
+                <span className="tabular">{knownPlan.productLimit}</span> products on{' '}
+                {knownPlan.name}
+              </> :
+
+            <> products</>
+            }
+          </p>
+          {knownPlan &&
           <div
             className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-paper-line"
             role="progressbar"
             aria-valuenow={used}
             aria-valuemin={0}
-            aria-valuemax={plan.productLimit}
+            aria-valuemax={knownPlan.productLimit}
             aria-label="Products used">
-            
-            <div className="h-full rounded-full bg-teal" style={{ width: `${pct}%` }} />
-          </div>
+
+              <div className="h-full rounded-full bg-teal" style={{ width: `${pct}%` }} />
+            </div>
+          }
           <p className="mt-3 max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
             Reading supplier documents is never metered, on any plan. At the limit you can keep
             working on existing products but cannot create a new one until you move up a plan.
@@ -377,109 +444,31 @@ function BillingTab() {
         </Card>
       </section>
 
-      <section aria-labelledby="plan-heading">
+      <section aria-labelledby="manage-heading">
         <SectionTitle className="mb-3">
-          <span id="plan-heading">Plan</span>
+          <span id="manage-heading">Payment and invoices</span>
         </SectionTitle>
-        <div className="grid gap-4 lg:grid-cols-3">
-          {PLANS.map((option) => {
-            const current = option.id === plan.id;
-            return (
-              <Card
-                key={option.id}
-                className={`px-5 py-5 ${current ? 'border-teal bg-teal-tint' : ''}`}>
-                
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-display text-base font-medium text-ink">{option.name}</p>
-                    <p className="tabular mt-0.5 text-2xs text-ink-tertiary">
-                      £{option.monthly} a month · up to {option.productLimit} products
-                    </p>
-                  </div>
-                  {current &&
-                  <Pill tone="good">
-                      <CheckIcon className="h-3 w-3" strokeWidth={1.5} aria-hidden="true" />
-                      Current
-                    </Pill>
-                  }
-                </div>
-                <p className="mt-3 max-w-prose text-2xs leading-relaxed text-ink-secondary">
-                  {option.blurb}
-                </p>
-                {!current &&
-                <div className="mt-4">
-                    <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => toast(`Moved to ${option.name}`)}>
-                    
-                      {option.productLimit > plan.productLimit ? 'Move up' : 'Move down'}
-                    </Button>
-                  </div>
-                }
-              </Card>);
+        <Card className="px-5 py-5">
+          <p className="max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
+            Your card, your invoices, your VAT details and cancelling all live on batchlabel.xyz,
+            in the same place you set up the account. Changing your plan there updates this app
+            the moment the payment goes through — there is nothing to do here afterwards.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <a
+              href={ACCOUNT_URL}
+              className="inline-flex h-9 items-center gap-2 rounded-control bg-teal px-3 text-[0.8125rem] font-medium text-white transition-colors hover:bg-teal-hover">
 
-          })}
-        </div>
-      </section>
+              Manage billing
+              <ExternalLinkIcon className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
+            </a>
+            <a
+              href={PRICING_URL}
+              className="inline-flex h-9 items-center gap-2 rounded-control border border-paper-line bg-paper px-3 text-[0.8125rem] font-medium text-ink transition-colors hover:bg-paper-panel">
 
-      <section aria-labelledby="payment-heading">
-        <SectionTitle className="mb-3">
-          <span id="payment-heading">Payment</span>
-        </SectionTitle>
-        <Card className="grid gap-5 px-5 py-5 md:grid-cols-2">
-          <div>
-            <p className="mb-1.5 text-[0.8125rem] font-medium text-ink-secondary">Card on file</p>
-            <p className="tabular text-sm text-ink">
-              {BILLING.card.brand} ending {BILLING.card.last4}
-            </p>
-            <p className="tabular mt-0.5 text-2xs text-ink-tertiary">
-              Expires {BILLING.card.expires}
-            </p>
-            <div className="mt-3">
-              <Button size="sm" variant="secondary" onClick={() => toast('Card updated')}>
-                Update card
-              </Button>
-            </div>
-          </div>
-          <Field label="Billing email" hint="Invoices and receipts go here.">
-            <Input defaultValue={BILLING.billingEmail} />
-          </Field>
-        </Card>
-      </section>
-
-      <section aria-labelledby="invoices-heading">
-        <SectionTitle className="mb-3">
-          <span id="invoices-heading">Invoices</span>
-        </SectionTitle>
-        <Card className="overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px] text-left text-sm">
-              <thead>
-                <tr className="border-b border-paper-line bg-paper-panel/60 text-2xs uppercase tracking-[0.1em] text-ink-tertiary">
-                  <th scope="col" className="px-5 py-3 font-medium">Invoice</th>
-                  <th scope="col" className="px-5 py-3 font-medium">Date</th>
-                  <th scope="col" className="px-5 py-3 font-medium">Amount</th>
-                  <th scope="col" className="px-5 py-3 font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {INVOICES.map((invoice) =>
-                <tr key={invoice.id} className="border-b border-paper-line last:border-0">
-                    <td className="tabular px-5 py-3.5 text-ink">{invoice.number}</td>
-                    <td className="tabular px-5 py-3.5 text-ink-secondary">
-                      {formatDate(invoice.date)}
-                    </td>
-                    <td className="tabular px-5 py-3.5 text-ink-secondary">£{invoice.amount}</td>
-                    <td className="px-5 py-3.5">
-                      <Pill tone={invoice.status === 'Paid' ? 'good' : 'warn'}>
-                        {invoice.status}
-                      </Pill>
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+              Compare plans
+              <ExternalLinkIcon className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
+            </a>
           </div>
         </Card>
       </section>
@@ -512,7 +501,7 @@ function PreferencesTab() {
               type="checkbox"
               checked={enabledCategories.includes(category.id)}
               onChange={() => toggleCategory(category.id)}
-              className="h-4 w-4 flex-none accent-[#1A6A62]" />
+              className="h-4 w-4 flex-none accent-teal" />
             
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-ink">{category.name}</p>

@@ -1,4 +1,3 @@
-import React from 'react';
 import { Link } from 'react-router-dom';
 import { CheckIcon, ChevronRightIcon, CircleIcon } from 'lucide-react';
 import { Stage } from '../lib/pipeline';

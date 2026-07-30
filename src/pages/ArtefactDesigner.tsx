@@ -9,7 +9,9 @@ import {
 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '../components/AppShell';
+import { PlanNotice } from '../components/PlanNotice';
 import { Button, Card, Field, Pill, SectionTitle, Select } from '../components/ui/Primitives';
+import { useEntitlement } from '../lib/entitlement';
 import { ArtefactRenderer } from '../components/artefact/ArtefactRenderer';
 import { ArtefactType, Market } from '../lib/model';
 import {
@@ -34,6 +36,23 @@ import { useCategorySurface } from '../lib/workspace';
 export function ArtefactDesigner() {
   const { productId, artefactType } = useParams();
   const navigate = useNavigate();
+
+  /**
+   * The export is the paid line.
+   *
+   * Everything up to it stays open: designing the surface, reading the rules,
+   * seeing which checks fail. What a plan buys is the artefact you can actually
+   * send to a printer. That is the honest place to draw it — the free tier is
+   * genuinely useful rather than a demo, and nobody discovers the paywall after
+   * doing the work, because this notice is on screen the whole time.
+   *
+   * `active` is the only thing consulted. It is false for free, cancelled and
+   * suspended, and false when the read failed — but PlanNotice distinguishes
+   * those, so a customer whose plan we could not reach is never told they have
+   * not paid.
+   */
+  const entitlement = useEntitlement();
+  const canExport = entitlement.active;
 
   // The designer always knows what it is designing: both the product and the
   // surface come from the route, never from a picker inside the screen.
@@ -105,6 +124,8 @@ export function ArtefactDesigner() {
         <>
             <Button
             variant="secondary"
+            disabled={!canExport}
+            aria-describedby={canExport ? undefined : 'export-plan-notice'}
             onClick={() =>
             toast('Sheet exported', {
               description: stock ?
@@ -112,18 +133,20 @@ export function ArtefactDesigner() {
               'Sheet layout exported.'
             })
             }>
-            
+
               <DownloadIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
               Export sheet
             </Button>
             <Button
             variant="primary"
+            disabled={!canExport}
+            aria-describedby={canExport ? undefined : 'export-plan-notice'}
             onClick={() =>
             toast('Artefact exported', {
               description: `Single ${ARTEFACT_LABELS[artefact.type].toLowerCase()} PDF at ${widthMm} × ${heightMm} mm.`
             })
             }>
-            
+
               Export PDF
             </Button>
           </>
@@ -138,7 +161,13 @@ export function ArtefactDesigner() {
             <Pill tone="quiet">{addressForMarket(market).label}</Pill>
           </>
         } />
-      
+
+
+      {!canExport &&
+      <div id="export-plan-notice" className="px-6 pt-6 lg:px-10">
+          <PlanNotice feature="Exporting a finished artefact" />
+        </div>
+      }
 
       <div className="grid gap-8 px-6 py-8 lg:px-10 xl:grid-cols-[330px_minmax(0,1fr)]">
         <section aria-label="Blocks and settings" className="space-y-5">
@@ -205,7 +234,7 @@ export function ArtefactDesigner() {
                     value={fontPt}
                     onChange={(event) => setFontPt(Number(event.target.value))}
                     aria-label="Font size in points"
-                    className="h-1.5 w-full appearance-none rounded-full bg-paper-line accent-[#1A6A62]" />
+                    className="h-1.5 w-full appearance-none rounded-full bg-paper-line accent-teal" />
                   
                   <span className="tabular w-12 text-right text-sm text-ink">{fontPt} pt</span>
                 </div>
@@ -220,7 +249,7 @@ export function ArtefactDesigner() {
                     value={lineSpacing}
                     onChange={(event) => setLineSpacing(Number(event.target.value))}
                     aria-label="Line spacing"
-                    className="h-1.5 w-full appearance-none rounded-full bg-paper-line accent-[#1A6A62]" />
+                    className="h-1.5 w-full appearance-none rounded-full bg-paper-line accent-teal" />
                   
                   <span className="tabular w-12 text-right text-sm text-ink">
                     {lineSpacing.toFixed(2)}
@@ -260,7 +289,7 @@ export function ArtefactDesigner() {
                   onChange={(event) =>
                   setHidden((prev) => ({ ...prev, [block.key]: !event.target.checked }))
                   }
-                  className="h-4 w-4 flex-none accent-[#1A6A62] disabled:opacity-40" />
+                  className="h-4 w-4 flex-none accent-teal disabled:opacity-40" />
                 
                 </li>
               )}
@@ -431,13 +460,13 @@ function Ruler({
               {
                 width: '0.2mm',
                 height: major ? '3mm' : '1.6mm',
-                background: '#5F6E6A',
+                background: 'rgb(var(--ink-tertiary))',
                 opacity: major ? 0.6 : 0.35
               } :
               {
                 height: '0.2mm',
                 width: major ? '3mm' : '1.6mm',
-                background: '#5F6E6A',
+                background: 'rgb(var(--ink-tertiary))',
                 opacity: major ? 0.6 : 0.35
               }
               } />

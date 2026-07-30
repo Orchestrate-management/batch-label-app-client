@@ -1,5 +1,5 @@
 /* @import url() FONT IMPORTS MUST ALWAYS BE AT THE VERY TOP OF THIS FILE, ABOVE THE TAILWIND IMPORTS — DO NOT DELETE THIS COMMENT */
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Inter:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
 /* CRITICAL: THE FOLLOWING TAILWIND IMPORTS MUST NEVER BE DELETED OR REORDERED — DO NOT DELETE THIS COMMENT */
 @import 'tailwindcss/base';
@@ -10,22 +10,36 @@
 
 /* Surface hue is one token layer over a fixed structure. Warm for makers of
    fragrance and cosmetics, cooler neutral for durable goods. Everything else —
-   type scale, radii, spacing, teal and clay semantics — is identical. */
+   type scale, radii, spacing, teal and clay semantics — is identical.
+
+   The warm set is the brand's: warm paper #F3EEE6 as the ground, the deeper
+   #EFE7DA for bands and hover, #E3DACD for hairlines, brand ink #1E1B18. It is
+   the same ground the marketing site paints, so www and app now read as one
+   product rather than two that happen to share a logo.
+
+   Secondary and tertiary ink are derived rather than taken from the brand pack.
+   The pack's ink.muted (#8A7F72) is 3.4:1 on warm paper, which is fine for the
+   marketing site's large type and not fine here: this is a dense tool whose
+   tertiary ink carries 11px meta labels. These values keep every step at 5:1 or
+   better while staying in the same warm neutral family. */
 :root {
-  --paper: 251 248 243;
-  --paper-panel: 243 236 225;
-  --paper-line: 231 222 207;
-  --ink: 27 37 35;
-  --ink-secondary: 61 75 72;
-  --ink-tertiary: 95 110 106;
+  --paper: 243 238 230;
+  --paper-panel: 239 231 218;
+  --paper-line: 227 218 205;
+  --ink: 30 27 24;
+  --ink-secondary: 74 68 61;
+  --ink-tertiary: 107 98 89;
 }
+/* The neutral set is this app's own — there is no brand equivalent, because the
+   marketing site never has to sit behind a photograph of a drill. Same ladder,
+   hue pulled out. */
 [data-surface='neutral'] {
-  --paper: 248 248 247;
-  --paper-panel: 236 237 235;
-  --paper-line: 227 228 226;
-  --ink: 26 31 30;
-  --ink-secondary: 62 70 69;
-  --ink-tertiary: 100 108 107;
+  --paper: 246 246 245;
+  --paper-panel: 237 237 235;
+  --paper-line: 224 224 222;
+  --ink: 26 26 25;
+  --ink-secondary: 68 68 65;
+  --ink-tertiary: 100 100 96;
 }
 html,
 body,
@@ -35,11 +49,11 @@ body,
 body {
   background-color: rgb(var(--paper));
   color: rgb(var(--ink));
-  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  font-family: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 :focus-visible {
-  outline: 2px solid #1A6A62;
+  outline: 2px solid #14514F;
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -54,10 +68,10 @@ body {
 .mm-grid {
   background-color: rgb(var(--paper-panel));
   background-image:
-    repeating-linear-gradient(to right, rgba(95, 110, 106, 0.16) 0 0.2mm, transparent 0.2mm 1mm),
-    repeating-linear-gradient(to bottom, rgba(95, 110, 106, 0.16) 0 0.2mm, transparent 0.2mm 1mm),
-    repeating-linear-gradient(to right, rgba(95, 110, 106, 0.34) 0 0.2mm, transparent 0.2mm 10mm),
-    repeating-linear-gradient(to bottom, rgba(95, 110, 106, 0.34) 0 0.2mm, transparent 0.2mm 10mm);
+    repeating-linear-gradient(to right, rgba(107, 98, 89, 0.16) 0 0.2mm, transparent 0.2mm 1mm),
+    repeating-linear-gradient(to bottom, rgba(107, 98, 89, 0.16) 0 0.2mm, transparent 0.2mm 1mm),
+    repeating-linear-gradient(to right, rgba(107, 98, 89, 0.34) 0 0.2mm, transparent 0.2mm 10mm),
+    repeating-linear-gradient(to bottom, rgba(107, 98, 89, 0.34) 0 0.2mm, transparent 0.2mm 10mm);
 }
 /* A regulated artefact is a legal surface, not a brand surface. Pure white,
    black text, mandated geometry. Never themed, tinted, rounded or filtered.

@@ -6,15 +6,18 @@ import {
   LayoutGridIcon,
   LogOutIcon,
   PackageIcon,
-  SettingsIcon } from
+  SettingsIcon,
+  type LucideIcon } from
 'lucide-react';
 import { Logo } from './Logo';
-import { BUSINESS, TEAM } from '../lib/products';
+import { useAuth } from '../lib/auth';
+import { useEntitlement } from '../lib/entitlement';
+import { BUSINESS } from '../lib/products';
 
 type NavItem = {
   to: string;
   label: string;
-  icon: React.ComponentType<{className?: string;strokeWidth?: number;}>;
+  icon: LucideIcon;
   end?: boolean;
   children?: Array<{to: string;label: string;match: string;}>;
 };
@@ -152,9 +155,23 @@ export function AppShell({ children }: {children: React.ReactNode;}) {
 function AccountMenu() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user, signOut } = useAuth();
+  const entitlement = useEntitlement();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const owner = TEAM.find((member) => member.role === 'Owner') ?? TEAM[0];
+
+  // The business name on the membership is what the maker typed when they signed
+  // up on www, so it is the true one. The stub is only a placeholder for the beat
+  // before the read resolves, or if it was never filled in.
+  const businessName = entitlement.businessName ?? BUSINESS.tradingName;
+  const email = user?.email ?? null;
+  const initials = businessName.
+  split(/\s+/).
+  filter(Boolean).
+  slice(0, 2).
+  map((part) => part[0]).
+  join('').
+  toUpperCase();
 
   useEffect(() => setOpen(false), [location.pathname]);
 
@@ -204,7 +221,17 @@ function AccountMenu() {
             Billing
           </button>
           <div className="my-1.5 border-t border-white/10" />
-          <button type="button" role="menuitem" className={itemClass} onClick={() => setOpen(false)}>
+          <button
+          type="button"
+          role="menuitem"
+          className={itemClass}
+          onClick={() => {
+            setOpen(false);
+            // Clears the shared cookie, so this signs the maker out of the
+            // marketing site too, then leaves for it.
+            void signOut();
+          }}>
+
             <LogOutIcon className="h-4 w-4" strokeWidth={1.25} aria-hidden="true" />
             Sign out
           </button>
@@ -221,17 +248,12 @@ function AccountMenu() {
         }>
         
         <span className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-white/15 font-display text-2xs font-medium text-white">
-          {owner.name.
-          split(' ').
-          map((part) => part[0]).
-          join('')}
+          {initials}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate font-display text-sm text-white">
-            {BUSINESS.tradingName}
-          </span>
+          <span className="block truncate font-display text-sm text-white">{businessName}</span>
           <span className="mt-0.5 block truncate text-2xs text-white/60">
-            {owner.name}, {owner.role.toLowerCase()}
+            {email ?? 'Signed in'}
           </span>
         </span>
         <ChevronUpIcon
