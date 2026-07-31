@@ -148,7 +148,7 @@ describe('password', () => {
     toHaveAttribute('href', 'https://www.batchlabel.xyz/forgot-password');
   });
 
-  it('shows no password form for a Google-only account', async () => {
+  it('leads with the set-password card for a Google-only account', async () => {
     currentUser = {
       id: 'user-1',
       email: 'maker@example.com',
@@ -157,7 +157,6 @@ describe('password', () => {
     await renderTab();
 
     expect(screen.queryByLabelText(/current password/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/you signed up with google/i)).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: /email me a link to set a password/i })
     ).toBeInTheDocument();
@@ -176,6 +175,76 @@ describe('password', () => {
 
     await waitFor(() => expect(sendSetPasswordLink).toHaveBeenCalledWith('maker@example.com'));
     expect(await screen.findByRole('status')).toHaveTextContent(/on its way/i);
+  });
+
+  /**
+   * The stranding bug. Setting a password through `updateUser` does not add an
+   * `email` identity, so a maker who used the set-password link still reports
+   * Google only for ever. When the identity list was a gate, that meant they
+   * could never reach the form to change the password they now had.
+   */
+  it('never traps a Google-only maker away from the change form', async () => {
+    currentUser = {
+      id: 'user-1',
+      email: 'maker@example.com',
+      identities: [{ provider: 'google' }]
+    };
+    const user = userEvent.setup();
+    await renderTab();
+
+    await user.click(screen.getByRole('button', { name: /already have a password/i }));
+
+    expect(screen.getByLabelText(/current password/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^change password$/i })).toBeInTheDocument();
+  });
+
+  it('never traps an email maker away from adding a password', async () => {
+    const user = userEvent.setup();
+    await renderTab();
+
+    await user.click(screen.getByRole('button', { name: /add one instead/i }));
+
+    expect(
+      screen.getByRole('button', { name: /email me a link to set a password/i })
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the send button mounted so a lost email can be resent', async () => {
+    currentUser = {
+      id: 'user-1',
+      email: 'maker@example.com',
+      identities: [{ provider: 'google' }]
+    };
+    const user = userEvent.setup();
+    await renderTab();
+
+    const send = screen.getByRole('button', { name: /email me a link to set a password/i });
+    await user.click(send);
+
+    // Replacing the button with its own confirmation dropped keyboard focus to
+    // the body and left no way to ask again — which is the most likely next
+    // action, because the reason to come back here is that it did not arrive.
+    const again = await screen.findByRole('button', { name: /send another link/i });
+    expect(again).toBeInTheDocument();
+
+    await user.click(again);
+    await waitFor(() => expect(sendSetPasswordLink).toHaveBeenCalledTimes(2));
+  });
+
+  it('announces success, not just displays it', async () => {
+    const user = userEvent.setup();
+    await renderTab();
+
+    await user.type(screen.getByLabelText(/current password/i), 'the-old-one');
+    await user.type(screen.getByLabelText(/^new password/i), 'a-brand-new-passphrase');
+    await user.type(screen.getByLabelText(/confirm new password/i), 'a-brand-new-passphrase');
+    await user.click(screen.getByRole('button', { name: /^change password$/i }));
+
+    // A confirmation a screen reader never hears is a form that appears to have
+    // done nothing.
+    const status = await screen.findByRole('status');
+    expect(status).toHaveTextContent(/password changed/i);
+    expect(status).toHaveTextContent(/every other browser and device has been signed out/i);
   });
 });
 
@@ -196,6 +265,29 @@ describe('consent', () => {
     )
     );
     expect(box).toBeChecked();
+  });
+
+  /**
+   * The box used to disable itself while saving, which blurs it and drops
+   * keyboard focus to the body — a keyboard user's reward for ticking a box was
+   * being thrown to the top of the document. The write is guarded in the
+   * handler instead.
+   */
+  it('keeps focus on the checkbox while the write is in flight', async () => {
+    let release: (value: {error: null;}) => void = () => undefined;
+    updateConsentPreference.mockReturnValue(new Promise((resolve) => {release = resolve;}));
+    const user = userEvent.setup();
+    await renderTab();
+
+    const box = await screen.findByRole('checkbox', { name: /marketing emails/i });
+    await user.click(box);
+
+    expect(box).toHaveFocus();
+    expect(box).not.toBeDisabled();
+
+    release({ error: null });
+    await waitFor(() => expect(box).toBeChecked());
+    expect(box).toHaveFocus();
   });
 
   it('puts the box back and says so when the write fails', async () => {

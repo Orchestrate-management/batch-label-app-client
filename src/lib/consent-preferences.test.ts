@@ -147,28 +147,41 @@ describe('updateConsentPreference', () => {
   });
 });
 
-describe('mirrored agreement versions', () => {
-  /**
-   * Pinned on purpose. These strings are copied from batch-label's
-   * src/lib/agreements.ts and both repos write them into the same
-   * `consent_events` table. If www bumps a version and this repo does not, the
-   * audit log ends up with two answers to "which wording did they agree to",
-   * and a contradiction proves we did not know. Changing a value here should
-   * mean deliberately changing it there in the same breath, so the test exists
-   * to make that a decision rather than an accident.
-   */
-  it('match the marketing site', () => {
-    expect(MARKETING_EMAIL_AGREEMENT).toEqual({
-      id: 'marketing_emails',
-      title: 'Marketing emails',
-      version: '2026-07-30',
-      path: '/privacy'
-    });
-    expect(ADVERTISING_AGREEMENT).toEqual({
-      id: 'advertising',
-      title: 'Advertising and retargeting',
-      version: '2026-07-30.2',
-      path: '/cookie-policy'
-    });
+/**
+ * There is deliberately NO test here asserting that the agreement versions equal
+ * a set of literals.
+ *
+ * There was one. It compared the constants in src/lib/agreements.ts to the same
+ * strings copied into the test file beside it, so www could bump a version and
+ * both repos' suites would stay green — the exact drift it was written to catch
+ * would pass. A check that cannot fail for the reason it exists is worse than no
+ * check, because the next person reads the green tick as an answer.
+ *
+ * A unit test in this repo cannot see the other repo, so the real check lives in
+ * CI, where it can: .github/workflows/ci.yml runs
+ * scripts/check-agreement-versions.mjs, which fetches www's agreements.ts and
+ * compares. When it cannot reach the other repo it says so loudly rather than
+ * passing quietly. See docs/INTEGRATION.md for the token it needs.
+ */
+describe('the agreement snapshot that goes into the audit row', () => {
+  it('sends the version and url from the shared constants, not from anything local', async () => {
+    const { updateConsentPreference } = await loadModule();
+
+    await updateConsentPreference(MARKETING_EMAIL_AGREEMENT, true);
+
+    const payload = rpc.mock.calls[0][1];
+    expect(payload.p_version).toBe(MARKETING_EMAIL_AGREEMENT.version);
+    expect(payload.p_title).toBe(MARKETING_EMAIL_AGREEMENT.title);
+    // Resolved against the marketing site, because that is the only origin that
+    // has ever served the document.
+    expect(payload.p_url).toBe(`https://www.batchlabel.xyz${MARKETING_EMAIL_AGREEMENT.path}`);
+  });
+
+  it('keeps the two consent ids set_consent whitelists', () => {
+    // These two ids are not version strings — they are the database contract.
+    // set_consent rejects anything else, and older audit rows use them, so they
+    // cannot change even when the wording does.
+    expect(MARKETING_EMAIL_AGREEMENT.id).toBe('marketing_emails');
+    expect(ADVERTISING_AGREEMENT.id).toBe('advertising');
   });
 });

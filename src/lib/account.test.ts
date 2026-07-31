@@ -85,7 +85,7 @@ describe('changePassword', () => {
   it('does not change anything when the current password is wrong', async () => {
     signInWithPassword.mockResolvedValue({
       data: {},
-      error: { message: 'Invalid login credentials' }
+      error: { message: 'Invalid login credentials', status: 400, code: 'invalid_credentials' }
     });
     const { changePassword } = await loadAccount();
 
@@ -96,6 +96,55 @@ describe('changePassword', () => {
     // The whole point. A live session that cannot produce the password changes nothing.
     expect(updateUser).not.toHaveBeenCalled();
     expect(signOut).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Every re-auth failure used to be reported as "That is not your current
+   * password", which tells someone their correct password is wrong whenever the
+   * real cause was the network or a rate limit. People respond to that by
+   * resetting a password that was never broken.
+   *
+   * A transport failure must also stop the change — it proves nothing about who
+   * is asking — but it must not blame the field, so no `field` is returned and
+   * nothing gets marked invalid.
+   */
+  describe('a failure that is not a wrong password', () => {
+    const cases: Array<[string, unknown, RegExp]> = [
+    [
+    'a dropped connection',
+    Object.assign(new Error('Failed to fetch'), {
+      __isAuthError: true,
+      name: 'AuthRetryableFetchError',
+      status: 0
+    }),
+    /could not reach batchlabel/i],
+
+    ['a rate limit', { message: 'rate limited', status: 429 }, /too many attempts/i],
+    [
+    'a rate limit reported by code',
+    { message: 'rate limited', code: 'over_request_rate_limit' },
+    /too many attempts/i],
+
+    ['a server error', { message: 'boom', status: 503 }, /problem at our end/i],
+    ['something unrecognised', { message: '???' }, /could not check your password/i]];
+
+
+    for (const [label, error, expected] of cases) {
+      it(`does not blame the password for ${label}`, async () => {
+        signInWithPassword.mockResolvedValue({ data: {}, error });
+        const { changePassword } = await loadAccount();
+
+        const result = await changePassword(good);
+
+        expect(result.error).toMatch(expected);
+        expect(result.error).not.toMatch(/not your current password/i);
+        // No field, so nothing is marked aria-invalid and focus is not yanked
+        // to a box that is perfectly correct.
+        expect(result.field).toBeUndefined();
+        // Still refuses to change anything: a failed check is not a passed one.
+        expect(updateUser).not.toHaveBeenCalled();
+      });
+    }
   });
 
   it('never reaches the network when the new password is too short', async () => {
@@ -182,7 +231,7 @@ describe('hasEmailIdentity', () => {
     typeof import('./account').hasEmailIdentity>[
     0]);
 
-  it('is false for a Google-only account, so no password box is shown', async () => {
+  it('is false for a Google-only account, so the set-password card leads', async () => {
     const { hasEmailIdentity } = await loadAccount();
     expect(hasEmailIdentity(user([{ provider: 'google' }]))).toBe(false);
   });
@@ -232,11 +281,45 @@ describe('sendSetPasswordLink', () => {
   });
 
   it('does not leak the raw Supabase error', async () => {
-    resetPasswordForEmail.mockResolvedValue({ data: {}, error: { message: 'rate limited' } });
+    resetPasswordForEmail.mockResolvedValue({ data: {}, error: { message: 'boom' } });
     const { sendSetPasswordLink } = await loadAccount();
 
     const result = await sendSetPasswordLink('maker@example.com');
 
-    expect(result.error).toBe('We could not send that email. Please try again.');
+    expect(result.error).toBe('We could not send that email just now. Please try again.');
+  });
+
+  /**
+   * Supabase rate-limits recovery email harder than anything else here. Telling
+   * someone who is being asked to wait to "try again" is a loop they cannot
+   * escape, so this case gets its own sentence with the actual instruction.
+   */
+  it('tells someone being rate limited to wait, not to retry', async () => {
+    resetPasswordForEmail.mockResolvedValue({
+      data: {},
+      error: { message: 'rate limited', status: 429 }
+    });
+    const { sendSetPasswordLink } = await loadAccount();
+
+    const result = await sendSetPasswordLink('maker@example.com');
+
+    expect(result.error).toMatch(/try again in a few minutes/i);
+    expect(result.error).not.toMatch(/^We could not send that email just now/);
+  });
+
+  it('names a connection problem as a connection problem', async () => {
+    resetPasswordForEmail.mockResolvedValue({
+      data: {},
+      error: Object.assign(new Error('Failed to fetch'), {
+        __isAuthError: true,
+        name: 'AuthRetryableFetchError',
+        status: 0
+      })
+    });
+    const { sendSetPasswordLink } = await loadAccount();
+
+    expect((await sendSetPasswordLink('maker@example.com')).error).toMatch(
+      /could not reach batchlabel/i
+    );
   });
 });

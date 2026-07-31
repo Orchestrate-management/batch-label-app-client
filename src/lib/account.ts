@@ -61,6 +61,7 @@
  */
 
 import type { User } from '@supabase/supabase-js';
+import { isAuthApiError, isAuthRetryableFetchError } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import { marketingUrl } from './marketing';
 
@@ -80,26 +81,35 @@ export interface PasswordChangeResult {
 }
 
 /**
- * Does this account have a password at all?
+ * A HINT about whether this account is likely to have a password. Never a gate.
  *
- * A Google-only maker has one identity, `google`, and no password — there is
- * nothing for them to change and a "current password" box would be a trap.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * DO NOT USE THIS TO DECIDE WHETHER SOMEONE MAY CHANGE THEIR PASSWORD.
+ * ─────────────────────────────────────────────────────────────────────────────
  *
- * The check is deliberately narrow. An `email` identity means the account *can*
- * carry a password; it does not prove one was ever set, because a magic-link
- * signup also creates an email identity. Supabase exposes no "has password"
- * flag, so that case is handled in the UI instead: the form is shown, the
- * current password does not match, and the reset-by-email route sits directly
- * underneath the error.
+ * Supabase exposes no "has password" flag, and `identities` is not a stand-in
+ * for one. It is wrong in both directions:
+ *
+ *  - **False negatives.** Setting a password through `updateUser` writes
+ *    `encrypted_password` on the user. It does not add an `email` identity. So a
+ *    maker who signed up with Google and then used the set-password link below
+ *    has a working password and still reports Google only, for ever.
+ *  - **False positives.** A magic-link signup creates an `email` identity and
+ *    never sets a password.
+ *
+ * An earlier version of this screen used it as a gate, which permanently
+ * stranded the exact people the set-password flow was written for: they set a
+ * password, then could never reach the form to change it. The UI now offers both
+ * routes whichever way this answers, and uses it only to decide which one to
+ * lead with. Getting the hint wrong costs one extra click; gating on it locked
+ * people out.
  */
 export function hasEmailIdentity(user: User | null): boolean {
   if (!user) return false;
   const identities = user.identities;
   if (!Array.isArray(identities) || identities.length === 0) {
-    // No identities array at all (an older token, or a shape we do not know).
-    // Assume the password form is usable rather than hiding it from someone who
-    // needs it — a wrong guess here shows one extra form, the other way round
-    // strands them.
+    // Unknown shape (an older token, or something we do not recognise). Lead
+    // with the change form, which is the common case.
     return true;
   }
   return identities.some((identity) => identity.provider === 'email');
@@ -110,6 +120,51 @@ export function signInMethods(user: User | null): string[] {
   const identities = user?.identities;
   if (!Array.isArray(identities) || identities.length === 0) return ['email'];
   return Array.from(new Set(identities.map((identity) => identity.provider)));
+}
+
+/**
+ * Turns a Supabase auth failure into something true.
+ *
+ * Every failure used to become "That is not your current password." That is a
+ * lie whenever the real cause was a dropped connection, a 500, or a rate limit —
+ * and it is the worst possible lie, because it tells someone their correct
+ * password is wrong. People respond to that by resetting a password that was
+ * never broken, or by concluding the account is gone.
+ *
+ * Only a genuine credential rejection is attributed to the current-password box.
+ * The others are transport problems and say so, and deliberately carry no
+ * `field`, so nothing is marked invalid and focus is not yanked to a box that is
+ * perfectly correct.
+ */
+export function describeAuthFailure(error: unknown): {error: string; field?: 'current';} {
+  // Status 0 / no response. isAuthRetryableFetchError covers both the network
+  // being down and a 5xx worth retrying.
+  if (isAuthRetryableFetchError(error)) {
+    return { error: 'We could not reach Batchlabel. Check your connection and try again.' };
+  }
+
+  const status = (error as {status?: number;} | null)?.status;
+  const code = (error as {code?: string;} | null)?.code;
+
+  if (status === 429 || code === 'over_request_rate_limit') {
+    return { error: 'Too many attempts. Wait a minute, then try again.' };
+  }
+
+  // What a wrong password actually looks like: 400 with invalid_credentials.
+  if (code === 'invalid_credentials') {
+    return { error: 'That is not your current password.', field: 'current' };
+  }
+  if (isAuthApiError(error) && status === 400 && !code) {
+    // Older servers answer 400 with no machine code. On this endpoint, sending
+    // a well-formed email and password, that is a rejected password.
+    return { error: 'That is not your current password.', field: 'current' };
+  }
+
+  if (typeof status === 'number' && status >= 500) {
+    return { error: 'Batchlabel had a problem at our end. Please try again in a moment.' };
+  }
+
+  return { error: 'We could not check your password just now. Please try again.' };
 }
 
 /** Local checks, run before we touch the network. */
@@ -153,9 +208,11 @@ export async function changePassword(input: {
     password: input.currentPassword
   });
   if (reauth.error) {
-    // Deliberately not the raw Supabase message ("Invalid login credentials"),
-    // which reads as though the whole session is wrong rather than one box.
-    return { error: 'That is not your current password.', field: 'current' };
+    // Not the raw Supabase message ("Invalid login credentials"), which reads as
+    // though the whole session is wrong rather than one box — and not a blanket
+    // "wrong password" either, which would be false whenever the real cause was
+    // the network or a rate limit.
+    return describeAuthFailure(reauth.error);
   }
 
   // 2. Change it.
@@ -187,5 +244,15 @@ export async function sendSetPasswordLink(email: string): Promise<{error: string
   const { error } = await client.auth.resetPasswordForEmail(email, {
     redirectTo: marketingUrl('/reset-password')
   });
-  return { error: error ? 'We could not send that email. Please try again.' : null };
+  if (!error) return { error: null };
+
+  // Supabase rate-limits recovery emails harder than anything else here, and
+  // "please try again" to someone who is being told to wait is just a loop.
+  if (isAuthRetryableFetchError(error)) {
+    return { error: 'We could not reach Batchlabel. Check your connection and try again.' };
+  }
+  if (error.status === 429 || error.code === 'over_email_send_rate_limit') {
+    return { error: 'We have sent one recently. Check your inbox, then try again in a few minutes.' };
+  }
+  return { error: 'We could not send that email just now. Please try again.' };
 }

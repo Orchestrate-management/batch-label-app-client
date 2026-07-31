@@ -282,18 +282,35 @@ rather than relying on a server default, and reported separately: if the revoke 
 password has still changed, and the screen says so rather than claiming a failure that
 would send someone back to a password that no longer works.
 
+### The other side of it: www
+
+`updateUser({ password })` is reachable from www's `/reset-password` too, and a guard on
+one of two stacked sites is not a guard. That page is gated on a **recovery marker
+captured from the URL fragment**, not on session presence — the session cookie is shared
+for 400 days, so on www an ordinary signed-in maker is signed in essentially always, and
+gating on it would have handed the account to anyone holding the browser. See
+`batch-label/src/lib/recovery-entry.ts`.
+
 ### An account with no password
 
-A maker who signed up with Google has one identity and no password. There is nothing to
-change, so the form is replaced with an explanation and a button that emails a link to set
-one — `resetPasswordForEmail`, redirecting to www's `/reset-password`, which is where
-password screens live. www's `/forgot-password` is written for someone who had a password
-and forgot it, so a Google user would never think to look there.
+A maker who signed up with Google probably has no password, so the set-password card leads:
+a button that emails a link via `resetPasswordForEmail`, redirecting to www's
+`/reset-password`. www's `/forgot-password` is written for someone who had a password and
+forgot it, so a Google user would never think to look there.
 
-One case cannot be detected: a magic-link signup creates an `email` identity but no
-password, and Supabase exposes no "has password" flag. Those makers see the form, find
-their current password does not match, and the reset-by-email link sits directly under the
-error.
+**Both routes are always reachable, and neither is gated on the identity list.**
+`hasEmailIdentity` only decides which one leads. It cannot decide which one someone is
+allowed, because Supabase exposes no "has password" flag and `identities` is wrong in both
+directions:
+
+- setting a password through `updateUser` writes `encrypted_password` and does **not** add
+  an `email` identity, so a maker who used the set-password link still reports Google only
+  for ever;
+- a magic-link signup creates an `email` identity and never sets a password.
+
+An earlier version used it as a gate and permanently stranded exactly the people the
+set-password flow was written for: they set a password, then could never reach the form to
+change it. Getting the hint wrong now costs one click.
 
 ### Consent
 
@@ -312,7 +329,18 @@ while the session cookie is scoped to `.batchlabel.xyz`. What is shown is
 **`src/lib/agreements.ts` mirrors the version strings from the marketing repo.** Both
 repos write into the same `consent_events` table. Bump a version there and it must be
 bumped here in the same change, or one piece of wording ends up with two version numbers
-in the audit log. `src/lib/consent-preferences.test.ts` pins the values.
+in the audit log.
+
+That is checked by `scripts/check-agreement-versions.mjs`, run as its own CI job, which
+fetches www's `agreements.ts` and compares. A unit test cannot do this — it can only
+compare this repo to itself, and an earlier one that did exactly that would have passed
+through any real drift.
+
+**The check needs a token.** Both repos are private and a workflow's default
+`GITHUB_TOKEN` is scoped to its own repository, so without one the job prints a
+`NOT CHECKED` warning and passes rather than failing a build nobody can fix. To switch it
+on, add a fine-grained personal access token with **Contents: read** on
+`Orchestrate-management/batch-label` as the repository secret **`WWW_REPO_TOKEN`**.
 
 ---
 
@@ -398,16 +426,32 @@ Google flow is ever initiated from the app origin.
 
 Supabase → Authentication → Providers → Email → **Secure password change**: switch it on.
 
-It is defence in depth, not the defence. The app already requires the current password
-before it changes anything (section 3a), which is what covers a live or recent session.
-This setting adds a reauthentication OTP for sessions older than 24 hours, and it covers
-any other client that ever talks to this project — including one written later by someone
-who has not read this document.
+Be precise about what this buys, because overstating it is how a hole gets missed. It
+requires a reauthentication OTP **only** when the session is more than 24 hours old. It
+does not ask for the current password, and it does nothing at all for a session created
+in the last day — which is the borrowed-laptop and stolen-cookie case, and therefore the
+one that matters.
+
+So it is a narrow addition, not a safety net:
+
+| | Session under 24h | Session over 24h |
+| --- | --- | --- |
+| App `/settings/account` | current password required (this repo) | current password required (this repo) |
+| www `/reset-password` | recovery link required (marketing repo) | recovery link required (marketing repo) |
+| Any other client | **nothing** | OTP, from this setting |
+
+The real protections are the two in the first two rows, and both are code in the two
+repos. An earlier version of this document claimed this setting "covers any other client
+that ever talks to this project". That was wrong in a way that mattered: it implied www
+was covered when www required no current password at all, and it is part of why that gap
+survived self-review. A new client written against this project is protected only for
+sessions over a day old, and must implement its own re-authentication.
 
 ### 5.4 Checklist
 
 - [ ] `https://app.batchlabel.xyz` and `https://app.batchlabel.xyz/**` in Supabase redirect URLs
 - [ ] **Secure password change** enabled on the email provider
+- [ ] `WWW_REPO_TOKEN` secret set, so the agreement version check can actually run
 - [ ] `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` set on the Vercel app project
 - [ ] The Supabase project ref matches the one www uses
 - [ ] `VITE_ORCHESTRATE_BRAND` matches www (or is unset on both)

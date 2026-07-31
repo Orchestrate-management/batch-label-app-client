@@ -125,10 +125,26 @@ function IdentitySection() {
 
 /* -------------------------------------------------------------- password */
 
+/**
+ * Both password routes, always both reachable.
+ *
+ * The identity list only decides which one leads. It cannot decide which one a
+ * maker is *allowed* — Supabase has no "has password" flag, and `identities`
+ * answers wrongly in both directions (see lib/account.ts). An earlier version
+ * used it as a gate and permanently stranded the very people the set-password
+ * link exists for: they set a password through it, and were then shown the
+ * "you have no password" card for ever, with no way to reach the change form.
+ *
+ * So the other route is always one click away, and neither piece of copy claims
+ * as fact something we cannot know.
+ */
 function PasswordSection() {
   const { user } = useAuth();
   const email = user?.email ?? null;
-  const canUsePassword = hasEmailIdentity(user);
+  const leadsWithChange = hasEmailIdentity(user);
+  const [showing, setShowing] = useState<'change' | 'set'>(
+    leadsWithChange ? 'change' : 'set'
+  );
 
   return (
     <section aria-labelledby="password-heading">
@@ -136,13 +152,17 @@ function PasswordSection() {
         <span id="password-heading">Password</span>
       </SectionTitle>
       <p className="mb-3 max-w-prose text-2xs leading-relaxed text-ink-tertiary">
-        {canUsePassword ?
+        {showing === 'change' ?
         'Changing your password signs you out everywhere else.' :
-        'You sign in with Google, so there is no password on this account yet.'}
+        'Signing in with Google does not create a password. You can add one.'}
       </p>
-      {canUsePassword ?
-      <ChangePasswordForm email={email} /> :
-      <SetPasswordCard email={email} />
+
+      {showing === 'change' ?
+      <ChangePasswordForm
+        email={email}
+        onNoPassword={() => setShowing('set')} /> :
+
+      <SetPasswordCard email={email} onHasPassword={() => setShowing('change')} />
       }
     </section>);
 
@@ -156,7 +176,12 @@ function PasswordSection() {
  * which means a live session is enough to take an account — see lib/account.ts
  * for why the Supabase dashboard setting does not cover that case either.
  */
-function ChangePasswordForm({ email }: {email: string | null;}) {
+function ChangePasswordForm({
+  email,
+  onNoPassword
+
+
+}: {email: string | null;onNoPassword: () => void;}) {
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -253,8 +278,14 @@ function ChangePasswordForm({ email }: {email: string | null;}) {
 
         {error && <FormError id="password-error">{error}</FormError>}
 
+        {/*
+          role="status" so success is announced, not only shown. A confirmation
+          a screen reader never hears is a form that appears to have done
+          nothing — and this is the one message where "did that work?" matters
+          most, because the answer decides whether someone tries again.
+         */}
         {done &&
-        <Callout title="Password changed">
+        <Callout role="status" title="Password changed">
             {done.othersRemain ?
           'You are still signed in here. We could not sign out your other devices, so sign out and back in on any device you are worried about.' :
           'You are still signed in here. Every other browser and device has been signed out.'}
@@ -272,6 +303,18 @@ function ChangePasswordForm({ email }: {email: string | null;}) {
             Do not know your current password?
           </a>
         </div>
+
+        <p className="max-w-prose text-2xs leading-relaxed text-ink-tertiary">
+          Signed in with Google and never set a password?{' '}
+          <button
+            type="button"
+            onClick={onNoPassword}
+            className="underline decoration-ink-tertiary/40 underline-offset-4 hover:text-ink-secondary">
+
+            Add one instead
+          </button>
+          .
+        </p>
 
         <p className="max-w-prose text-2xs leading-relaxed text-ink-tertiary">
           We ask for your current password because a signed-in browser is not proof it is you.
@@ -335,14 +378,19 @@ const PasswordField = React.forwardRef<HTMLInputElement, PasswordFieldProps>(
 );
 
 /**
- * What a Google-only maker sees.
+ * Adding a password to an account that signs in with Google.
  *
- * They have no password, so there is nothing to change and a "current password"
- * box would be a dead end. What they can do is add one, which is worth offering:
- * it is the difference between having a second way into the account and having
- * none if they ever lose access to their Google account.
+ * The button stays mounted after a send. Replacing it with its own confirmation
+ * threw keyboard focus to the body and left no way to ask again — and asking
+ * again is the single most likely next action, because the usual reason to come
+ * back to this card is that the first email did not arrive.
  */
-function SetPasswordCard({ email }: {email: string | null;}) {
+function SetPasswordCard({
+  email,
+  onHasPassword
+
+
+}: {email: string | null;onHasPassword: () => void;}) {
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -363,24 +411,30 @@ function SetPasswordCard({ email }: {email: string | null;}) {
   return (
     <Card className="px-5 py-5">
       <p className="max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
-        You signed up with Google, so Batchlabel never held a password for you. You can add one if
-        you want a second way in. We will email you a link to set it.
+        Signing in with Google does not create a password, so you may not have one. Adding one
+        gives you a second way in if you ever lose access to your Google account. We will email
+        you a link to set it.
       </p>
-      <div className="mt-4">
-        {sent ?
-        <FormStatus>
-            If we can reach {email}, a link to set a password is on its way. It is valid for one
-            hour.
-          </FormStatus> :
-
+      <div className="mt-4 flex flex-wrap items-center gap-3">
         <Button variant="secondary" disabled={busy || !email} onClick={handleSend}>
-            {busy ? 'Sending…' : 'Email me a link to set a password'}
-          </Button>
+          {busy ? 'Sending…' : sent ? 'Send another link' : 'Email me a link to set a password'}
+        </Button>
+        {sent &&
+        <FormStatus>
+            If we can reach {email}, a link is on its way. It is valid for one hour.
+          </FormStatus>
         }
-        {error && <div className="mt-3"><FormError>{error}</FormError></div>}
       </div>
+      {error && <div className="mt-3"><FormError>{error}</FormError></div>}
       <p className="mt-4 max-w-prose text-2xs leading-relaxed text-ink-tertiary">
-        Adding a password does not remove Google. You will be able to use either.
+        Adding a password does not remove Google. You will be able to use either.{' '}
+        <button
+          type="button"
+          onClick={onHasPassword}
+          className="underline decoration-ink-tertiary/40 underline-offset-4 hover:text-ink-secondary">
+
+          Already have a password?
+        </button>
       </p>
     </Card>);
 
@@ -455,11 +509,17 @@ function ConsentSection() {
           </p> :
 
         <div className="space-y-5">
-            <div>
+            {/*
+              Deliberately NOT disabled while saving. Disabling the control the
+              user has just activated blurs it, and focus lands on the body — so
+              a keyboard user is thrown back to the top of the document as their
+              reward for ticking a box. The write is guarded in the handler
+              instead, and aria-busy says what is happening.
+             */}
+            <div aria-busy={saving || undefined}>
               <Checkbox
               id="marketing-email-opt-in"
               checked={prefs.marketingEmail}
-              disabled={saving}
               onChange={toggleMarketingEmail}
               label={MARKETING_EMAIL_AGREEMENT.title}
               description="Product tips and offers by email. Unsubscribe any time." />

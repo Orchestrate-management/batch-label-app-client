@@ -141,19 +141,31 @@ export function Callout({
   tone = 'info',
   title,
   children,
-  className
+  className,
+  role
 
 
 
 
 
-}: {tone?: 'info' | 'warn';title?: string;children: React.ReactNode;className?: string;}) {
+
+}: {tone?: 'info' | 'warn';title?: string;children: React.ReactNode;className?: string;
+  /**
+   * Set `status` when this callout is the confirmation that something worked,
+   * and `alert` when it is a failure. Without one, a callout that appears in
+   * response to an action is announced to nobody — it is only ever seen by
+   * someone already looking at that part of the page.
+   */
+  role?: 'status' | 'alert';}) {
   const tones = {
     info: 'bg-teal-tint border-teal-selected text-ink-secondary',
     warn: 'bg-clay-tint border-clay/30 text-clay-dark'
   };
   return (
-    <div className={twMerge('rounded-control border px-4 py-3 text-[0.8125rem]', tones[tone], className)}>
+    <div
+      role={role}
+      className={twMerge('rounded-control border px-4 py-3 text-[0.8125rem]', tones[tone], className)}>
+
       {title && <p className="mb-1 font-medium text-ink">{title}</p>}
       {children}
     </div>);
