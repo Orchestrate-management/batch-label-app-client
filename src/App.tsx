@@ -3,6 +3,7 @@ import { Toaster } from 'sonner';
 import { AppShell } from './components/AppShell';
 import { AuthProvider, RequireAuth } from './lib/auth';
 import { EntitlementProvider } from './lib/entitlement';
+import { MetaTrackingProvider } from './lib/meta-consent';
 import { WorkspaceProvider } from './lib/workspace';
 import { Studio } from './pages/Studio';
 import { Materials } from './pages/Materials';
@@ -19,14 +20,21 @@ import { Settings } from './pages/Settings';
  * even a 404 — that renders product data without a session. The entitlement read
  * sits inside it because it is a query for a specific signed-in user and there is
  * nothing to ask before we have one.
+ *
+ * MetaTrackingProvider sits in the same place and for the same reason: it reads
+ * one account-level consent flag for a specific signed-in maker, and there is
+ * nobody to read it for until there is a session. It renders nothing and gates
+ * everything Meta-related — see lib/meta-consent.tsx.
  */
 export function App() {
   return (
     <AuthProvider>
       <RequireAuth>
-        <EntitlementProvider>
-          <AppRoutes />
-        </EntitlementProvider>
+        <MetaTrackingProvider>
+          <EntitlementProvider>
+            <AppRoutes />
+          </EntitlementProvider>
+        </MetaTrackingProvider>
       </RequireAuth>
     </AuthProvider>);
 
