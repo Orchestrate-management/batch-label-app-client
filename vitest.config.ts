@@ -30,6 +30,9 @@ export default defineConfig({
         'src/lib/auth-redirect.ts',
         'src/lib/membership.ts',
         'src/lib/marketing.ts',
+        'src/lib/account.ts',
+        'src/lib/agreements.ts',
+        'src/lib/consent-preferences.ts',
       ],
       thresholds: {
         lines: 70,

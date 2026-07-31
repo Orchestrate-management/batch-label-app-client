@@ -7,6 +7,7 @@ import {
   LogOutIcon,
   PackageIcon,
   SettingsIcon,
+  UserIcon,
   type LucideIcon } from
 'lucide-react';
 import { Logo } from './Logo';
@@ -41,12 +42,18 @@ const NAV: NavItem[] = [
 }];
 
 
+/**
+ * The account menu is desktop only, so on a phone this strip is the whole of the
+ * navigation. Account is on it because otherwise a maker on a phone had no route
+ * to their password, their marketing preferences or even sign out.
+ */
 const MOBILE_NAV = [
 { to: '/', label: 'Studio', end: true },
 { to: '/products', label: 'Products' },
 { to: '/materials/ingredient', label: 'Materials', indent: true },
 { to: '/records', label: 'Records', indent: true },
-{ to: '/settings/identity', label: 'Settings' }];
+{ to: '/settings/identity', label: 'Settings' },
+{ to: '/settings/account', label: 'Account' }];
 
 
 export function AppShell({ children }: {children: React.ReactNode;}) {
@@ -207,16 +214,31 @@ function AccountMenu() {
           role="menuitem"
           className={itemClass}
           onClick={() => navigate('/settings/identity')}>
-          
+
             <SettingsIcon className="h-4 w-4" strokeWidth={1.25} aria-hidden="true" />
             Settings
+          </button>
+          {/*
+            Directly under the maker's own name, which is where people look for a
+            password. Without this entry the only route to it is Settings, then a
+            tab called Account, and someone who signed up on www would have no
+            reason to believe this app held any of it.
+           */}
+          <button
+          type="button"
+          role="menuitem"
+          className={itemClass}
+          onClick={() => navigate('/settings/account')}>
+
+            <UserIcon className="h-4 w-4" strokeWidth={1.25} aria-hidden="true" />
+            Account and password
           </button>
           <button
           type="button"
           role="menuitem"
           className={itemClass}
           onClick={() => navigate('/settings/billing')}>
-          
+
             <CreditCardIcon className="h-4 w-4" strokeWidth={1.25} aria-hidden="true" />
             Billing
           </button>

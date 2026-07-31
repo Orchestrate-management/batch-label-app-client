@@ -5,8 +5,8 @@ Two deployments, one product, one login.
 | | `www.batchlabel.xyz` | `app.batchlabel.xyz` |
 | --- | --- | --- |
 | Repo | `batch-label` | `Batch-Label-Product-Application` (this one) |
-| Owns | marketing, signup, login, consent, Stripe, plan changes | the product |
-| Writes to Supabase | yes, including entitlements (server-side) | **never** |
+| Owns | marketing, signup, login, password reset, consent, Stripe, plan changes | the product, and the signed-in account settings |
+| Writes to Supabase | yes, including entitlements (server-side) | only through `set_consent()` and `auth.updateUser` — never a table |
 | Has a login form | yes | no, and it never will |
 
 The split is deliberate. Accounts and money are sold, changed and cancelled in
@@ -237,6 +237,85 @@ sentences.
 
 ---
 
+## 3a. Account settings
+
+`Settings → Account` (`/settings/account`) is the one place in this app that is about
+the person rather than the product. It is reachable from the sidebar account menu
+("Account and password"), from the settings tab strip, and from the mobile nav — the
+sidebar menu is desktop only, so without the last one a maker on a phone had no route to
+their password or to sign out.
+
+### Changing a password
+
+`supabase.auth.updateUser({ password })` **does not ask for the current password**. A live
+session is enough. That makes a borrowed laptop or a stolen session cookie sufficient to
+take an account, and the owner finds out when their password stops working.
+
+Supabase's answer is the **Secure password change** setting (Authentication → Providers →
+Email). Turn it on, but do not mistake it for a fix. From supabase-js's own documentation:
+
+> A user is only required to reauthenticate before updating their password if Secure
+> password change is enabled **and the user hasn't recently signed in**. A user is deemed
+> recently signed in if the session was created in the last 24 hours.
+
+A borrowed laptop is a recent session. A stolen cookie is a live session. The exemption
+covers exactly the case that matters.
+
+So `src/lib/account.ts` re-authenticates first: it calls `signInWithPassword` with the
+current password and only calls `updateUser` if that succeeds. It needs no dashboard
+change and it stops the actual threat. Two properties make the probe safe, both verified
+against `@supabase/auth-js` 2.111 and against the live auth server:
+
+- A failed `signInWithPassword` returns the error and **leaves the existing session
+  intact**. A typo costs a retry, not a sign-out.
+- A successful one issues a fresh session through the same shared cookie adapter, so www
+  and this app stay in step.
+
+Brute force is bounded by the same Supabase rate limit that protects the login form on
+www, because it is the same endpoint.
+
+**Other sessions are ended.** After a successful change the app calls
+`signOut({ scope: 'others' })`, which revokes every other session and keeps the current
+one. Changing a password is what someone does when they think another person has their
+account, so leaving that person signed in would defeat the point. It is done explicitly
+rather than relying on a server default, and reported separately: if the revoke fails the
+password has still changed, and the screen says so rather than claiming a failure that
+would send someone back to a password that no longer works.
+
+### An account with no password
+
+A maker who signed up with Google has one identity and no password. There is nothing to
+change, so the form is replaced with an explanation and a button that emails a link to set
+one — `resetPasswordForEmail`, redirecting to www's `/reset-password`, which is where
+password screens live. www's `/forgot-password` is written for someone who had a password
+and forgot it, so a Google user would never think to look there.
+
+One case cannot be detected: a magic-link signup creates an `email` identity but no
+password, and Supabase exposes no "has password" flag. Those makers see the form, find
+their current password does not match, and the reset-by-email link sits directly under the
+error.
+
+### Consent
+
+`Settings → Account` changes the marketing email opt-in through the `set_consent()`
+function — the same call www's account area makes. See `docs/CONSENT.md` in the marketing
+repo, section "The contract for the product app". There is no table write and no endpoint
+of this app's own.
+
+Advertising is read-only here. It is the cookie banner's marketing toggle, and this app
+cannot see the stored banner choice at all: `bl_consent` lives in `localStorage` and in a
+cookie written with no `domain` attribute, so it is host-only on `www.batchlabel.xyz`
+while the session cookie is scoped to `.batchlabel.xyz`. What is shown is
+`advertising_opt_in` from the membership row, with a link to
+`/cookie-policy?cookie-settings=1`, which opens www's banner directly.
+
+**`src/lib/agreements.ts` mirrors the version strings from the marketing repo.** Both
+repos write into the same `consent_events` table. Bump a version there and it must be
+bumped here in the same change, or one piece of wording ends up with two version numbers
+in the audit log. `src/lib/consent-preferences.test.ts` pins the values.
+
+---
+
 ## 4. Environment variables
 
 Copy `.env.example` to `.env.local` for development, and set the same values in
@@ -315,9 +394,20 @@ Google flow is ever initiated from the app origin.
 - `vercel.json` adds the SPA rewrite. Without it every deep link 404s —
   including the one www hands back after login.
 
+### 5.3a Secure password change
+
+Supabase → Authentication → Providers → Email → **Secure password change**: switch it on.
+
+It is defence in depth, not the defence. The app already requires the current password
+before it changes anything (section 3a), which is what covers a live or recent session.
+This setting adds a reauthentication OTP for sessions older than 24 hours, and it covers
+any other client that ever talks to this project — including one written later by someone
+who has not read this document.
+
 ### 5.4 Checklist
 
 - [ ] `https://app.batchlabel.xyz` and `https://app.batchlabel.xyz/**` in Supabase redirect URLs
+- [ ] **Secure password change** enabled on the email provider
 - [ ] `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` set on the Vercel app project
 - [ ] The Supabase project ref matches the one www uses
 - [ ] `VITE_ORCHESTRATE_BRAND` matches www (or is unset on both)
@@ -339,3 +429,19 @@ Settings → Identity and Settings → Team also still read from fixtures. The c
 file, invoice history and plan switcher that used to sit in Settings → Billing have
 been removed rather than left looking real next to a genuine plan status, and now
 link to www where Stripe actually is.
+
+Settings → Account is real: the password change, the marketing email opt-in and the
+advertising state all talk to Supabase.
+
+Three things it does not do, all of them by email today and all of them flagged rather
+than faked:
+
+- **Changing an email address.** Not self service anywhere. `auth.updateUser({ email })`
+  exists, but doing it properly needs confirmation sent to both the old and the new
+  address (Supabase's **Secure email change** setting), and getting that wrong hands an
+  account to whoever typed the new address.
+- **Deleting an account.** Needs a service-role call, so it cannot live in this browser.
+- **Exporting data.** No endpoint exists yet.
+
+The privacy notice promises the last two within a month, by email to
+privacy@batchlabel.co.uk. Until they are built, that promise is the product.
