@@ -29,6 +29,7 @@ import { TeamMember } from '../lib/model';
 import { useEntitlement } from '../lib/entitlement';
 import { entitlementMessage, planLabel } from '../lib/membership';
 import { ACCOUNT_URL, PRICING_URL } from '../lib/marketing';
+import { metaInitiateCheckout } from '../lib/meta-pixel';
 import { regimeById } from '../lib/regimes';
 import { useProducts, useWorkspace } from '../lib/workspace';
 
@@ -462,8 +463,15 @@ function BillingTab() {
               Manage billing
               <ExternalLinkIcon className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
             </a>
+            {/*
+              The other half of the app's InitiateCheckout. "Manage billing"
+              directly above deliberately does not fire it: it opens the Stripe
+              customer portal, where somebody changes a card or cancels, and
+              that is not a purchase starting. See lib/meta-pixel.ts.
+             */}
             <a
               href={PRICING_URL}
+              onClick={() => metaInitiateCheckout('billing-settings')}
               className="inline-flex h-9 items-center gap-2 rounded-control border border-paper-line bg-paper px-3 text-[0.8125rem] font-medium text-ink transition-colors hover:bg-paper-panel">
 
               Compare plans

@@ -2,6 +2,7 @@ import { ExternalLinkIcon, RefreshCwIcon } from 'lucide-react';
 import { Button, Callout } from './ui/Primitives';
 import { useEntitlement } from '../lib/entitlement';
 import { ACCOUNT_URL, PRICING_URL } from '../lib/marketing';
+import { metaInitiateCheckout } from '../lib/meta-pixel';
 import type { EntitlementStatus } from '../lib/membership';
 
 /**
@@ -16,10 +17,22 @@ import type { EntitlementStatus } from '../lib/membership';
  * Every action leaves for www.batchlabel.xyz. This app deliberately has no
  * checkout of its own: plans are sold, changed and cancelled in one place, next
  * to the Stripe customer portal, and that place is not here.
+ *
+ * Which is why `upgrade` exists below rather than "fire the event on every link
+ * in this file". Two of these actions are somebody deciding to start paying;
+ * the other two are somebody fixing a card or asking about a suspension, and
+ * reporting those as checkouts would inflate the exact number the ad account
+ * optimises against. See lib/meta-pixel.ts and docs/META_TRACKING.md.
  */
 
 type Action =
-{kind: 'link';href: string;label: string;} |
+{
+  kind: 'link';
+  href: string;
+  label: string;
+  /** True when pressing this is a maker starting a purchase. Meta's InitiateCheckout. */
+  upgrade?: boolean;
+} |
 {kind: 'retry';label: string;} |
 {kind: 'none';};
 
@@ -42,7 +55,7 @@ function copyFor(status: EntitlementStatus, feature: string): Copy | null {
         body:
         'Everything else stays open on the free plan — build products, read supplier documents ' +
         'and check what the regulations require. Producing the finished artefact is the paid part.',
-        action: { kind: 'link', href: PRICING_URL, label: 'See plans' }
+        action: { kind: 'link', href: PRICING_URL, label: 'See plans', upgrade: true }
       };
 
     case 'past_due':
@@ -62,7 +75,7 @@ function copyFor(status: EntitlementStatus, feature: string): Copy | null {
         body:
         'Nothing has been deleted. Your products, materials and records are all still here and ' +
         'still readable — starting a plan again switches this back on exactly as it was.',
-        action: { kind: 'link', href: PRICING_URL, label: 'Start a plan again' }
+        action: { kind: 'link', href: PRICING_URL, label: 'Start a plan again', upgrade: true }
       };
 
     case 'no_membership':
@@ -125,6 +138,7 @@ export function PlanNotice({
       {copy.action.kind === 'link' &&
       <a
         href={copy.action.href}
+        onClick={copy.action.upgrade ? () => metaInitiateCheckout('plan-gate') : undefined}
         className="mt-3 inline-flex h-9 items-center gap-2 rounded-control bg-teal px-3 text-[0.8125rem] font-medium text-white transition-colors hover:bg-teal-hover">
 
           {copy.action.label}
