@@ -4,6 +4,7 @@ import { CheckIcon, ExternalLinkIcon, PhoneIcon, PlusIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '../components/AppShell';
 import { PlanNotice } from '../components/PlanNotice';
+import { AccountTab } from '../components/settings/AccountTab';
 import {
   Button,
   Callout,
@@ -49,6 +50,13 @@ const TABS = [
   'Who can work in this workspace, and who signs off a safety data sheet before it is issued.'
 },
 {
+  id: 'account',
+  label: 'Account',
+  title: 'Your account',
+  description:
+  'Your sign-in, your password and what you agreed to. Nothing here changes a label.'
+},
+{
   id: 'billing',
   label: 'Billing',
   title: 'Plan and billing',
@@ -65,9 +73,13 @@ const TABS = [
 const;
 
 /**
- * Ordered by consequence: what prints first, small reversible choices last.
- * Identity is not really a preference, which is why it leads and why saving it
- * says what it will invalidate.
+ * Product settings are ordered by consequence: what prints first, small
+ * reversible choices last. Identity is not really a preference, which is why it
+ * leads and why saving it says what it will invalidate.
+ *
+ * Account and Billing sit together in the middle because they are about the
+ * person and their plan rather than the product, and someone looking for one
+ * usually wants the other.
  */
 export function Settings() {
   const { tab } = useParams();
@@ -100,6 +112,7 @@ export function Settings() {
       <div className="space-y-8 px-6 py-8 lg:px-10">
         {active.id === 'identity' && <IdentityTab />}
         {active.id === 'team' && <TeamTab />}
+        {active.id === 'account' && <AccountTab />}
         {active.id === 'billing' && <BillingTab />}
         {active.id === 'preferences' && <PreferencesTab />}
       </div>
