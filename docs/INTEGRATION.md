@@ -355,6 +355,8 @@ the Vercel project for preview and production.
 | `VITE_SUPABASE_ANON_KEY` | yes | — | Public by design; protected by RLS. |
 | `VITE_MARKETING_URL` | no | `https://www.batchlabel.xyz` | Where login lives and sign-out returns to. |
 | `VITE_ORCHESTRATE_BRAND` | no | `batchlabel` | Must match www's value. |
+| `VITE_META_PIXEL_ID` | no | unset | The Meta dataset id, `1374342861305621`. Public by design. Unset means no Pixel loads and nothing is sent. **Not yet set on the Vercel project** — see `docs/META_TRACKING.md` §7. |
+| `VITE_META_PIXEL_DEBUG` | no | unset | Only `"true"` counts. Loads the Pixel on localhost for Meta's Test Events. Never set it in Vercel. |
 
 There are no secrets in this app. The anon key is meant to be in a browser
 bundle: every table is behind row level security, and `brand_memberships` in
@@ -455,6 +457,7 @@ sessions over a day old, and must implement its own re-authentication.
 - [ ] `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` set on the Vercel app project
 - [ ] The Supabase project ref matches the one www uses
 - [ ] `VITE_ORCHESTRATE_BRAND` matches www (or is unset on both)
+- [ ] `VITE_META_PIXEL_ID` set on the Vercel app project, matching www's — `docs/META_TRACKING.md` §7
 - [ ] `https://app.batchlabel.xyz` in Google authorised JavaScript origins, if Google sign-in is used
 - [ ] Sign up on www, confirm you land in the app already signed in
 - [ ] Sign out in the app, confirm you are signed out on www too
@@ -489,3 +492,17 @@ than faked:
 
 The privacy notice promises the last two within a month, by email to
 privacy@batchlabel.co.uk. Until they are built, that promise is the product.
+
+That the export is still a toast is also why no "activation" event is sent to Meta:
+an advertising event for an action that produces nothing is a fabricated conversion.
+The reasoning is in `docs/META_TRACKING.md` §6, and it is worth re-reading when the
+export becomes real rather than assuming the answer stays no.
+
+---
+
+## 7. Advertising measurement
+
+The app loads the Meta Pixel for one event, `InitiateCheckout`, gated on
+`brand_memberships.advertising_opt_in` and failing closed in every other case. It has
+no cookie banner and sends no `PageView`. See `docs/META_TRACKING.md`, and
+`batch-label/docs/CONSENT.md` for the consent model both sites obey.
