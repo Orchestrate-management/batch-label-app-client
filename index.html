@@ -1,10 +1,37 @@
 <!doctype html>
-<html lang="en">
+<html lang="en-GB">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+
+    <!--
+      The tab is part of the crossing.
+
+      A maker signs up on www.batchlabel.xyz and is handed straight here. Until
+      now the tab they arrived in said "Batch Label Product Application" next to
+      the Vite logo, which is the moment a careful person checks the address bar
+      and wonders whether they have been phished. Worse, `/vite.svg` was never in
+      this repo at all: vercel.json rewrites every unmatched path to index.html,
+      so the browser asked for the icon and was handed a page of HTML.
+
+      Icons are copied from the marketing site's public/brand — SVG first for
+      browsers that take it, the 32px PNG as the fallback, and the 180px
+      apple-touch-icon as a PNG because Safari ignores SVG in that slot. If the
+      mark ever changes, it changes in both repos.
+    -->
+    <link rel="icon" type="image/svg+xml" href="/brand/batchlabel-favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/brand/favicon-32x32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/brand/apple-touch-icon.png" />
+    <meta name="theme-color" content="#14514F" />
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Batch Label Product Application</title>
+
+    <!--
+      Nothing in this app is public, so there is no SEO to do here and no meta
+      description worth writing. The title only has to be the name the maker
+      just signed up to.
+    -->
+    <title>Batchlabel</title>
+    <meta name="robots" content="noindex, nofollow" />
   </head>
   <body>
     <div id="root"></div>
