@@ -115,9 +115,15 @@ export function Field({
 const inputBase =
 'w-full rounded-control border border-paper-line bg-paper px-3 py-2.5 text-sm text-ink placeholder:text-ink-tertiary focus:border-teal focus:outline-none focus-visible:outline-none';
 
-export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={twMerge(inputBase, className)} {...props} />;
-}
+/**
+ * forwardRef so a form can move focus to the box that is wrong. An error nobody
+ * is taken to is an error most people do not find.
+ */
+export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
+  function Input({ className, ...props }, ref) {
+    return <input ref={ref} className={twMerge(inputBase, className)} {...props} />;
+  }
+);
 
 export function Select({
   className,
@@ -135,19 +141,31 @@ export function Callout({
   tone = 'info',
   title,
   children,
-  className
+  className,
+  role
 
 
 
 
 
-}: {tone?: 'info' | 'warn';title?: string;children: React.ReactNode;className?: string;}) {
+
+}: {tone?: 'info' | 'warn';title?: string;children: React.ReactNode;className?: string;
+  /**
+   * Set `status` when this callout is the confirmation that something worked,
+   * and `alert` when it is a failure. Without one, a callout that appears in
+   * response to an action is announced to nobody — it is only ever seen by
+   * someone already looking at that part of the page.
+   */
+  role?: 'status' | 'alert';}) {
   const tones = {
     info: 'bg-teal-tint border-teal-selected text-ink-secondary',
     warn: 'bg-clay-tint border-clay/30 text-clay-dark'
   };
   return (
-    <div className={twMerge('rounded-control border px-4 py-3 text-[0.8125rem]', tones[tone], className)}>
+    <div
+      role={role}
+      className={twMerge('rounded-control border px-4 py-3 text-[0.8125rem]', tones[tone], className)}>
+
       {title && <p className="mb-1 font-medium text-ink">{title}</p>}
       {children}
     </div>);
@@ -174,6 +192,108 @@ export function EmptyState({
       </div>
       {action}
     </div>);
+
+}
+
+/**
+ * A checkbox with a label and an optional second line.
+ *
+ * The description is wired with aria-describedby rather than left as loose text
+ * beside the control, so what a sighted maker reads under the label is also what
+ * a screen reader announces with it. That matters most where the description is
+ * the part carrying the meaning — "unsubscribe any time" is the reassurance the
+ * box is asking someone to trust.
+ */
+export function Checkbox({
+  id,
+  checked,
+  onChange,
+  disabled,
+  label,
+  description,
+  className
+
+
+
+
+}: {id: string;checked: boolean;onChange: (checked: boolean) => void;disabled?: boolean;label: React.ReactNode;description?: React.ReactNode;className?: string;}) {
+  const descriptionId = description ? `${id}-description` : undefined;
+  return (
+    <div className={twMerge('flex items-start gap-3', className)}>
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        aria-describedby={descriptionId}
+        onChange={(event) => onChange(event.target.checked)}
+        className="mt-0.5 h-4 w-4 flex-none accent-teal disabled:opacity-50" />
+
+      <div className="min-w-0">
+        <label htmlFor={id} className="block text-sm font-medium text-ink">
+          {label}
+        </label>
+        {description &&
+        <p id={descriptionId} className="mt-0.5 text-2xs leading-relaxed text-ink-tertiary">
+            {description}
+          </p>
+        }
+      </div>
+    </div>);
+
+}
+
+/**
+ * An error that is announced when it appears.
+ *
+ * `role="alert"` rather than a styled paragraph: a message that only exists
+ * visually is invisible to anyone whose focus has already moved past it, which
+ * on a form is everyone who just pressed the button.
+ */
+export function FormError({ id, children }: {id?: string;children: React.ReactNode;}) {
+  return (
+    <p id={id} role="alert" className="text-[0.8125rem] font-medium text-clay-dark">
+      {children}
+    </p>);
+
+}
+
+/** Confirmation that something saved. Announced politely, not as an alert. */
+export function FormStatus({ children }: {children: React.ReactNode;}) {
+  return (
+    <p role="status" className="text-[0.8125rem] text-ink-secondary">
+      {children}
+    </p>);
+
+}
+
+/**
+ * The visible key for the required asterisk, matching www's `RequiredKey`.
+ *
+ * Sighted readers see "Fields marked * are required." A screen reader hears
+ * "Fields marked with an asterisk are required.", because the character itself
+ * is hidden — read aloud it is just "star", which explains nothing.
+ */
+export function RequiredKey() {
+  return (
+    <p className="text-2xs text-ink-tertiary">
+      Fields marked{' '}
+      <span aria-hidden="true" className="font-medium text-clay-dark">*</span>
+      <span className="sr-only">with an asterisk</span> are required.
+    </p>);
+
+}
+
+/**
+ * The required marker itself. Hidden from assistive tech, because the accessible
+ * name carries "(required)" in words and `required` carries it in semantics.
+ */
+export function RequiredMark() {
+  return (
+    <>
+      <span aria-hidden="true" className="ml-1 font-medium text-clay-dark">*</span>
+      <span className="sr-only"> (required)</span>
+    </>);
 
 }
 

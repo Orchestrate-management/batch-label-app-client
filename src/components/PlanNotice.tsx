@@ -4,6 +4,7 @@ import { Button, Callout } from './ui/Primitives';
 import { useEntitlement } from '../lib/entitlement';
 import { planLabel } from '../lib/membership';
 import { SUPPORT_EMAIL } from '../lib/marketing';
+import { metaInitiateCheckout } from '../lib/meta-pixel';
 import type { EntitlementStatus } from '../lib/membership';
 
 /**
@@ -32,10 +33,23 @@ import type { EntitlementStatus } from '../lib/membership';
  * archive, so no sentence here describes a print-ready file, a document you can upload, or
  * anything you can archive. `feature` is the label on the control the maker is looking at,
  * and that is deliberately all it is.
+ *
+ * `upgrade` survived the move, and it is still selective rather than "fire the event on every
+ * link in this file". Two of these actions are somebody deciding to start paying; the others
+ * are somebody asking about a suspension or retrying a failed read, and reporting those as
+ * checkouts would inflate the exact number the ad account optimises against. The destination
+ * changed from www to /billing; which presses count as intent did not. See lib/meta-pixel.ts
+ * and docs/META_TRACKING.md.
  */
 
 type Action =
-{kind: 'internal';to: string;label: string;} |
+{
+  kind: 'internal';
+  to: string;
+  label: string;
+  /** True when pressing this is a maker starting a purchase. Meta's InitiateCheckout. */
+  upgrade?: boolean;
+} |
 {kind: 'external';href: string;label: string;} |
 {kind: 'retry';label: string;} |
 {kind: 'none';};
@@ -72,7 +86,7 @@ export function copyFor(status: EntitlementStatus, feature: string, plan: string
         'You are on Free. Building products, working through a specification and seeing which ' +
         'checks each regime requires all stay open. A plan raises how many SKUs your account ' +
         'holds and turns this on.',
-        action: { kind: 'internal', to: '/billing', label: 'See plans' }
+        action: { kind: 'internal', to: '/billing', label: 'See plans', upgrade: true }
       };
 
     case 'lapsed':
@@ -83,7 +97,7 @@ export function copyFor(status: EntitlementStatus, feature: string, plan: string
         'Nothing has been deleted and nothing has been taken off you. Your account can do ' +
         'everything the Free plan can, exactly as it would for somebody who never subscribed. ' +
         'Starting a plan again switches this back on.',
-        action: { kind: 'internal', to: '/billing', label: 'Start a plan again' }
+        action: { kind: 'internal', to: '/billing', label: 'Start a plan again', upgrade: true }
       };
 
     case 'no_membership':
@@ -148,7 +162,11 @@ export function PlanNotice({
     <Callout tone={copy.tone} title={copy.title} className={className}>
       <p className="max-w-prose leading-relaxed">{copy.body}</p>
       {copy.action.kind === 'internal' &&
-      <Link to={copy.action.to} className={ACTION_CLASS}>
+      <Link
+        to={copy.action.to}
+        onClick={copy.action.upgrade ? () => metaInitiateCheckout('plan-gate') : undefined}
+        className={ACTION_CLASS}>
+
           {copy.action.label}
         </Link>
       }

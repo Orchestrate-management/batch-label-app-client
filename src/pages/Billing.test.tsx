@@ -22,9 +22,14 @@ const entitlement = vi.fn<() => EntitlementValue>();
 const createCheckoutSession = vi.fn();
 const createPortalSession = vi.fn();
 const leaveFor = vi.fn();
+const mocks = { metaInitiateCheckout: vi.fn() };
 
 vi.mock('../lib/entitlement', () => ({
   useEntitlement: () => entitlement()
+}));
+
+vi.mock('../lib/meta-pixel', () => ({
+  metaInitiateCheckout: (...args: unknown[]) => mocks.metaInitiateCheckout(...args)
 }));
 
 vi.mock('../lib/workspace', () => ({
@@ -79,6 +84,7 @@ beforeEach(() => {
   createCheckoutSession.mockReset();
   createPortalSession.mockReset();
   leaveFor.mockReset();
+  mocks.metaInitiateCheckout.mockReset();
   entitlement.mockReturnValue(stateFor({ plan: 'free' }));
 });
 
@@ -300,5 +306,41 @@ describe('the plan somebody is on', () => {
     await waitFor(() =>
     expect(screen.getByText('We could not check your plan just now.')).toBeInTheDocument()
     );
+  });
+});
+
+/**
+ * The InitiateCheckout pair, moved here from Settings.billing.test.tsx.
+ *
+ * That file tested the Settings → Billing tab, which no longer exists — the purchase moved
+ * onto this route. The assertion it protected did not move with it automatically, and for a
+ * while nothing fired InitiateCheckout at all: the tab was deleted, and the new page was
+ * written without it. This is why the test came too.
+ *
+ * "Choose a plan" and "Manage billing" sit on the same screen. One is somebody deciding to
+ * start paying; the other opens the Stripe portal to change a card or cancel. Only the first
+ * is a checkout, and reporting the second as one would inflate the exact number the ad
+ * account optimises against.
+ */
+describe('reports a checkout starting, and only that', () => {
+  it('fires InitiateCheckout when a plan is chosen', async () => {
+    createCheckoutSession.mockResolvedValue({ ok: true, url: 'https://checkout.stripe.com/x' });
+    renderPage();
+
+    const choose = await screen.findByRole('button', { name: /choose maker/i });
+    await userEvent.click(choose);
+
+    expect(mocks.metaInitiateCheckout).toHaveBeenCalledTimes(1);
+    expect(mocks.metaInitiateCheckout).toHaveBeenCalledWith('billing-page');
+  });
+
+  it('does not fire it when the billing portal is opened', async () => {
+    createPortalSession.mockResolvedValue({ ok: true, url: 'https://billing.stripe.com/x' });
+    renderPage();
+
+    const manage = await screen.findByRole('button', { name: /manage billing/i });
+    await userEvent.click(manage);
+
+    expect(mocks.metaInitiateCheckout).not.toHaveBeenCalled();
   });
 });

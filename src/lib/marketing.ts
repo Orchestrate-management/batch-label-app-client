@@ -66,3 +66,30 @@ export const HOME_URL = MARKETING_URL;
  * address rather than one invented here.
  */
 export const SUPPORT_EMAIL = 'hello@batchlabel.co.uk';
+
+/**
+ * Reset by email, for someone who cannot supply their current password.
+ *
+ * The app's own change-password form needs the current password by design (see
+ * lib/account.ts). Someone who does not have it has to prove themselves through
+ * their inbox instead, and that flow lives on www.
+ */
+export const FORGOT_PASSWORD_URL = marketingUrl('/forgot-password');
+
+/**
+ * Cookie settings on www, opened directly.
+ *
+ * Advertising consent is the cookie banner's marketing toggle and is changed
+ * nowhere else, so this app has to be able to send someone straight to it. The
+ * banner is a component rather than a page, so www opens it from this query
+ * parameter — see batch-label/src/components/CookieBanner.tsx. Landing on the
+ * cookie policy is the right backstop if that ever stops working: it is the
+ * document the decision is about.
+ */
+export const COOKIE_SETTINGS_URL = marketingUrl('/cookie-policy?cookie-settings=1');
+
+/** The privacy notice. Where "ask us for your data" is explained. */
+export const PRIVACY_URL = marketingUrl('/privacy');
+
+/** The terms, as accepted at signup. */
+export const TERMS_URL = marketingUrl('/terms');

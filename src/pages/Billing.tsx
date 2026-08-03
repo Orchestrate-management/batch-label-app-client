@@ -4,6 +4,7 @@ import { PageHeader } from '../components/AppShell';
 import { Button, Callout, Card, Pill, SectionTitle, Skeleton } from '../components/ui/Primitives';
 import { useEntitlement } from '../lib/entitlement';
 import { allowanceLabel, entitlementMessage, periodLine, planLabel } from '../lib/membership';
+import { metaInitiateCheckout } from '../lib/meta-pixel';
 import {
   createCheckoutSession,
   createPortalSession,
@@ -152,7 +153,16 @@ export function Billing() {
             }
             busy={pending !== null}
             pendingSlug={pending}
-            onChoose={(slug) => run(slug, () => createCheckoutSession(slug, interval))} />
+            /* Meta's InitiateCheckout, and only here. This press is somebody deciding to
+               start paying; "Manage billing" above it opens the portal to change a card or
+               cancel, and reporting that as a checkout would inflate the exact number the ad
+               account optimises against. The event used to fire from Settings → Billing on
+               www; it moved with the purchase, it did not disappear. Fired before the await
+               so a slow session-create cannot lose it. */
+            onChoose={(slug) => {
+              metaInitiateCheckout('billing-page');
+              run(slug, () => createCheckoutSession(slug, interval));
+            }} />
 
           }
         </section>

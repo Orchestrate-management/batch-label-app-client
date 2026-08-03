@@ -52,10 +52,15 @@ describe('the notice, state by state', () => {
     // thing they are looking at loses people for no reason, and the checkout session has to
     // carry their Supabase user id anyway.
     for (const status of ['free', 'lapsed'] as EntitlementStatus[]) {
+      // `upgrade: true` on both, and that is the point of the flag rather than an
+      // incidental extra key: these two presses are somebody deciding to start paying, so
+      // they are the only ones that report Meta's InitiateCheckout. The suspended and retry
+      // actions deliberately do not — see the render test.
       expect(copyFor(status, 'Exporting', 'Free')?.action).toEqual({
         kind: 'internal',
         to: '/billing',
-        label: expect.any(String)
+        label: expect.any(String),
+        upgrade: true
       });
     }
   });

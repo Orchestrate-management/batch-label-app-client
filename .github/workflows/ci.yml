@@ -51,3 +51,29 @@ jobs:
           name: coverage
           path: coverage/
           if-no-files-found: ignore
+
+  # src/lib/agreements.ts mirrors version strings from the marketing repo, and
+  # both repos write them into the same consent_events table. A unit test here
+  # can only compare this repo to itself, so the check that can actually fail on
+  # drift has to reach across — which makes it a job, not a test.
+  #
+  # Without WWW_REPO_TOKEN it reports "NOT CHECKED" as a warning and passes.
+  # Both repos are private and the default GITHUB_TOKEN cannot read the other
+  # one, so failing here would just mean a permanently red build until someone
+  # creates a secret. A loud "unchecked" is honest; a quiet green is not.
+  agreement-versions:
+    name: Agreement versions match www
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Compare with the marketing site
+        env:
+          WWW_REPO_TOKEN: ${{ secrets.WWW_REPO_TOKEN }}
+        run: node scripts/check-agreement-versions.mjs

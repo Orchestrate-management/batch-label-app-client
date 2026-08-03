@@ -5,8 +5,8 @@ Two deployments, one product, one login.
 | | `www.batchlabel.xyz` | `app.batchlabel.xyz` |
 | --- | --- | --- |
 | Repo | `batch-label` | `Batch-Label-Product-Application` (this one) |
-| Owns | marketing, signup, login, consent, and the **server** side of Stripe | the product, and all account management |
-| Writes to Supabase | yes, including entitlements (server-side) | **never** |
+| Owns | marketing, signup, login, password reset, consent, and the **server** side of Stripe | the product, all account management, and where a plan is bought |
+| Writes to Supabase | yes, including entitlements (server-side) | only through `set_consent()` and `auth.updateUser` — never a table |
 | Has a login form | yes | no, and it never will |
 | Sells a plan | no longer — it routes here | **yes**, at `/billing` |
 
@@ -277,6 +277,114 @@ sentences.
 
 ---
 
+## 3a. Account settings
+
+`Settings → Account` (`/settings/account`) is the one place in this app that is about
+the person rather than the product. It is reachable from the sidebar account menu
+("Account and password"), from the settings tab strip, and from the mobile nav — the
+sidebar menu is desktop only, so without the last one a maker on a phone had no route to
+their password or to sign out.
+
+### Changing a password
+
+`supabase.auth.updateUser({ password })` **does not ask for the current password**. A live
+session is enough. That makes a borrowed laptop or a stolen session cookie sufficient to
+take an account, and the owner finds out when their password stops working.
+
+Supabase's answer is the **Secure password change** setting (Authentication → Providers →
+Email). Turn it on, but do not mistake it for a fix. From supabase-js's own documentation:
+
+> A user is only required to reauthenticate before updating their password if Secure
+> password change is enabled **and the user hasn't recently signed in**. A user is deemed
+> recently signed in if the session was created in the last 24 hours.
+
+A borrowed laptop is a recent session. A stolen cookie is a live session. The exemption
+covers exactly the case that matters.
+
+So `src/lib/account.ts` re-authenticates first: it calls `signInWithPassword` with the
+current password and only calls `updateUser` if that succeeds. It needs no dashboard
+change and it stops the actual threat. Two properties make the probe safe, both verified
+against `@supabase/auth-js` 2.111 and against the live auth server:
+
+- A failed `signInWithPassword` returns the error and **leaves the existing session
+  intact**. A typo costs a retry, not a sign-out.
+- A successful one issues a fresh session through the same shared cookie adapter, so www
+  and this app stay in step.
+
+Brute force is bounded by the same Supabase rate limit that protects the login form on
+www, because it is the same endpoint.
+
+**Other sessions are ended.** After a successful change the app calls
+`signOut({ scope: 'others' })`, which revokes every other session and keeps the current
+one. Changing a password is what someone does when they think another person has their
+account, so leaving that person signed in would defeat the point. It is done explicitly
+rather than relying on a server default, and reported separately: if the revoke fails the
+password has still changed, and the screen says so rather than claiming a failure that
+would send someone back to a password that no longer works.
+
+### The other side of it: www
+
+`updateUser({ password })` is reachable from www's `/reset-password` too, and a guard on
+one of two stacked sites is not a guard. That page is gated on a **recovery marker
+captured from the URL fragment**, not on session presence — the session cookie is shared
+for 400 days, so on www an ordinary signed-in maker is signed in essentially always, and
+gating on it would have handed the account to anyone holding the browser. See
+`batch-label/src/lib/recovery-entry.ts`.
+
+### An account with no password
+
+A maker who signed up with Google probably has no password, so the set-password card leads:
+a button that emails a link via `resetPasswordForEmail`, redirecting to www's
+`/reset-password`. www's `/forgot-password` is written for someone who had a password and
+forgot it, so a Google user would never think to look there.
+
+**Both routes are always reachable, and neither is gated on the identity list.**
+`hasEmailIdentity` only decides which one leads. It cannot decide which one someone is
+allowed, because Supabase exposes no "has password" flag and `identities` is wrong in both
+directions:
+
+- setting a password through `updateUser` writes `encrypted_password` and does **not** add
+  an `email` identity, so a maker who used the set-password link still reports Google only
+  for ever;
+- a magic-link signup creates an `email` identity and never sets a password.
+
+An earlier version used it as a gate and permanently stranded exactly the people the
+set-password flow was written for: they set a password, then could never reach the form to
+change it. Getting the hint wrong now costs one click.
+
+### Consent
+
+`Settings → Account` changes the marketing email opt-in through the `set_consent()`
+function — the same call www's account area makes. See `docs/CONSENT.md` in the marketing
+repo, section "The contract for the product app". There is no table write and no endpoint
+of this app's own.
+
+Advertising is read-only here. It is the cookie banner's marketing toggle, and this app
+cannot see the stored banner choice at all: `bl_consent` lives in `localStorage` and in a
+cookie written with no `domain` attribute, so it is host-only on `www.batchlabel.xyz`
+while the session cookie is scoped to `.batchlabel.xyz`. What is shown is
+`advertising_opt_in` from the membership row, with a link to
+`/cookie-policy?cookie-settings=1`, which opens www's banner directly.
+
+**`src/lib/agreements.ts` mirrors the version strings from the marketing repo.** Both
+repos write into the same `consent_events` table. Bump a version there and it must be
+bumped here in the same change, or one piece of wording ends up with two version numbers
+in the audit log.
+
+That is checked by `scripts/check-agreement-versions.mjs`, run as its own CI job, which
+fetches www's `agreements.ts` and compares. A unit test cannot do this — it can only
+compare this repo to itself, and an earlier one that did exactly that would have passed
+through any real drift.
+
+**The check needs a token.** Both repos are private and a workflow's default
+`GITHUB_TOKEN` is scoped to its own repository, so without one the job prints a
+`NOT CHECKED` warning and passes rather than failing a build nobody can fix. To switch it
+on, add a fine-grained personal access token with **Contents: read** on
+`Orchestrate-management/batch-label` as the repository secret **`WWW_REPO_TOKEN`**.
+
+---
+
+## 4. Environment variables
 ## 4. Billing
 
 `app.batchlabel.xyz` is where a plan is bought and managed. www keeps the public pricing page
@@ -373,6 +481,8 @@ the Vercel project for preview and production.
 | `VITE_SUPABASE_ANON_KEY` | yes | — | Public by design; protected by RLS. |
 | `VITE_MARKETING_URL` | no | `https://www.batchlabel.xyz` | Where login lives and sign-out returns to. |
 | `VITE_ORCHESTRATE_BRAND` | no | `batchlabel` | Must match www's value. |
+| `VITE_META_PIXEL_ID` | no | unset | The Meta dataset id, `1374342861305621`. Public by design. Unset means no Pixel loads and nothing is sent. **Not yet set on the Vercel project** — see `docs/META_TRACKING.md` §7. |
+| `VITE_META_PIXEL_DEBUG` | no | unset | Only `"true"` counts. Loads the Pixel on localhost for Meta's Test Events. Never set it in Vercel. |
 
 There are no secrets in this app. The anon key is meant to be in a browser
 bundle: every table is behind row level security, and `brand_memberships` in
@@ -440,6 +550,32 @@ Google flow is ever initiated from the app origin.
 - `vercel.json` adds the SPA rewrite. Without it every deep link 404s —
   including the one www hands back after login.
 
+### 5.3a Secure password change
+
+Supabase → Authentication → Providers → Email → **Secure password change**: switch it on.
+
+Be precise about what this buys, because overstating it is how a hole gets missed. It
+requires a reauthentication OTP **only** when the session is more than 24 hours old. It
+does not ask for the current password, and it does nothing at all for a session created
+in the last day — which is the borrowed-laptop and stolen-cookie case, and therefore the
+one that matters.
+
+So it is a narrow addition, not a safety net:
+
+| | Session under 24h | Session over 24h |
+| --- | --- | --- |
+| App `/settings/account` | current password required (this repo) | current password required (this repo) |
+| www `/reset-password` | recovery link required (marketing repo) | recovery link required (marketing repo) |
+| Any other client | **nothing** | OTP, from this setting |
+
+The real protections are the two in the first two rows, and both are code in the two
+repos. An earlier version of this document claimed this setting "covers any other client
+that ever talks to this project". That was wrong in a way that mattered: it implied www
+was covered when www required no current password at all, and it is part of why that gap
+survived self-review. A new client written against this project is protected only for
+sessions over a day old, and must implement its own re-authentication.
+
+### 5.4 Checklist
 ### 6.5 On the www project, for billing
 
 Set on the **marketing** Vercel project, not this one:
@@ -456,9 +592,12 @@ Set on the **marketing** Vercel project, not this one:
 ### 6.6 Checklist
 
 - [ ] `https://app.batchlabel.xyz` and `https://app.batchlabel.xyz/**` in Supabase redirect URLs
+- [ ] **Secure password change** enabled on the email provider
+- [ ] `WWW_REPO_TOKEN` secret set, so the agreement version check can actually run
 - [ ] `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` set on the Vercel app project
 - [ ] The Supabase project ref matches the one www uses
 - [ ] `VITE_ORCHESTRATE_BRAND` matches www (or is unset on both)
+- [ ] `VITE_META_PIXEL_ID` set on the Vercel app project, matching www's — `docs/META_TRACKING.md` §7
 - [ ] `https://app.batchlabel.xyz` in Google authorised JavaScript origins, if Google sign-in is used
 - [ ] `20260802120000_plan_limits.sql` applied — `/billing` reads `public.entitlements`, and
       without the view every account reads as "we could not check your plan"
@@ -479,6 +618,40 @@ gate around them is real — an unentitled maker genuinely cannot press them —
 when pressed is still a placeholder. Nothing on a billing surface describes what they will
 one day produce, for that reason.
 
+Settings → Identity and Settings → Team also still read from fixtures. The card on
+file, invoice history and plan switcher that used to sit in Settings → Billing have
+been removed rather than left looking real next to a genuine plan status, and now
+link to www where Stripe actually is.
+
+Settings → Account is real: the password change, the marketing email opt-in and the
+advertising state all talk to Supabase.
+
+Three things it does not do, all of them by email today and all of them flagged rather
+than faked:
+
+- **Changing an email address.** Not self service anywhere. `auth.updateUser({ email })`
+  exists, but doing it properly needs confirmation sent to both the old and the new
+  address (Supabase's **Secure email change** setting), and getting that wrong hands an
+  account to whoever typed the new address.
+- **Deleting an account.** Needs a service-role call, so it cannot live in this browser.
+- **Exporting data.** No endpoint exists yet.
+
+The privacy notice promises the last two within a month, by email to
+privacy@batchlabel.co.uk. Until they are built, that promise is the product.
+
+That the export is still a toast is also why no "activation" event is sent to Meta:
+an advertising event for an action that produces nothing is a fabricated conversion.
+The reasoning is in `docs/META_TRACKING.md` §6, and it is worth re-reading when the
+export becomes real rather than assuming the answer stays no.
+
+---
+
+## 7. Advertising measurement
+
+The app loads the Meta Pixel for one event, `InitiateCheckout`, gated on
+`brand_memberships.advertising_opt_in` and failing closed in every other case. It has
+no cookie banner and sends no `PageView`. See `docs/META_TRACKING.md`, and
+`batch-label/docs/CONSENT.md` for the consent model both sites obey.
 Settings → Identity and Settings → Team still read from fixtures. The SKU count on the billing
 page is the fixture product list, because there is no `products` table yet; the **allowance**
 it is measured against is real, read from `entitlements.sku_limit`.
