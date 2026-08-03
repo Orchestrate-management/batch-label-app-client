@@ -176,7 +176,9 @@ function FragranceLabel({ product, derivation, market, options }: RenderProps) {
         }
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '2mm' }}>
           <span>
-            {on(options, 'ufi') && product.identifiers.ufi ? `UFI: ${product.identifiers.ufi}` : ''}
+            {/* A mandatory block with nothing behind it is named, not silently dropped:
+                an empty space where the UFI belongs reads as a finished label. */}
+            {on(options, 'ufi') ? `UFI: ${product.identifiers.ufi ?? 'not generated'}` : ''}
             {on(options, 'batch') ? `   Batch ${options.identityCode}` : ''}
           </span>
           {on(options, 'quantity') &&

@@ -128,6 +128,13 @@ export function isLabelSurface(type: ArtefactType): boolean {
 
 /* -------------------------------------------------------------- products */
 
+/**
+ * No product carries a UFI, and none marks `clp-ufi` or a poison centre
+ * notification as done. Batchlabel generates no UFI, and a notification dossier
+ * is keyed on one, so seeding either would be the app asserting compliance work
+ * that neither it nor the maker has any way of doing here. `obligationSatisfied`
+ * enforces the UFI half whatever this file says; the rest is kept honest here.
+ */
 const BASE_PRODUCTS: Product[] = [
 {
   id: 'p-black-fig',
@@ -136,7 +143,7 @@ const BASE_PRODUCTS: Product[] = [
   categoryId: 'home-fragrance',
   markets: ['GB', 'EU'],
   regimes: ['clp', 'en15494', 'gpsr'],
-  identifiers: { ufi: 'H8YP-K02M-J00X-7RTQ' },
+  identifiers: {},
   spec: {
     kind: 'mixture',
     productType: 'Container candle',
@@ -175,9 +182,9 @@ const BASE_PRODUCTS: Product[] = [
   obligations: {
     'clp-classification': true,
     'clp-artefact-current': false,
-    'clp-ufi': true,
+    'clp-ufi': false,
     'clp-pcn-eu': false,
-    'clp-pcn-gb': true,
+    'clp-pcn-gb': false,
     'en15494-safety-text': true,
     'gpsr-traceability': true,
     'gpsr-eu-responsible-person': false,
@@ -191,7 +198,7 @@ const BASE_PRODUCTS: Product[] = [
   categoryId: 'home-fragrance',
   markets: ['GB'],
   regimes: ['clp', 'gpsr'],
-  identifiers: { ufi: 'V210-N0K4-T00A-2FQD' },
+  identifiers: {},
   spec: {
     kind: 'mixture',
     productType: 'Reed diffuser',
@@ -227,8 +234,8 @@ const BASE_PRODUCTS: Product[] = [
   obligations: {
     'clp-classification': true,
     'clp-artefact-current': true,
-    'clp-ufi': true,
-    'clp-pcn-gb': true,
+    'clp-ufi': false,
+    'clp-pcn-gb': false,
     'gpsr-traceability': true,
     'gpsr-online-disclosure': true
   }
@@ -240,7 +247,7 @@ const BASE_PRODUCTS: Product[] = [
   categoryId: 'home-fragrance',
   markets: ['GB', 'EU'],
   regimes: ['clp', 'gpsr'],
-  identifiers: { ufi: 'JG00-R0FT-800P-M14V' },
+  identifiers: {},
   spec: {
     kind: 'mixture',
     productType: 'Room spray',
@@ -276,9 +283,9 @@ const BASE_PRODUCTS: Product[] = [
   obligations: {
     'clp-classification': true,
     'clp-artefact-current': true,
-    'clp-ufi': true,
-    'clp-pcn-eu': true,
-    'clp-pcn-gb': true,
+    'clp-ufi': false,
+    'clp-pcn-eu': false,
+    'clp-pcn-gb': false,
     'gpsr-traceability': true,
     'gpsr-eu-responsible-person': true,
     'gpsr-online-disclosure': false
