@@ -133,8 +133,23 @@ export function Billing() {
             /* Somebody already entitled cannot buy a second subscription — the checkout
                endpoint refuses it with a 409 — so the cards stop offering one and point at
                the portal, which is where a tier change belongs and where proration is
-               handled. The UI is not the guard; it is the explanation. */
-            purchasable={!entitlement.active && !entitlement.loading}
+               handled. The UI is not the guard; it is the explanation.
+
+               `!active` alone is not enough. entitlement_is_active requires
+               coalesce(membership_status,'active') = 'active', so a SUSPENDED membership is
+               permanently active=false — which made it the one account the old guard
+               offered checkout to. It would have paid, and apply_stripe_entitlement would
+               still refuse to entitle it, so the money buys nothing. Same for a session
+               with no membership at all: the RPC returns 'no_membership' and writes nothing.
+               PlanNotice and BillingReturn already say as much to a suspended customer
+               ("Paying again will not switch it back on by itself"); this is the surface
+               that used to contradict them. */
+            purchasable={
+            !entitlement.active &&
+            !entitlement.loading &&
+            entitlement.status !== 'suspended' &&
+            entitlement.status !== 'no_membership'
+            }
             busy={pending !== null}
             pendingSlug={pending}
             onChoose={(slug) => run(slug, () => createCheckoutSession(slug, interval))} />

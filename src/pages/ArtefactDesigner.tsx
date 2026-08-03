@@ -126,11 +126,17 @@ export function ArtefactDesigner() {
             variant="secondary"
             disabled={!canExport}
             aria-describedby={canExport ? undefined : 'export-plan-notice'}
+            /* The exporter is not built yet. Until it is, these toasts say so rather than
+               reporting a file that was never written — a customer who is told "Sheet
+               exported" and finds nothing in Downloads assumes their browser ate it, and
+               a paying one has been told the thing they paid for happened. The button and
+               its label stay: they name the feature being built, and the plan gate around
+               them is real. Only the claim of a completed export goes. */
             onClick={() =>
-            toast('Sheet exported', {
+            toast('Export is not ready yet', {
               description: stock ?
-              `${stock.name}, ${stock.perSheet} per ${stock.sheet}.` :
-              'Sheet layout exported.'
+              `Sheet layout for ${stock.name} is coming. Nothing has been downloaded.` :
+              'Sheet layout export is coming. Nothing has been downloaded.'
             })
             }>
 
@@ -142,8 +148,10 @@ export function ArtefactDesigner() {
             disabled={!canExport}
             aria-describedby={canExport ? undefined : 'export-plan-notice'}
             onClick={() =>
-            toast('Artefact exported', {
-              description: `Single ${ARTEFACT_LABELS[artefact.type].toLowerCase()} PDF at ${widthMm} × ${heightMm} mm.`
+            toast('Export is not ready yet', {
+              description:
+              `A single ${ARTEFACT_LABELS[artefact.type].toLowerCase()} at ${widthMm} × ${heightMm} mm ` +
+              `is what this will produce. Nothing has been downloaded.`
             })
             }>
 
