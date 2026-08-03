@@ -3,7 +3,9 @@ import { Product } from './model';
 import { PRODUCTS } from './fixtures';
 import { categoryById } from './categories';
 import { artefactsFor, blankSpec } from './products';
-import { obligationSatisfied, outstandingObligations } from './regimes';
+import { obligationSatisfied, outstandingObligations,
+  obligationState,
+  untrackedObligations} from './regimes';
 
 /**
  * The UFI claim.
@@ -28,12 +30,28 @@ describe('the UFI obligation', () => {
     expect(obligationSatisfied(withObligations({ 'clp-ufi': true }), 'clp-ufi')).toBe(false);
   });
 
-  it('is outstanding on every product subject to CLP', () => {
+  it('is shown on every product subject to CLP, as not tracked rather than outstanding', () => {
+    // It used to be asserted as OUTSTANDING. That was right about the duty and wrong about
+    // who established it: Batchlabel neither generates a UFI nor records one, so calling it
+    // outstanding claims a finding about the maker's business that nothing checked. It is
+    // still shown on every CLP product — the legal duty does not go away — but as a duty we
+    // do not track, with copy that says so.
     const clpProducts = PRODUCTS.filter((product: Product) => product.regimes.includes('clp'));
     expect(clpProducts.length).toBeGreaterThan(0);
     for (const product of clpProducts) {
-      expect(outstandingObligations(product).map((o) => o.id)).toContain('clp-ufi');
+      expect(obligationState(product, 'clp-ufi')).toBe('not-tracked');
+      expect(untrackedObligations(product).map((o) => o.id)).toContain('clp-ufi');
+      // And emphatically not counted as work the maker owes.
+      expect(outstandingObligations(product).map((o) => o.id)).not.toContain('clp-ufi');
     }
+  });
+
+  it('never renders as done, whatever a row claims', () => {
+    // The property the original test was protecting, kept explicit: a stored `true` must not
+    // turn into "a UFI is on file", because the next thing skipped is the poison centre
+    // notification.
+    expect(obligationSatisfied(withObligations({ 'clp-ufi': true }), 'clp-ufi')).toBe(false);
+    expect(obligationState(withObligations({ 'clp-ufi': true }), 'clp-ufi')).toBe('not-tracked');
   });
 
   it('leaves no fixture product carrying a UFI', () => {
