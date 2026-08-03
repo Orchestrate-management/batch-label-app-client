@@ -518,7 +518,14 @@ export function deriveBom(spec: BomSpec, product?: Product): Derivation {
       meta: declarationSigned ?
       'Signed by the manufacturer and held with the technical file.' :
       'A component declaration is missing, so the declaration cannot yet be signed.',
-      source: 'HH-DOC-WW100-01, issued 8 June 2026'
+      // NO `source`, AND THERE CANNOT BE ONE. This used to read
+      // "HH-DOC-WW100-01, issued 8 June 2026" — a reference number and an issue date for the
+      // declaration of conformity held on the maker's own device. HH was Hearth and Hollow
+      // and WW100 its wax warmer: the invented business this round removed, hardcoded, and
+      // therefore identical for every account and every model. Nothing was issued, there is
+      // no document store, and a declaration reference is the number a market surveillance
+      // officer asks for. WhyLine.source is optional and DerivationPanel renders the
+      // "Source:" line only when it is set, so the honest thing is to cite nothing.
     }]
 
   },
@@ -527,9 +534,14 @@ export function deriveBom(spec: BomSpec, product?: Product): Derivation {
     text: standard,
     why: [
     {
-      lead: `Applied through the components that carry it in their own declarations.`,
-      meta: 'Listed on the declaration of conformity as a harmonised standard applied in full.',
-      source: 'Component declarations of conformity'
+      // Same correction as the DoC line above, one step milder. This cited "Component
+      // declarations of conformity" as its source, which is a document class no account
+      // holds — the standards come from Batchlabel's own reference data for the components,
+      // which is what the materials register now says plainly rather than implying it is the
+      // maker's paperwork.
+      lead: 'Carried by the components on this bill of materials.',
+      meta:
+      'From Batchlabel\'s reference data for those components. A signed declaration would list it as a harmonised standard applied in full; none is held for you.'
     }]
 
   }))];

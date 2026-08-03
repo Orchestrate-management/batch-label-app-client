@@ -27,7 +27,6 @@ import {
   type PlanCatalogue,
   type PublicPlan } from
 '../lib/plans';
-import { useProducts } from '../lib/product-store';
 
 /**
  * Plan and billing. This is where a purchase happens.
@@ -57,31 +56,39 @@ import { useProducts } from '../lib/product-store';
  */
 export function Billing() {
   const entitlement = useEntitlement();
-  const { status: productsStatus, products } = useProducts();
   const catalogue = usePlanCatalogue();
 
   /**
-   * THE COUNT COMES FROM THE DATABASE FIRST.
+   * THE COUNT COMES FROM THE DATABASE, AND FROM NOWHERE ELSE.
    *
    * `entitlements.sku_count` is counted by the view over the same rows the enforcement trigger
    * counts — live products for the ACCOUNT — which is the whole reason the column was added:
    * "so the button the app disables and the insert the database refuses can never disagree".
-   * The list in this browser is not that: `fetchProducts` drops a product whose specification
-   * did not come back, so a page taking money could show "2 of 3 SKUs" beside a two-thirds
-   * full bar while the next create is refused for holding 3 of 3.
    *
-   * The list length is the fallback for the moment before the entitlement resolves, and only
-   * then. `null` from both means WE DO NOT KNOW, and is rendered as such — never as zero,
-   * which sits beside an allowance and reads as "you have used none of your plan".
+   * THERE USED TO BE A FALLBACK TO `products.length`, and it was the one thing this page must
+   * not do. The view's `where acct.id is not null` is load-bearing on purpose: a membership
+   * with no resolvable account yields sku_count NULL rather than 0, because "zero is a claim
+   * ('you have none'); the honest answer is that we do not know" (migration §10). The fallback
+   * then answered that null with a client-side 0 — fetchProducts returns [] and 'ready' when
+   * there is no account — and rendered "0 of 3 SKUs on your plan", a 0% meter and
+   * aria-valuenow=0 on the page that takes money. Exactly the number the database had just
+   * refused to state.
+   *
+   * Its comment claimed it covered "the moment before the entitlement resolves, and only
+   * then". That moment does not exist: ProductsProvider holds at 'loading' until the
+   * entitlement resolves, so the fallback could only ever fire AFTER the database had said
+   * unknown. And the list is not the same number anyway — fetchProducts drops a product whose
+   * specification did not come back, so it could show "2 of 3" while the next create is
+   * refused for holding 3 of 3.
+   *
+   * `null` means WE DO NOT KNOW and is rendered as such: an em dash, no meter, no percentage.
    */
-  const skuCount =
-  entitlement.skuCount ?? (productsStatus === 'ready' ? products.length : null);
+  const skuCount = entitlement.skuCount;
 
-  // A read in flight is not a read that failed. Loading is the ordinary first frame of this
-  // page — ProductsProvider starts at 'loading' and the entitlement starts unresolved — so
-  // collapsing it into "could not count" would open every visit on an apology for a failure
-  // that has not happened.
-  const countPending = entitlement.loading || productsStatus === 'loading';
+  // A read in flight is not a read that failed. The entitlement starts unresolved on every
+  // visit, so collapsing that into "could not count" would open every visit on an apology for
+  // a failure that has not happened.
+  const countPending = entitlement.loading;
 
   // Annual is the default and monthly is the secondary option, which is the founder
   // decision and also the honest one: annual is the cheaper way to buy the same thing.
@@ -372,19 +379,22 @@ function CurrentPlan({
       </Card>
 
       <Card className="px-5 py-5">
-        {/* THREE STATES, KEPT APART. "We could not count your products" is only true once a
-            read has finished and failed; while one is in flight it is an admission of a
-            failure that has not happened, and this page opens in flight every single time.
-            Loading says it is counting, error says it could not, and a number says the
-            number — and the same rule governs the allowance sentence below it. */}
+        {/* THREE STATES, KEPT APART, and all three are the entitlement's. In flight says it
+            is counting: this page opens in flight every single time, so folding that into
+            "could not count" is an apology for a failure that has not happened. Resolved with
+            a number says the number. Resolved with NO number — the read failed, or no account
+            resolved and the view declined to call that nought — says we could not, and shows
+            no meter and no percentage, because a 0 sitting beside an allowance reads as "you
+            have used none of your plan". The same rule governs the allowance sentence. */}
         <p className="text-sm text-ink">
           <span className="tabular font-medium">{skuCount ?? '—'}</span>
-          {skuCount === null ?
-          countPending ?
-          <> SKUs. Counting the products on your account…</> :
+          {/* One row answers both halves now, so the in-flight frame is one sentence rather
+              than two branches — while it is loading we know neither the count nor the
+              allowance, and there is no state where we know one and not the other. */}
+          {countPending ?
+          <> SKUs. Counting what you are holding and checking what your plan allows…</> :
+          skuCount === null ?
           <> SKUs. We could not count your products just now.</> :
-          entitlement.loading ?
-          <> SKUs. Checking what your plan allows…</> :
           entitlement.skuUnlimited ?
           <> SKUs. This plan has no SKU ceiling.</> :
           limit !== null ?

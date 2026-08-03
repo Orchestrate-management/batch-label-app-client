@@ -190,6 +190,18 @@ export type Spec = MixtureSpec | PhasedSpec | BomSpec;
 
 /* ------------------------------------------------------------ artefacts */
 
+/**
+ * What `version` and `printedOn` hold when nothing has been produced.
+ *
+ * There is no artefacts table, so on a real account every artefact carries these. They are
+ * named here rather than written out at each site because two different files have to be able
+ * to ASK whether an artefact has been produced: products.ts sets them, and sds.ts must not
+ * print "Revision Not yet produced, issued —." onto the face of a sixteen-section safety data
+ * sheet somebody may hand to a regulator.
+ */
+export const ARTEFACT_NOT_PRODUCED = 'Not yet produced';
+export const ARTEFACT_NO_PRINT_DATE = '—';
+
 export type ArtefactInstance = {
   type: ArtefactType;
   label: string;

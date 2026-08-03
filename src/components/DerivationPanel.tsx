@@ -130,9 +130,16 @@ export function DerivationPanel({
         </Card>
       )}
 
+      {/* "Recalculated on every change" is true and stays. The pill beside it said "Frozen
+          into every production record", which is the reassurance that matters most on the
+          morning of a recall — that the classification in front of you is the one preserved
+          with the batch — and there are no production records: the Records page says "nothing
+          is stored here, and no run of yours has been recorded", and the migration says the
+          batch log is not in this schema. Two screens in one app cannot answer that
+          differently, so this one moves into the tense Records already uses. */}
       <div className="flex flex-wrap gap-2">
         <Pill tone="quiet">Recalculated on every change</Pill>
-        <Pill tone="quiet">Frozen into every production record</Pill>
+        <Pill tone="quiet">Will be frozen into a production record when the batch log ships</Pill>
       </div>
     </div>);
 

@@ -110,6 +110,7 @@ function SpecificationView({ product }: {product: Product;}) {
   const [stage, setStage] = useState<StageId>('composition');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [partialSave, setPartialSave] = useState(false);
   const [saved, setSaved] = useState(false);
 
   const working: Product = { ...product, spec };
@@ -144,11 +145,21 @@ function SpecificationView({ product }: {product: Product;}) {
     if (saving || !dirty) return;
     setSaving(true);
     setSaveError(null);
+    setPartialSave(false);
     setSaved(false);
     const result = await saveComposition(product, spec);
     setSaving(false);
     if (!result.ok) {
       setSaveError(result.message);
+      // A partial save COMMITTED the composition, so the shared list is now stale — every
+      // other screen would keep drawing the old recipe. Reloading also re-bases `dirty`
+      // against what is actually stored, which is the whole point: after this the difference
+      // the button is offering to save is the pack, which is exactly the half still missing.
+      // What is on screen stays what was typed; `spec` is seeded once and not resynced.
+      if (result.reason === 'partial_save') {
+        setPartialSave(true);
+        await reload();
+      }
       return;
     }
     setSaved(true);
@@ -196,13 +207,24 @@ function SpecificationView({ product }: {product: Product;}) {
         <ProductPipeline stages={stages} activeId={stage} onSelect={setStage} />
 
         <div className="space-y-10 px-6 py-8 lg:px-10">
+          {/* Two different failures and two different titles, because they are not the same
+              news. A refused save changed nothing, so the reassurance below it is true. A
+              PARTIAL save changed half of it — the recipe is stored against the old pack —
+              and "it is only the saving that failed" would be a false sentence printed over
+              the one state where the stored product is a combination nobody approved. */}
           {saveError &&
-          <Callout tone="warn" role="alert" title="That did not save">
+          <Callout
+            tone="warn"
+            role="alert"
+            title={partialSave ? 'Only part of that saved' : 'That did not save'}>
+
               <p className="max-w-prose leading-relaxed">{saveError}</p>
-              <p className="mt-2 max-w-prose leading-relaxed">
-                What is on screen is still what you typed, and it is still what the preview is
-                drawn from — it is only the saving that failed. Press save again.
-              </p>
+              {!partialSave &&
+            <p className="mt-2 max-w-prose leading-relaxed">
+                  What is on screen is still what you typed, and it is still what the preview is
+                  drawn from — it is only the saving that failed. Press save again.
+                </p>
+            }
             </Callout>
           }
           {saved && !dirty && !saveError &&

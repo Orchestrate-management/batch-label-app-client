@@ -134,9 +134,15 @@ export function Studio() {
             {outstanding.length === 0 ?
           <Card className="px-6 py-8">
                 <p className="font-display text-base font-medium text-ink">Nothing outstanding</p>
+                {/* Says what was checked, and does not extend it to what was not. This read
+                    "every product has current documents, a settled composition and outputs
+                    that match it" — two thirds of which the software has never established.
+                    Nothing watches supplier documents, and no output has been produced, so
+                    there is no such thing yet as an output that matches or fails to. */}
                 <p className="mt-1 max-w-prose text-sm leading-relaxed text-ink-secondary">
-                  Every product has current documents, a settled composition and outputs that
-                  match it.
+                  Every composition is settled, every material is classified, and nothing is
+                  waiting on you. Supplier documents are not watched yet, and no output has
+                  been produced.
                 </p>
               </Card> :
 

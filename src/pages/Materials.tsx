@@ -911,10 +911,16 @@ function ImportFlow({
             </span>
           </div>
 
+          {/* The teaching point, in the example framing the rest of this screen now uses.
+              It read "Enter these by hand, or the record is saved without them and the gap is
+              carried into every product that uses it" — four lines under a callout saying
+              nothing is uploaded, nothing is parsed and saving adds nothing. No record is
+              saved and no product uses it, and a maker who read this one and not that one
+              would take a gap in a worked example for a gap in their own materials. */}
           {missing.length > 0 &&
           <Callout tone="warn" title="Not found in this document">
-              {missing.map((field) => field.label).join(', ')}. Enter these by hand, or the record
-              is saved without them and the gap is carried into every product that uses it.
+              {missing.map((field) => field.label).join(', ')}. A real import would leave these
+              blank, and the gap would follow the material into every product that used it.
             </Callout>
           }
 

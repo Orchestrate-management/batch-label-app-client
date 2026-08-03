@@ -21,10 +21,23 @@ export type StageIssue = {
 export type Stage = {
   id: StageId;
   label: string;
-  settled: boolean;
+  /**
+   * Whether anything actually looked at this stage.
+   *
+   * THE THIRD STATE, and the reason it had to exist. `settled` is derived from
+   * `issues.length === 0`, which quietly turns "we found nothing wrong" and "we did not look"
+   * into the same green tick. Documents is the second of those: nothing watches supplier
+   * documents, so the stage raises no issues and rendered as settled — a tick, and the words
+   * "Documents settled", to an account that holds no documents and has nowhere to put one.
+   *
+   * A stage that ran no check is neither settled nor unsettled, and ProductPipeline renders it
+   * as neither: no tick, no issue count, and a line that says what has not been built.
+   */
+  checked: boolean;
   /** Shown when settled, so the stage always says something. */
   summary: string;
   issues: StageIssue[];
+  settled: boolean;
 };
 
 /** The materials a product's composition actually draws on. */
@@ -163,16 +176,24 @@ market: Market)
   {
     id: 'documents',
     label: 'Documents',
-    settled: documentIssues.length === 0,
+    // NOT CHECKED, and therefore not settled. Removing the two invented warnings emptied
+    // `documentIssues`, and an empty issue list is exactly how the other three stages earn
+    // their tick — so the stage that stopped checking anything became the one claiming to be
+    // finished. There is no document store, nothing watches for a reissued supplier sheet,
+    // and an account has nowhere to put one; "Documents settled" is a statement about work
+    // this software has not done.
+    checked: false,
+    settled: false,
     // Not "every sheet current": nothing checks whether a supplier has reissued, so that
     // was a reassurance the product had not earned. Count what we know — the materials on
     // the composition — and claim nothing about their currency.
-    summary: `${materials.length} ${materials.length === 1 ? 'material' : 'materials'} on this composition`,
+    summary: `Nothing watches supplier documents yet. ${materials.length} ${materials.length === 1 ? 'material is' : 'materials are'} on this composition`,
     issues: documentIssues
   },
   {
     id: 'composition',
     label: 'Composition',
+    checked: true,
     settled: compositionIssues.length === 0,
     summary:
     product.spec.kind === 'mixture' ?
@@ -185,6 +206,7 @@ market: Market)
   {
     id: 'classification',
     label: 'Classification',
+    checked: true,
     settled: classificationIssues.length === 0,
     summary: derivation.summary.map((entry) => entry.value).join(' · '),
     issues: classificationIssues
@@ -192,8 +214,14 @@ market: Market)
   {
     id: 'outputs',
     label: 'Outputs',
+    checked: true,
     settled: outputIssues.length === 0,
-    summary: `${product.artefacts.length} outputs, all current`,
+    // NOT "all current". `artefactsFor` gives every artefact version "Not yet produced" and
+    // no print date, precisely because there is no artefacts table and nothing has been
+    // produced — so "current" was describing the currency of documents that do not exist.
+    // What IS settled here is the work the maker owed: the obligations are ticked and the
+    // sheet has no section left needing a competent person.
+    summary: `${product.artefacts.length} outputs, none produced yet`,
     issues: outputIssues
   }];
 

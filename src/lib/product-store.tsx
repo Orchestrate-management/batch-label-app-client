@@ -62,8 +62,14 @@ const ProductsContext = createContext<ProductsValue | null>(null);
 export function ProductsProvider({ children }: {children: React.ReactNode;}) {
   const { user } = useAuth();
   const entitlement = useEntitlement();
-  const [state, setState] = useState<{status: ProductsStatus;products: Product[];error: string | null;}>(
-    { status: 'loading', products: [], error: null }
+  /**
+   * The answer, and the user it is an answer about. Same rule as EntitlementProvider, and for
+   * the same reason: a session can be replaced in place with no signed-out frame, and a list
+   * read under A's JWT is not a partial answer about B — it is somebody else's data on B's
+   * screen. It is discarded on identity change rather than corrected on the next read.
+   */
+  const [state, setState] = useState<{userId: string | null;status: ProductsStatus;products: Product[];error: string | null;}>(
+    { userId: null, status: 'loading', products: [], error: null }
   );
   const [attempt, setAttempt] = useState(0);
 
@@ -82,8 +88,8 @@ export function ProductsProvider({ children }: {children: React.ReactNode;}) {
     const result = await fetchProducts(accountId);
     setState(
       result.ok ?
-      { status: 'ready', products: result.products, error: null } :
-      { status: 'error', products: [], error: result.message }
+      { userId, status: 'ready', products: result.products, error: null } :
+      { userId, status: 'error', products: [], error: result.message }
     );
   }, [userId, accountId]);
 
@@ -91,7 +97,7 @@ export function ProductsProvider({ children }: {children: React.ReactNode;}) {
     if (!userId) {
       // Signed out is neither an empty account nor a failure, and nothing renders behind the
       // auth gate anyway, so there is no answer worth publishing.
-      setState({ status: 'loading', products: [], error: null });
+      setState({ userId: null, status: 'loading', products: [], error: null });
       return;
     }
     // Hold at `loading` until the entitlement has answered, so the one read we fire is scoped
@@ -106,8 +112,8 @@ export function ProductsProvider({ children }: {children: React.ReactNode;}) {
       if (!active) return;
       setState(
         result.ok ?
-        { status: 'ready', products: result.products, error: null } :
-        { status: 'error', products: [], error: result.message }
+        { userId, status: 'ready', products: result.products, error: null } :
+        { userId, status: 'error', products: [], error: result.message }
       );
     });
     return () => {
@@ -115,15 +121,19 @@ export function ProductsProvider({ children }: {children: React.ReactNode;}) {
     };
   }, [userId, accountId, accountResolved, attempt]);
 
+  // Derived at render, so a change of signed-in user cannot leave one paint showing the
+  // previous account's list. An answer about somebody else is `loading`, not `ready`.
+  const mine = state.userId === userId;
+
   const value = useMemo<ProductsValue>(
     () => ({
-      status: state.status,
-      products: state.products,
-      error: state.error,
+      status: mine ? state.status : 'loading',
+      products: mine ? state.products : [],
+      error: mine ? state.error : null,
       refresh: () => setAttempt((value) => value + 1),
       reload: read
     }),
-    [state, read]
+    [state, mine, read]
   );
 
   return <ProductsContext.Provider value={value}>{children}</ProductsContext.Provider>;

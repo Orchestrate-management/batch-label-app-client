@@ -1,6 +1,8 @@
 import { supabase } from './supabase';
 import { ARTEFACT_LABELS, CategoryPack, categoryById, categoryForKind } from './categories';
 import {
+  ARTEFACT_NOT_PRODUCED,
+  ARTEFACT_NO_PRINT_DATE,
   ArtefactInstance,
   BomSpec,
   CategoryId,
@@ -42,7 +44,9 @@ import {
  *      holds an account on each. current_account_id() then refuses to guess and returns NULL
  *      — correctly, it must not file a maker's product in the wrong workspace — and an app
  *      that can only ever omit the column would leave that customer unable to create a
- *      product on EITHER brand, permanently, behind a message about setup taking a moment.
+ *      product on EITHER brand, permanently. The database now says which of the two null
+ *      cases it is (hint `account_ambiguous`), so at least the screen can stop telling them
+ *      to wait; sending the id is what actually lets them work.
  *
  *      Sending it weakens no isolation. The INSERT policy on both tables is
  *      `with check (public.is_member_of(account_id))`, so an id that is not yours is refused
@@ -80,7 +84,10 @@ export type WriteFailure =
 'sku_limit' |
 'duplicate_sku' |
 'no_account' |
+'account_ambiguous' |
 'not_configured' |
+'partial_save' |
+'unknown' |
 'failed';
 
 export type WriteResult<T> =
@@ -113,29 +120,88 @@ export type NewProductInput = {
  */
 const SKU_LIMIT_HINT = 'sku_limit_reached';
 
+/**
+ * The two tokens section 7c of the migration raises, and the reason it exists.
+ *
+ * THE OBVIOUS BRANCH WAS WRONG, and this file used to carry it. A null account_id does NOT
+ * arrive as a not-null violation: PostgreSQL evaluates the RLS WITH CHECK before it checks
+ * table constraints, `is_member_of(null)` is false, so the policy refuses the row first and
+ * the NOT NULL is never reached. 23502 is UNREACHABLE from a browser on specifications and
+ * products, and the sentence this app kept for it had therefore never once been shown. That
+ * was measured against a real server, on both branches, and the migration header states it as
+ * contract item 5: "Match on the HINT, never on 23502 and never on the sentence."
+ *
+ * The bare 42501 that RLS produces cannot carry the explanation either — it is the same code
+ * a genuine cross-account attempt returns, and it must stay uninformative. So the database
+ * answers the question ahead of RLS instead, with a BEFORE INSERT trigger that can still tell
+ * the two null cases apart:
+ *
+ *   account_missing    no active membership. TRANSIENT — it resolves when signup completes,
+ *                      which is the ONE place "still being set up" is a true sentence.
+ *   account_ambiguous  two or more. PERMANENT until the app sends an account_id. Telling this
+ *                      customer to wait is a promise nothing will ever keep.
+ */
+const ACCOUNT_MISSING_HINT = 'account_missing';
+const ACCOUNT_AMBIGUOUS_HINT = 'account_ambiguous';
+
 /** Postgres unique violation: the account already holds a live product with this SKU code. */
 const UNIQUE_VIOLATION = '23505';
-/** Postgres not-null violation. On account_id it means current_account_id() returned NULL. */
-const NOT_NULL_VIOLATION = '23502';
 
 const GENERIC_WRITE_FAILURE =
 'We could not save that just now. Nothing has changed — please try again in a moment.';
 
 /**
- * Said when the database could not resolve an account to save into, AND this call had none to
- * offer it.
+ * Said when there is no account yet — hint `account_missing`, and nothing else.
  *
- * It no longer promises that waiting fixes it. `current_account_id()` returns NULL for two
- * different reasons — no active membership yet, which does resolve on its own, and more than
- * one, which never does — and both arrive here as the same NOT NULL violation. Telling the
- * second customer that their account is nearly ready would be a statement we cannot support,
- * repeated forever. So this says what we know (nothing was saved, we could not tell which
- * account), offers the retry that helps the first case, and names the way out of the second.
+ * This is the only failure in the file where waiting genuinely helps, because the only way to
+ * reach it is a signup that has not finished: RequireAuth gates on a session, so somebody who
+ * signed in with Google and then closed the tab on the setup step reaches this app in full,
+ * with no account behind them. So it says the true thing and points at the step that actually
+ * fixes it, rather than at a retry that will keep failing until that step is done.
  */
 const NO_ACCOUNT_MESSAGE =
-'We could not tell which account to save this to, so nothing has been saved. If you have just ' +
-'signed up, your account may still be being set up — try again in a moment. If it keeps saying ' +
-'this, get in touch and we will sort it out.';
+'There is no account to save this into yet — your signup was not finished, so nothing has been ' +
+'saved. Finish setting up your account and this will work. If you think it is already set up, ' +
+'get in touch and we will sort it out.';
+
+/**
+ * Said when the database could not tell WHICH account — hint `account_ambiguous`.
+ *
+ * Deliberately offers no retry and mentions no waiting. The database has already established
+ * that nothing is coming: the row will be refused identically every time until this app sends
+ * an explicit account id, and the app cannot pick one, because picking between two of a
+ * person's businesses is how a maker's product gets filed in the wrong workspace silently.
+ * "Try again in a moment" here is the exact failure section 7c was written to prevent.
+ */
+const ACCOUNT_AMBIGUOUS_MESSAGE =
+'You are a member of more than one account, and this screen cannot yet ask you which one this ' +
+'belongs to — so nothing has been saved, and trying again will not change that. Get in touch ' +
+'and we will point this workspace at the right account.';
+
+/**
+ * Said when we genuinely do not know whether the write landed.
+ *
+ * The one thing it must not say is "nothing has changed", which is what the generic failure
+ * says and what this path used to borrow. A lost response over a committed insert is the whole
+ * reason the recovery lookup exists; when the lookup ITSELF cannot answer, the honest report is
+ * that the outcome is unknown — and the advice has to be "look before you retry", because a
+ * blind retry on a 3-SKU plan spends a second slot on one intended product.
+ */
+const UNKNOWN_OUTCOME_MESSAGE =
+'We lost the connection before the database told us whether that saved, so we do not know ' +
+'whether it did. Check your products list before trying again — if it is there, it saved.';
+
+/**
+ * Said when half of a two-table save committed and half did not.
+ *
+ * Never "nothing has changed": something did. It names which half, because the half that
+ * saved is the composition — the recipe every derivation reads — and the half that did not is
+ * the pack. A maker who walks away from this message and reloads finds a product they never
+ * approved, so the message has to be the one that keeps them here for one more click.
+ */
+const PARTIAL_SAVE_MESSAGE =
+'Only part of that saved. The composition was stored; the pack size and packaging were not, so ' +
+'this product is now the new recipe in the old pack. Press save again to finish it.';
 
 const DUPLICATE_SKU_MESSAGE =
 'You already have a product with that code. Product codes have to be unique, so give this one ' +
@@ -159,14 +225,15 @@ type Postgrestish = {code?: string | null;hint?: string | null;message?: string 
 /**
  * Classifies a PostgREST error into something a form can say out loud.
  *
- * `accountIdSupplied` is not a nicety. A 23502 means "a NOT NULL column got null", and the
- * only reason this app has ever seen one is account_id defaulting from a current_account_id()
- * that could not resolve. When the call DID supply an account id that cannot be what happened,
- * so blaming the account would be inventing a cause; the generic failure is the honest answer.
+ * HINTS BEFORE CODES, because the hints are the tokens the database raises on purpose for
+ * this app to read, and every code that matters here is shared with something else. All three
+ * hints arrive on the same P0001, so branching on the code first would collapse the meter, the
+ * missing account and the ambiguous account into one indistinguishable failure.
+ *
+ * There is deliberately no `accountIdSupplied` option any more. It existed to qualify a 23502
+ * branch, and that branch was unreachable — see the note on the hints above.
  */
-export function classifyWriteError(
-error: Postgrestish | null,
-{ accountIdSupplied = false }: {accountIdSupplied?: boolean;} = {})
+export function classifyWriteError(error: Postgrestish | null)
 : {
   reason: WriteFailure;
   message: string;
@@ -175,15 +242,16 @@ error: Postgrestish | null,
   const code = error?.code ?? '';
 
   if (hint === SKU_LIMIT_HINT) return { reason: 'sku_limit', message: SKU_LIMIT_MESSAGE };
-  if (code === UNIQUE_VIOLATION) return { reason: 'duplicate_sku', message: DUPLICATE_SKU_MESSAGE };
-  if (code === NOT_NULL_VIOLATION && !accountIdSupplied) {
-    return { reason: 'no_account', message: NO_ACCOUNT_MESSAGE };
+  if (hint === ACCOUNT_MISSING_HINT) return { reason: 'no_account', message: NO_ACCOUNT_MESSAGE };
+  if (hint === ACCOUNT_AMBIGUOUS_HINT) {
+    return { reason: 'account_ambiguous', message: ACCOUNT_AMBIGUOUS_MESSAGE };
   }
+  if (code === UNIQUE_VIOLATION) return { reason: 'duplicate_sku', message: DUPLICATE_SKU_MESSAGE };
   return { reason: 'failed', message: GENERIC_WRITE_FAILURE };
 }
 
 /**
- * Postgres codes that mean the database REFUSED this statement, so nothing committed.
+ * Errors that mean the database REFUSED this statement, so nothing committed.
  *
  * Used for one decision only: whether it is safe to archive the specification a refused
  * product insert left behind. A transport failure — a dropped socket, a proxy 5xx, an aborted
@@ -191,13 +259,21 @@ error: Postgrestish | null,
  * insert it lost the answer to may well have committed.
  *
  * 42501 is here because that is what a row level security WITH CHECK violation arrives as; it
- * is as definite a refusal as a constraint.
+ * is as definite a refusal as a constraint. 23502 stays even though account_id can no longer
+ * reach it — on these tables it would now mean a genuinely null non-account column, which is
+ * still a refusal.
+ *
+ * The three raised hints are refusals too. Only the meter's can fire on the product insert
+ * today, because both inserts carry the same account object and the specification therefore
+ * fails first — but a refusal token that is missing from this list is a specification silently
+ * left behind, and the next one added should not have to remember this file.
  */
 const DEFINITE_REFUSAL_CODES = ['23502', '23503', '23505', '23514', '42501'];
+const DEFINITE_REFUSAL_HINTS = [SKU_LIMIT_HINT, ACCOUNT_MISSING_HINT, ACCOUNT_AMBIGUOUS_HINT];
 
 function isDefiniteRefusal(error: Postgrestish | null): boolean {
   if (!error) return false;
-  if ((error.hint ?? '') === SKU_LIMIT_HINT) return true;
+  if (DEFINITE_REFUSAL_HINTS.includes(error.hint ?? '')) return true;
   return DEFINITE_REFUSAL_CODES.includes(error.code ?? '');
 }
 
@@ -330,8 +406,8 @@ export function artefactsFor(category: CategoryPack, kind: Spec['kind']): Artefa
     label: ARTEFACT_LABELS[type],
     widthMm: type === 'listing' ? 96 : type === 'carton' ? 88 : type === 'rating-plate' ? 40 : 52,
     heightMm: type === 'listing' ? 60 : type === 'carton' ? 58 : type === 'rating-plate' ? 25 : 74,
-    version: 'Not yet produced',
-    printedOn: '—',
+    version: ARTEFACT_NOT_PRODUCED,
+    printedOn: ARTEFACT_NO_PRINT_DATE,
     current: true
   }));
 
@@ -346,8 +422,8 @@ export function artefactsFor(category: CategoryPack, kind: Spec['kind']): Artefa
     label: ARTEFACT_LABELS.sds,
     widthMm: 210,
     heightMm: 297,
-    version: 'Not yet produced',
-    printedOn: '—',
+    version: ARTEFACT_NOT_PRODUCED,
+    printedOn: ARTEFACT_NO_PRINT_DATE,
     current: true
   }];
 
@@ -659,6 +735,14 @@ function packColumns(spec: Spec) {
  * hint — and on anything else it is left alone: an orphaned composition is invisible, meters
  * nothing (only products are metered) and can be reclaimed, whereas an archived specification
  * under a live product cannot.
+ *
+ * AND IT SAYS SO. Declining to archive is an admission that the outcome is unknown, and the
+ * sentence returned to the maker has to be the same admission. It used to be the generic
+ * "Nothing has changed — please try again in a moment", which is a claim, and the wrong one:
+ * a blind retry with the same code collides with the unique index and tells them somebody
+ * already has it, while a retry with a new code leaves them holding two products and two SKU
+ * slots for one intended product. So the unknown outcome gets its own reason and its own copy:
+ * check the list first.
  */
 export async function createProduct(
 input: NewProductInput,
@@ -672,7 +756,6 @@ accountId: string | null = null)
   const name = input.name.trim();
   const sku = input.sku.trim();
   const account = accountId ? { account_id: accountId } : {};
-  const classify = { accountIdSupplied: Boolean(accountId) };
 
   const { data: specRow, error: specError } = await client.
   from('specifications').
@@ -688,7 +771,7 @@ accountId: string | null = null)
   select(SPECIFICATION_COLUMNS).
   single();
 
-  if (specError || !specRow) return { ok: false, ...classifyWriteError(specError, classify) };
+  if (specError || !specRow) return { ok: false, ...classifyWriteError(specError) };
 
   const specificationId = (specRow as SpecificationRow).id;
 
@@ -719,16 +802,29 @@ accountId: string | null = null)
       return { ok: true, value: toProduct(existing as ProductRow, specRow as SpecificationRow) };
     }
 
+    const refused = isDefiniteRefusal(productError);
+
     // Archive only what the database told us it would not accept. A lookup that itself failed
     // proves nothing either way, so it leaves the row alone as well.
-    if (!lookupError && isDefiniteRefusal(productError)) {
+    if (refused && !lookupError) {
       await client.
       from('specifications').
       update({ archived_at: new Date().toISOString() }).
       eq('id', specificationId);
     }
 
-    return { ok: false, ...classifyWriteError(productError, classify) };
+    // A refusal is a known outcome: the database said no, so nothing committed and the reason
+    // is worth stating. Everything else here is NOT known, and must not borrow the generic
+    // failure's "nothing has changed".
+    //
+    // Two ways to land in the unknown case, and they are the same admission. The lookup itself
+    // failed, so the question "did the product land?" was asked and not answered. Or the
+    // product insert carried no Postgres code at all — a dropped socket, a proxy 5xx, an
+    // aborted fetch — and the lookup found nothing, which rules out an insert that had already
+    // committed but not one still in flight on a request this browser stopped waiting for.
+    if (refused) return { ok: false, ...classifyWriteError(productError) };
+
+    return { ok: false, reason: 'unknown', message: UNKNOWN_OUTCOME_MESSAGE };
   }
 
   return {
@@ -752,6 +848,15 @@ accountId: string | null = null)
  * that editing, re-deriving and exporting an existing SKU can never be blocked by a limit —
  * a maker over their allowance after a downgrade must still be able to correct a label for
  * stock already on a shelf.
+ *
+ * THE PAIR IS NOT ATOMIC, AND THE SECOND FAILURE IS NOT A NO-OP. Two round trips, no
+ * transaction: PostgREST has no way to span them, and one SECURITY INVOKER RPC that took both
+ * halves is the real fix. Until it exists, the failure that matters is the first update
+ * committing and the second not — the recipe stored against the old pack, which is a
+ * combination the maker never approved and which drives both the label and the sheet. Saying
+ * "nothing has changed" there is false, and it is false in the direction that makes somebody
+ * stop and walk away. So that case gets its own reason: it says which half landed, it asks for
+ * one more press, and the screen reloads on it so what is on the page is what is stored.
  */
 export async function saveComposition(
 product: Product,
@@ -775,7 +880,9 @@ spec: Spec)
   update(packColumns(spec)).
   eq('id', product.id);
 
-  if (productError) return { ok: false, ...classifyWriteError(productError) };
+  // The specification update above committed. Whatever this one says, half of the edit is
+  // stored, so none of the "nothing has changed" copy is available to us here.
+  if (productError) return { ok: false, reason: 'partial_save', message: PARTIAL_SAVE_MESSAGE };
 
   return { ok: true, value: undefined };
 }

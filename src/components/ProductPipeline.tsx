@@ -1,10 +1,18 @@
 import { Link } from 'react-router-dom';
-import { CheckIcon, ChevronRightIcon, CircleIcon } from 'lucide-react';
+import { CheckIcon, ChevronRightIcon, CircleIcon, MinusIcon } from 'lucide-react';
 import { Stage } from '../lib/pipeline';
 
 /**
  * Where the product has got to. Settled stages state what they settled on;
  * an unsettled stage says what is missing rather than merely blocking.
+ *
+ * THREE STATES, NOT TWO. A stage with `checked: false` ran no check at all, and it must not
+ * borrow either of the other two renderings: a tick would claim work nobody did, and a clay
+ * ring with an issue count would claim work the maker owes. It gets a neutral dash, no count,
+ * and a line stating plainly what is not built. Today that is Documents, and the reason the
+ * distinction is worth a state rather than a special case is that "settled" here is derived
+ * from an empty issue list — so any future stage that stops looking would silently inherit a
+ * green tick the same way.
  */
 export function ProductPipeline({
   stages,
@@ -41,7 +49,13 @@ export function ProductPipeline({
                 'border-transparent text-ink-secondary hover:text-ink'}`
                 }>
                 
-                {stage.settled ?
+                {!stage.checked ?
+                <MinusIcon
+                  className="h-4 w-4 flex-none text-ink-tertiary"
+                  strokeWidth={1.5}
+                  aria-hidden="true" /> :
+
+                stage.settled ?
                 <CheckIcon
                   className="h-4 w-4 flex-none text-teal"
                   strokeWidth={1.75}
@@ -55,7 +69,7 @@ export function ProductPipeline({
 
                 }
                 <span className="text-[0.8125rem] font-medium">{stage.label}</span>
-                {!stage.settled &&
+                {stage.checked && !stage.settled &&
                 <span className="tabular rounded-full bg-clay-tint px-1.5 py-px text-2xs font-medium text-clay-dark">
                     {stage.issues.length}
                   </span>
@@ -67,7 +81,13 @@ export function ProductPipeline({
       </ol>
 
       <div className="pb-4">
-        {active.settled ?
+        {!active.checked ?
+        <p className="text-[0.8125rem] text-ink-secondary">
+            <span className="font-medium text-ink">{active.label} not checked.</span>{' '}
+            {active.summary}.
+          </p> :
+
+        active.settled ?
         <p className="text-[0.8125rem] text-ink-secondary">
             <span className="font-medium text-ink">{active.label} settled.</span> {active.summary}.
           </p> :

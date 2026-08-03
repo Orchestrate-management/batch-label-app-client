@@ -33,7 +33,28 @@ const EntitlementContext = createContext<EntitlementValue | null>(null);
 
 export function EntitlementProvider({ children }: {children: React.ReactNode;}) {
   const { user } = useAuth();
-  const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
+  /**
+   * The entitlement AND the user it was read for, held together and never apart.
+   *
+   * IT USED TO BE THE ROW ALONE, reset only inside `if (!userId)` — that is, only on a
+   * sign-out. A session can be replaced in place, with no signed-out frame between: a
+   * cross-tab sign-in over the shared .batchlabel.xyz cookie, or an auth callback landing in
+   * a tab that is already signed in. RequireAuth gates on "is there a session", so it keeps
+   * the providers mounted straight through that, and the cached row survived as A's while
+   * the JWT became B's.
+   *
+   * What made that expensive is downstream. `loading` was `entitlement === null`, so it was
+   * already false; `accountId` was still A's; and ProductsProvider reads `!loading` as "the
+   * account is resolved" and fires its one deliberately-scoped read with it. Under B's JWT
+   * that returns nothing, and the store publishes {ready, []} — the empty state, on an
+   * account with products. Isolation held (a wrong id shows too little, never somebody
+   * else's rows) but the screen stated something the software had not established, which is
+   * the house rule, and to a maker with forty SKUs "you have no products yet" reads as loss.
+   *
+   * So the identity is part of the value. A mismatch is not stale data to be corrected on
+   * the next tick; it is an answer about a different person, and it is worth nothing.
+   */
+  const [read, setRead] = useState<{userId: string | null;entitlement: Entitlement;} | null>(null);
   const [attempt, setAttempt] = useState(0);
 
   // Key on the user id, not the session object. supabase-js hands out a freshly
@@ -43,15 +64,17 @@ export function EntitlementProvider({ children }: {children: React.ReactNode;}) 
 
   useEffect(() => {
     if (!userId) {
-      setEntitlement(mapEntitlement(null));
+      setRead({ userId: null, entitlement: mapEntitlement(null) });
       return;
     }
     let active = true;
-    // No setEntitlement(null) here: a refresh revalidates in the background and
-    // keeps showing the answer we already have, so a manual retry does not blank
-    // the screen someone is working on.
+    // No reset to null here: a refresh revalidates in the background and keeps
+    // showing the answer we already have, so a manual retry does not blank the
+    // screen someone is working on. That is safe precisely because the identity
+    // check below is on the value rather than in this effect — a re-read for the
+    // SAME user keeps the old row, a change of user does not.
     fetchEntitlement().then(({ row, failed }) => {
-      if (active) setEntitlement(mapEntitlement(row, failed));
+      if (active) setRead({ userId, entitlement: mapEntitlement(row, failed) });
     });
     return () => {
       active = false;
@@ -59,6 +82,11 @@ export function EntitlementProvider({ children }: {children: React.ReactNode;}) 
   }, [userId, attempt]);
 
   const refresh = useCallback(() => setAttempt((value) => value + 1), []);
+
+  // Derived at render, not in an effect, so there is no frame in which the previous user's
+  // account id is published as resolved. `loading` stays true until the entitlement for the
+  // CURRENT user has landed, which is what every consumer already assumes it means.
+  const entitlement = read && read.userId === userId ? read.entitlement : null;
 
   const value = useMemo<EntitlementValue>(
     () => ({

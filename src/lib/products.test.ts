@@ -17,7 +17,12 @@ const db = vi.hoisted(() => {
     specPayload: null as Record<string, unknown> | null,
     productPayload: null as Record<string, unknown> | null,
     lookupFilters: [] as Array<[string, unknown]>,
-    archived: [] as string[]
+    archived: [] as string[],
+    // saveComposition's two updates, settable apart, because the failure that matters is the
+    // second one failing AFTER the first has committed.
+    specUpdate: { data: null as unknown, error: null as unknown },
+    productUpdate: { data: null as unknown, error: null as unknown },
+    updated: [] as string[]
   };
 
   const query = (result: () => {data: unknown;error: unknown;}, onEq?: (column: string, value: unknown) => void) => {
@@ -56,8 +61,14 @@ const db = vi.hoisted(() => {
         ),
         update: (payload: Record<string, unknown>) => ({
           eq: (_column: string, value: unknown) => {
-            if (payload.archived_at) state.archived.push(String(value));
-            return Promise.resolve({ data: null, error: null });
+            if (payload.archived_at) {
+              state.archived.push(String(value));
+              return Promise.resolve({ data: null, error: null });
+            }
+            state.updated.push(table);
+            return Promise.resolve(
+              table === 'specifications' ? state.specUpdate : state.productUpdate
+            );
           }
         })
       };
@@ -72,6 +83,7 @@ vi.mock('./supabase', () => ({ supabase: db.supabase, isSupabaseConfigured: true
 import {
   classifyWriteError,
   createProduct,
+  saveComposition,
   toProduct,
   type ProductRow,
   type SpecificationRow } from
@@ -226,13 +238,49 @@ describe('classifying a refused write', () => {
     );
   });
 
-  it('reads a not-null violation as an account that is not set up', () => {
-    // account_id defaults to current_account_id(), which is NULL for a user with no
-    // membership or with two. The NOT NULL constraint is what turns that into an error at
-    // the insert rather than a row filed against a guess.
-    expect(classifyWriteError({ code: '23502', message: 'null value in column' }).reason).toBe(
-      'no_account'
+  /**
+   * The two account hints, against the error shapes a real Postgres actually returns.
+   *
+   * These tests used to assert `23502 -> no_account`, with comments explaining that a null
+   * account_id arrives as a not-null violation. It does not, and the suite was therefore green
+   * on a premise the database disproves. RLS evaluates its WITH CHECK before table
+   * constraints, so `is_member_of(null)` refuses the row first and the NOT NULL is never
+   * reached: 23502 is unreachable on these two tables from a browser, and `no_account` was
+   * dead code that had never once rendered. Section 7c of the migration exists to answer the
+   * question ahead of RLS, and it answers with P0001 plus a hint.
+   */
+  it('reads the account_missing hint as an account that is not set up yet', () => {
+    const classified = classifyWriteError({
+      code: 'P0001',
+      hint: 'account_missing',
+      message: 'There is no account to save this into yet.'
+    });
+    expect(classified.reason).toBe('no_account');
+    // This is the one case where finishing signup is the fix, so the copy has to point at it.
+    expect(classified.message).toMatch(/signup/i);
+  });
+
+  it('does not tell an ambiguous account to wait for something that is not coming', () => {
+    // Two active memberships. Permanent until the app sends an account_id — the migration is
+    // explicit: "Never tell this customer to wait; nothing is coming." A retry cannot work,
+    // so no retry may be offered.
+    const classified = classifyWriteError({
+      code: 'P0001',
+      hint: 'account_ambiguous',
+      message: 'it is not clear which account it belongs to'
+    });
+    expect(classified.reason).toBe('account_ambiguous');
+    expect(classified.message).toMatch(/nothing has been saved/i);
+    expect(classified.message).not.toMatch(/try again|in a moment|being set up/i);
+  });
+
+  it('matches the hint even though all three arrive on the same P0001', () => {
+    // The meter, the missing account and the ambiguous account share a code. Branching on the
+    // code first would collapse them into one indistinguishable failure.
+    const codes = ['sku_limit_reached', 'account_missing', 'account_ambiguous'].map(
+      (hint) => classifyWriteError({ code: 'P0001', hint, message: 'x' }).reason
     );
+    expect(new Set(codes).size).toBe(3);
   });
 
   it('never surfaces the database sentence to a customer', () => {
@@ -251,24 +299,24 @@ describe('classifying a refused write', () => {
     expect(classifyWriteError(null).reason).toBe('failed');
   });
 
-  it('does not blame a missing account when the call supplied one', () => {
-    // A 23502 on a write that sent account_id cannot be about the account. Saying it is would
-    // be inventing a cause, and the sentence tells somebody to wait for something that has
-    // already happened.
-    const classified = classifyWriteError(
-      { code: '23502', message: 'null value in column' },
-      { accountIdSupplied: true }
-    );
+  it('dresses up a bare policy refusal as nothing in particular', () => {
+    // 42501 with no hint is what a genuine cross-account attempt returns, and the migration
+    // keeps it deliberately uninformative. The app must not diagnose it as an account problem.
+    const classified = classifyWriteError({
+      code: '42501',
+      message: 'new row violates row-level security policy'
+    });
     expect(classified.reason).toBe('failed');
+    expect(classified.message).not.toMatch(/account/i);
   });
 
-  it('does not tell anybody their account is nearly ready', () => {
-    // current_account_id() returns NULL for two reasons — no membership, which resolves on
-    // its own, and more than one, which never does. Both arrive as 23502, so the one sentence
-    // that covers both must not promise that waiting fixes it.
-    const message = classifyWriteError({ code: '23502', message: 'null value in column' }).message;
-    expect(message).toMatch(/nothing has been saved/i);
-    expect(message).not.toMatch(/usually takes a moment/i);
+  it('no longer treats a not-null violation as an account problem', () => {
+    // Unreachable for account_id, and on these tables it can now only mean a genuinely null
+    // non-account column. Diagnosing that as "your account is not set up" would be inventing
+    // a cause.
+    expect(classifyWriteError({ code: '23502', message: 'null value in column' }).reason).toBe(
+      'failed'
+    );
   });
 });
 
@@ -335,8 +383,43 @@ describe('creating a product', () => {
     const result = await createProduct(input, 'acct-1111');
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('failed');
+    if (!result.ok) expect(result.reason).toBe('unknown');
     expect(db.state.archived).toEqual([]);
+  });
+
+  it('says the outcome is unknown rather than that nothing has changed', async () => {
+    // The lookup that would have told us whether the insert landed failed too. The code
+    // already declines to archive on this path — an explicit admission that it does not know
+    // — and then used to return "Nothing has changed. Please try again in a moment." A blind
+    // retry from there either collides with the unique index or spends a second SKU slot of a
+    // three-SKU plan on one intended product.
+    db.state.productInsert = { data: null, error: { message: 'Failed to fetch' } };
+    db.state.lookup = { data: null, error: { message: 'Failed to fetch' } };
+
+    const result = await createProduct(input, 'acct-1111');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('unknown');
+      expect(result.message).not.toMatch(/nothing has changed/i);
+      expect(result.message).toMatch(/check your products/i);
+    }
+    expect(db.state.archived).toEqual([]);
+  });
+
+  it('archives the specification when the account hints refuse the product row', async () => {
+    // Not reachable today — both inserts carry the same account object, so the specification
+    // fails first — but a refusal token missing from the archive decision is a specification
+    // silently orphaned, and that is the failure this whole path exists for.
+    db.state.productInsert = {
+      data: null,
+      error: { code: 'P0001', hint: 'account_ambiguous', message: 'which account?' }
+    };
+    const result = await createProduct(input, 'acct-1111');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('account_ambiguous');
+    expect(db.state.archived).toEqual(['spec-1']);
   });
 
   it('returns the product when the insert won and only the answer was lost', async () => {
@@ -365,5 +448,82 @@ describe('creating a product', () => {
     // A lookup that itself failed proves nothing either way. An orphaned specification is
     // invisible and meters nothing; an archived one under a live product is unreachable.
     expect(db.state.archived).toEqual([]);
+  });
+});
+
+/**
+ * Saving an edited composition, which is two untransacted UPDATEs across two tables.
+ *
+ * PostgREST cannot span them, so the pair is not atomic and the interesting case is the
+ * second failing after the first has committed. That leaves the new recipe stored against the
+ * old pack — a product the maker never approved, and the one that drives both the label and
+ * the sixteen-section sheet. What the screen says about it is the whole test.
+ */
+describe('saving a composition', () => {
+  const product = {
+    id: 'prod-1',
+    specificationId: 'spec-1',
+    name: 'Black Fig and Cassis',
+    sku: 'CC-BFC-220',
+    categoryId: 'home-fragrance' as const,
+    markets: ['GB' as const],
+    regimes: [],
+    spec: {
+      kind: 'mixture' as const,
+      productType: 'Container candle',
+      baseId: 'ing-crw45',
+      fragranceId: 'ing-bfc',
+      load: 8,
+      dyeId: 'ing-no-dye',
+      additive: 'None',
+      netQuantity: 220,
+      netUnit: 'g' as const,
+      packagingId: 'pkg-tumbler-250'
+    },
+    artefacts: [],
+    identifiers: {},
+    obligations: {}
+  };
+
+  beforeEach(() => {
+    db.state.specUpdate = { data: null, error: null };
+    db.state.productUpdate = { data: null, error: null };
+    db.state.updated = [];
+  });
+
+  it('says nothing changed only when the first write is the one that failed', async () => {
+    db.state.specUpdate = { data: null, error: { code: '42501', message: 'refused' } };
+    const result = await saveComposition(product, product.spec);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('failed');
+      expect(result.message).toMatch(/nothing has changed/i);
+    }
+    // And it never reached the second table, so there is nothing to be half-saved.
+    expect(db.state.updated).toEqual(['specifications']);
+  });
+
+  it('admits a half-save rather than claiming nothing changed', async () => {
+    // The composition committed and the pack did not. "Nothing has changed" here is false in
+    // the direction that makes somebody stop trying — and stopping is what makes it durable,
+    // because pressing save again heals it.
+    db.state.productUpdate = { data: null, error: { message: 'Failed to fetch' } };
+    const result = await saveComposition(product, product.spec);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('partial_save');
+      expect(result.message).not.toMatch(/nothing has changed/i);
+      expect(result.message).toMatch(/composition was stored/i);
+      expect(result.message).toMatch(/save again/i);
+    }
+    expect(db.state.updated).toEqual(['specifications', 'products']);
+  });
+
+  it('writes both halves when both succeed', async () => {
+    const result = await saveComposition(product, product.spec);
+    expect(result.ok).toBe(true);
+    expect(db.state.updated).toEqual(['specifications', 'products']);
   });
 });
