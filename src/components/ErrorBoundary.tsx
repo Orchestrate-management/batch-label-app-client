@@ -62,8 +62,14 @@ export function crashCopy(kind: CrashKind, screen: string | null): CrashCopy {
       `Batchlabel could not load the ${screen} screen` :
       'Batchlabel could not load this screen',
       body: [
+      // NOT "and nothing about your products has changed". The boundary knows this screen
+      // never drew; it does not know what the maker did before navigating here. Create a
+      // product and then hit a failed chunk and that sentence is false — and it is most
+      // false on the path where it matters most, a return from Stripe Checkout. Say only
+      // what a failed fetch actually establishes: this screen drew nothing.
       'The files this screen is built from did not arrive, so none of it was drawn. There is ' +
-      'nothing on this screen to check, and nothing about your products has changed.',
+      'nothing on this screen to check. Anything you did before opening it was saved or not ' +
+      'on its own, and is unaffected by this.',
       'This is usually one of two things: a connection that dropped, or Batchlabel having ' +
       'been updated while this tab sat open — in which case the tab is asking for files that ' +
       'have since been replaced. Reloading fetches the current version, and is worth trying ' +

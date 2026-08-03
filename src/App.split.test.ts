@@ -33,15 +33,29 @@ function matches(pattern: RegExp): string[] {
 }
 
 describe('App.tsx', () => {
-  it('loads the screen a maker lands on, and only that one, up front', () => {
-    expect(matches(EAGER_SCREEN)).toEqual(['Studio']);
+  /**
+   * Exactly two screens are in the entry chunk, and each is there for its own reason.
+   *
+   * Studio, because it is where a signed-in maker lands: splitting it buys an extra round
+   * trip at the one moment they have nothing else to look at.
+   *
+   * BillingReturn, because it is where Stripe returns somebody the instant after they have
+   * been charged. Behind a second fetch, a dropped connection — or a deploy that landed
+   * while they were away in Checkout, which is exactly when a tab has been sitting open —
+   * shows a crash screen to a customer who has just paid and does not yet know whether
+   * their plan is on. It costs about 1 kB gzipped.
+   *
+   * Adding a third needs a reason of the same kind, which is why this asserts the whole set
+   * rather than just containing these two.
+   */
+  it('loads only the landing screen and the post-payment return up front', () => {
+    expect(matches(EAGER_SCREEN).sort()).toEqual(['BillingReturn', 'Studio']);
   });
 
   it('splits every other screen out', () => {
     expect(matches(SPLIT_SCREEN).sort()).toEqual([
     'ArtefactDesigner',
     'Billing',
-    'BillingReturn',
     'Materials',
     'Products',
     'Records',

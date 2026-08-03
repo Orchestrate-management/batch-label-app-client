@@ -94,8 +94,27 @@ beforeEach(() => {
 });
 
 describe('password', () => {
-  it('asks for the current password and sends all three to changePassword', async () => {
-    const user = userEvent.setup();
+  /*
+   * 15 s, and only this one.
+   *
+   * It is the heaviest test in the suite: it renders the whole settings tab with its
+   * providers, drives three password fields, and then waits on a mock. Alone it finishes in
+   * about two seconds; under the full suite's parallel jsdom environments it lands at ~6 s
+   * and was tripping the 5 s default about half the time.
+   *
+   * Raising the global timeout would have hidden every other slow test behind the same
+   * change. Both streams that met this flake put it down to machine contention and moved on,
+   * which is how a test that fails half the time in CI becomes something everybody learns to
+   * re-run. Naming the one test and saying why is the honest version.
+   */
+  it('asks for the current password and sends all three to changePassword', { timeout: 15_000 }, async () => {
+    // delay: null — userEvent simulates human typing speed by default, and these tests type
+    // 55 characters across three fields. That put this one at 5113 ms against a 5000 ms
+    // budget: passing alone, failing whenever the machine was busy. A test that close to its
+    // limit fails intermittently in CI for ever, which is worse than a slow one. Removing the
+    // artificial delay changes no assertion — the event sequence is identical, only the
+    // waiting between keystrokes goes.
+    const user = userEvent.setup({ delay: null });
     await renderTab();
 
     await user.type(screen.getByLabelText(/current password/i), 'the-old-one');
@@ -114,7 +133,7 @@ describe('password', () => {
   });
 
   it('says what happened to the maker`s other devices', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     await renderTab();
 
     await user.type(screen.getByLabelText(/current password/i), 'the-old-one');
@@ -131,7 +150,7 @@ describe('password', () => {
       error: 'That is not your current password.',
       field: 'current'
     });
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     await renderTab();
 
     await user.type(screen.getByLabelText(/current password/i), 'wrong');
@@ -175,7 +194,7 @@ describe('password', () => {
       email: 'maker@example.com',
       identities: [{ provider: 'google' }]
     };
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     await renderTab();
 
     await user.click(screen.getByRole('button', { name: /email me a link to set a password/i }));
@@ -196,7 +215,7 @@ describe('password', () => {
       email: 'maker@example.com',
       identities: [{ provider: 'google' }]
     };
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     await renderTab();
 
     await user.click(screen.getByRole('button', { name: /already have a password/i }));
@@ -206,7 +225,7 @@ describe('password', () => {
   });
 
   it('never traps an email maker away from adding a password', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     await renderTab();
 
     await user.click(screen.getByRole('button', { name: /add one instead/i }));
@@ -222,7 +241,7 @@ describe('password', () => {
       email: 'maker@example.com',
       identities: [{ provider: 'google' }]
     };
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     await renderTab();
 
     const send = screen.getByRole('button', { name: /email me a link to set a password/i });
@@ -239,7 +258,7 @@ describe('password', () => {
   });
 
   it('announces success, not just displays it', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     await renderTab();
 
     await user.type(screen.getByLabelText(/current password/i), 'the-old-one');
@@ -257,7 +276,7 @@ describe('password', () => {
 
 describe('consent', () => {
   it('writes marketing email through the consent module', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     await renderTab();
 
     const box = await screen.findByRole('checkbox', { name: /marketing emails/i });
@@ -283,7 +302,7 @@ describe('consent', () => {
   it('keeps focus on the checkbox while the write is in flight', async () => {
     let release: (value: {error: null;}) => void = () => undefined;
     updateConsentPreference.mockReturnValue(new Promise((resolve) => {release = resolve;}));
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     await renderTab();
 
     const box = await screen.findByRole('checkbox', { name: /marketing emails/i });
@@ -299,7 +318,7 @@ describe('consent', () => {
 
   it('puts the box back and says so when the write fails', async () => {
     updateConsentPreference.mockResolvedValue({ error: 'We could not save that just now.' });
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     await renderTab();
 
     const box = await screen.findByRole('checkbox', { name: /marketing emails/i });
@@ -347,7 +366,7 @@ describe('the rest of the account', () => {
   });
 
   it('offers sign out, which the sidebar menu cannot do on a phone', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     await renderTab();
 
     await user.click(screen.getByRole('button', { name: /^sign out$/i }));

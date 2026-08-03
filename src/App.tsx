@@ -10,6 +10,7 @@ import { lazyScreen } from './lib/lazy-screen';
 import { MetaTrackingProvider } from './lib/meta-consent';
 import { ProductsProvider } from './lib/product-store';
 import { WorkspaceProvider } from './lib/workspace';
+import { BillingReturn } from './pages/BillingReturn';
 import { Studio } from './pages/Studio';
 
 /**
@@ -52,9 +53,17 @@ import('./pages/Settings').then((module) => ({ default: module.Settings }))
 const Billing = lazyScreen('Billing', () =>
 import('./pages/Billing').then((module) => ({ default: module.Billing }))
 );
-const BillingReturn = lazyScreen('Billing', () =>
-import('./pages/BillingReturn').then((module) => ({ default: module.BillingReturn }))
-);
+/*
+ * NOT lazy, deliberately, and it is the only screen singled out.
+ *
+ * This is where Stripe returns a customer the instant after they have been charged. Putting
+ * it behind a second network fetch means a dropped connection — or a deploy that happened
+ * while they were away in Checkout, which is precisely when a tab has been sitting open —
+ * shows a crash screen to somebody who has just paid and does not yet know whether their
+ * plan is on. No other screen in the app has that property.
+ *
+ * It costs a few kB on the entry chunk. That is the cheapest insurance in the codebase.
+ */
 
 /**
  * Nothing in this app is public.
