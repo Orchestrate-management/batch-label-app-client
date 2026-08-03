@@ -6,6 +6,31 @@ import {
   PackagingMaterial } from
 './model';
 
+/**
+ * THE SHIPPED REFERENCE LIBRARY. Ours, not the customer's.
+ *
+ * Every material below is data Batchlabel ships in the bundle: hazard classifications,
+ * allergen percentages, IFRA limits, capacities, printable areas, RoHS status. It is
+ * load-bearing — derive.ts classifies from it, and a specification stores fragrance_id /
+ * base_id / dye_id as text ids INTO it, because there is no materials table in the account
+ * data schema. Deleting it would take the classification with it.
+ *
+ * WHAT MAY LIVE HERE: facts about a material that are true wherever it is bought — what it is,
+ * who makes it, what its supplier's document says about it, the version and date of the
+ * document that data was read from.
+ *
+ * WHAT MAY NOT: anything that describes what THIS ACCOUNT did. Nothing here was bought,
+ * received, uploaded or held by any customer, and no screen may frame it as though it were.
+ * That is not a hypothetical rule — INBOX and DOCUMENT_HISTORY lived in this file and rendered
+ * as documents an account had received, which the pipeline then turned into invented
+ * compliance warnings under the maker's own product name. They are in lib/fixtures.ts now, and
+ * fixtures.guard.test.ts names them so they cannot come back.
+ *
+ * `latestVersion` / `latestDate` are gone for the same reason: nothing checks any supplier's
+ * website, so "version 4.3 was published and yours is behind" was a statement about the world
+ * that this application had not established, rendered as outstanding compliance work.
+ */
+
 /* ------------------------------------------------------------ ingredients */
 
 export const INGREDIENTS: IngredientMaterial[] = [
@@ -23,9 +48,7 @@ export const INGREDIENTS: IngredientMaterial[] = [
     kind: 'Safety data sheet',
     reference: 'aurelia-fo-4471-sds',
     version: '4.2',
-    date: '2025-11-14',
-    latestVersion: '4.3',
-    latestDate: '2026-06-02'
+    date: '2025-11-14'
   },
   hazards: [
   {
@@ -139,9 +162,7 @@ export const INGREDIENTS: IngredientMaterial[] = [
     kind: 'Safety data sheet',
     reference: 'coastwise-fo-8802-sds',
     version: '3.0',
-    date: '2025-08-21',
-    latestVersion: '3.2',
-    latestDate: '2026-05-19'
+    date: '2025-08-21'
   },
   hazards: [
   {
@@ -401,9 +422,7 @@ export const INGREDIENTS: IngredientMaterial[] = [
     kind: 'INCI and allergen certificate',
     reference: 'verdant-jj04-inci',
     version: '1.1',
-    date: '2025-07-08',
-    latestVersion: '1.2',
-    latestDate: '2026-06-22'
+    date: '2025-07-08'
   },
   hazards: [],
   allergens: [],
@@ -700,29 +719,22 @@ export const MATERIAL_CLASSES: Array<{
   label: string;
   blurb: string;
   documentRule: string;
-  emptyBody: string;
 }> = [
 {
   id: 'ingredient',
   label: 'Ingredients',
   blurb: 'Anything that goes into the mixture. Classified at 100 percent, before any load is applied.',
-  documentRule: 'A safety data sheet, or for cosmetics an INCI and allergen certificate.',
-  emptyBody:
-  'Drop a safety data sheet or an INCI and allergen certificate here. The extracted fields appear beside the source page so you can confirm or correct each one before the record is saved.'
+  documentRule: 'A safety data sheet, or for cosmetics an INCI and allergen certificate.'
 },
 {
   id: 'packaging',
   label: 'Packaging',
   blurb: 'Containers and cartons. Capacity and available label area drive label geometry.',
-  documentRule: 'A technical drawing or dimension sheet.',
-  emptyBody:
-  'Drop a technical drawing or dimension sheet here. Capacity and printable area are read from it and feed the minimum label size on every product that uses this packaging.'
+  documentRule: 'A technical drawing or dimension sheet.'
 },
 {
   id: 'component',
   label: 'Components',
   blurb: 'Parts in a bill of materials, each carrying its own conformity evidence.',
-  documentRule: 'A declaration of conformity or a test report.',
-  emptyBody:
-  'Drop a declaration of conformity or a test report here. Components without a declaration cannot be included in a signed declaration of conformity for the finished device.'
+  documentRule: 'A declaration of conformity or a test report.'
 }];

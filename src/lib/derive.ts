@@ -77,8 +77,18 @@ export type Derivation = {
   device?: DeviceResult;
 };
 
-/** The register date the app reasons from. */
-export const TODAY = new Date('2026-07-30T00:00:00Z');
+/**
+ * The date this module reasons from: the wall clock, read at the moment of the derivation.
+ *
+ * It used to be `new Date('2026-07-30T00:00:00Z')` — a constant, frozen on the day the file
+ * was written. Every certificate countdown below was measured from it, so from 31 July onwards
+ * "expires in 45 days" was wrong by exactly as many days as had passed since, and got worse
+ * for as long as the build stayed deployed. A number of days is a claim about today; it has to
+ * come from today.
+ */
+function today(): Date {
+  return new Date();
+}
 
 const P_LIBRARY: Record<string, string> = {
   P101: 'If medical advice is needed, have product container or label at hand.',
@@ -477,11 +487,12 @@ export function phasedTotal(spec: PhasedSpec): number {
 
 /* --------------------------------- bill of materials, CE, RoHS and WEEE */
 
-function daysUntil(iso: string): number | null {
+/** `from` is injectable so a test can pin the clock; nothing in the app passes it. */
+export function daysUntil(iso: string, from: Date = today()): number | null {
   if (!iso || iso === '—') return null;
   const target = new Date(`${iso}T00:00:00Z`);
   if (Number.isNaN(target.getTime())) return null;
-  return Math.round((target.getTime() - TODAY.getTime()) / 86400000);
+  return Math.round((target.getTime() - from.getTime()) / 86400000);
 }
 
 export function deriveBom(spec: BomSpec, product?: Product): Derivation {

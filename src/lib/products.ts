@@ -32,15 +32,27 @@ import {
  *      that is precisely why the right one has to be written now rather than backfilled onto
  *      live customer data later.
  *
- *   2. THIS FILE NEVER SENDS AN account_id. Not once, not even one it read back from the
- *      entitlement. `specifications.account_id` and `products.account_id` both DEFAULT to
- *      `public.current_account_id()`, and the schema says why in as many words: "The app can
- *      therefore insert a product without holding an account id at all, and the id it did not
- *      supply cannot be somebody else's." An insert that omits the column is an insert that
- *      cannot file a row against the wrong workspace, by construction rather than by care.
- *      `current_account_id()` returns NULL for a user with no membership or with two, which
- *      lands on the NOT NULL constraint and surfaces here as `no_account` — an error at the
- *      insert, which is the correct outcome, rather than a row quietly filed somewhere.
+ *   2. THE ACCOUNT ID IS SENT WHEN WE KNOW IT, AND OMITTED WHEN WE DO NOT. This file used to
+ *      state the opposite as an absolute — "never, not even one it read back from the
+ *      entitlement" — which contradicted the schema this file is written against. The
+ *      migration header says, of current_account_id(): "NULL when none or ambiguous… Prefer
+ *      passing entitlements.account_id explicitly." Both rules agree today, because only
+ *      `batchlabel` is seeded in public.brands and every user therefore has exactly one
+ *      account; they stop agreeing the day a sibling Orchestrate brand ships and one person
+ *      holds an account on each. current_account_id() then refuses to guess and returns NULL
+ *      — correctly, it must not file a maker's product in the wrong workspace — and an app
+ *      that can only ever omit the column would leave that customer unable to create a
+ *      product on EITHER brand, permanently, behind a message about setup taking a moment.
+ *
+ *      Sending it weakens no isolation. The INSERT policy on both tables is
+ *      `with check (public.is_member_of(account_id))`, so an id that is not yours is refused
+ *      by the database, and `entitlements.account_id` is itself resolved by the database for
+ *      THIS deployment's brand (membership.ts filters on BRAND_SLUG) rather than chosen here.
+ *      When the entitlement has not resolved one, the column is omitted and the default —
+ *      current_account_id() — still decides, exactly as before.
+ *
+ *      NOTHING IN THIS FILE EVER TAKES AN ACCOUNT ID FROM A FORM, a URL or a props chain that
+ *      a screen could influence. It comes from the entitlement read and nowhere else.
  *
  *   3. TWO TABLES, NOT ONE. A specification is the composition (the recipe: fragrance, base,
  *      dye, load — the four inputs every expensive derivation reads); a product is the SKU
@@ -109,9 +121,21 @@ const NOT_NULL_VIOLATION = '23502';
 const GENERIC_WRITE_FAILURE =
 'We could not save that just now. Nothing has changed — please try again in a moment.';
 
+/**
+ * Said when the database could not resolve an account to save into, AND this call had none to
+ * offer it.
+ *
+ * It no longer promises that waiting fixes it. `current_account_id()` returns NULL for two
+ * different reasons — no active membership yet, which does resolve on its own, and more than
+ * one, which never does — and both arrive here as the same NOT NULL violation. Telling the
+ * second customer that their account is nearly ready would be a statement we cannot support,
+ * repeated forever. So this says what we know (nothing was saved, we could not tell which
+ * account), offers the retry that helps the first case, and names the way out of the second.
+ */
 const NO_ACCOUNT_MESSAGE =
-'Your account is still being set up, so there is nowhere to save this yet. This usually takes ' +
-'a moment. If it keeps saying this, get in touch and we will finish setting it up.';
+'We could not tell which account to save this to, so nothing has been saved. If you have just ' +
+'signed up, your account may still be being set up — try again in a moment. If it keeps saying ' +
+'this, get in touch and we will sort it out.';
 
 const DUPLICATE_SKU_MESSAGE =
 'You already have a product with that code. Product codes have to be unique, so give this one ' +
@@ -132,8 +156,18 @@ const SKU_LIMIT_MESSAGE = 'This account is already holding as many products as i
 
 type Postgrestish = {code?: string | null;hint?: string | null;message?: string | null;};
 
-/** Classifies a PostgREST error into something a form can say out loud. */
-export function classifyWriteError(error: Postgrestish | null): {
+/**
+ * Classifies a PostgREST error into something a form can say out loud.
+ *
+ * `accountIdSupplied` is not a nicety. A 23502 means "a NOT NULL column got null", and the
+ * only reason this app has ever seen one is account_id defaulting from a current_account_id()
+ * that could not resolve. When the call DID supply an account id that cannot be what happened,
+ * so blaming the account would be inventing a cause; the generic failure is the honest answer.
+ */
+export function classifyWriteError(
+error: Postgrestish | null,
+{ accountIdSupplied = false }: {accountIdSupplied?: boolean;} = {})
+: {
   reason: WriteFailure;
   message: string;
 } {
@@ -142,8 +176,29 @@ export function classifyWriteError(error: Postgrestish | null): {
 
   if (hint === SKU_LIMIT_HINT) return { reason: 'sku_limit', message: SKU_LIMIT_MESSAGE };
   if (code === UNIQUE_VIOLATION) return { reason: 'duplicate_sku', message: DUPLICATE_SKU_MESSAGE };
-  if (code === NOT_NULL_VIOLATION) return { reason: 'no_account', message: NO_ACCOUNT_MESSAGE };
+  if (code === NOT_NULL_VIOLATION && !accountIdSupplied) {
+    return { reason: 'no_account', message: NO_ACCOUNT_MESSAGE };
+  }
   return { reason: 'failed', message: GENERIC_WRITE_FAILURE };
+}
+
+/**
+ * Postgres codes that mean the database REFUSED this statement, so nothing committed.
+ *
+ * Used for one decision only: whether it is safe to archive the specification a refused
+ * product insert left behind. A transport failure — a dropped socket, a proxy 5xx, an aborted
+ * fetch — carries no Postgres code at all, and MUST NOT be treated as a refusal, because the
+ * insert it lost the answer to may well have committed.
+ *
+ * 42501 is here because that is what a row level security WITH CHECK violation arrives as; it
+ * is as definite a refusal as a constraint.
+ */
+const DEFINITE_REFUSAL_CODES = ['23502', '23503', '23505', '23514', '42501'];
+
+function isDefiniteRefusal(error: Postgrestish | null): boolean {
+  if (!error) return false;
+  if ((error.hint ?? '') === SKU_LIMIT_HINT) return true;
+  return DEFINITE_REFUSAL_CODES.includes(error.code ?? '');
 }
 
 /* ------------------------------------------------------------ row shapes */
@@ -412,25 +467,46 @@ export function toProduct(product: ProductRow, spec: SpecificationRow): Product 
  * whole app depends on. Two round trips at a maker's volume is nothing; a products screen
  * that returns "could not read" because of a join heuristic is everything.
  *
- * Neither query filters on an account. RLS does it: every policy on both tables is
- * `is_member_of(account_id)`, so a select returns the caller's rows and there is no client
- * side filter that could be wrong. Archived rows are excluded here, matching the meter's own
- * definition of live.
+ * WHAT RLS DOES AND DOES NOT DO, because this comment used to overstate it. Every policy on
+ * both tables is `is_member_of(account_id)`, so a select returns rows from every account the
+ * caller is a member of. That is not the same as one account, and the migration is explicit
+ * that it must be: "those are two accounts and they must not see each other's products"
+ * (section 1). With one account per user the two coincide, which is exactly why the gap is
+ * easy to ship — a person holding an account on a sibling Orchestrate brand, or invited into
+ * a colleague's account when invites land, would otherwise get both accounts' products merged
+ * into one list with no column read back to tell them apart.
+ *
+ * So the account is filtered HERE as well, when we know it. `accountId` comes from the
+ * entitlement, which the database resolved for this deployment's brand. Null means we do not
+ * know it — the entitlement read has not landed or failed — and then the query is scoped by
+ * RLS alone, which is the caller's own data and is what this app has always shown. That is
+ * defence in depth over RLS, never a replacement for it: a wrong id here shows too little,
+ * never somebody else's.
+ *
+ * Archived rows are excluded, matching the meter's own definition of live.
  */
-export async function fetchProducts(): Promise<ReadResult> {
+export async function fetchProducts(accountId: string | null = null): Promise<ReadResult> {
   const client = supabase;
   if (!client) return { ok: false, message: NOT_CONFIGURED_MESSAGE };
 
-  const [productsResponse, specificationsResponse] = await Promise.all([
-  client.
+  let productsQuery = client.
   from('products').
   select(PRODUCT_COLUMNS).
-  is('archived_at', null).
-  order('created_at', { ascending: true }),
-  client.
+  is('archived_at', null);
+
+  let specificationsQuery = client.
   from('specifications').
   select(SPECIFICATION_COLUMNS).
-  is('archived_at', null)]
+  is('archived_at', null);
+
+  if (accountId) {
+    productsQuery = productsQuery.eq('account_id', accountId);
+    specificationsQuery = specificationsQuery.eq('account_id', accountId);
+  }
+
+  const [productsResponse, specificationsResponse] = await Promise.all([
+  productsQuery.order('created_at', { ascending: true }),
+  specificationsQuery]
   );
 
   if (productsResponse.error || specificationsResponse.error) {
@@ -558,19 +634,36 @@ function packColumns(spec: Spec) {
 /**
  * Creates a product, and its composition, in the caller's account.
  *
+ * `accountId` is the entitlement's, or null when the entitlement has not resolved one. See
+ * rule 2 at the top of this file: supplied it is checked by the INSERT policy, omitted it is
+ * decided by the column default. Nothing else may be passed here.
+ *
  * TWO INSERTS, IN THIS ORDER, AND WHAT HAPPENS WHEN THE SECOND FAILS. A product cannot be
  * inserted before its specification, because it carries the foreign key. So a refused product
  * — most often the SKU meter refusing one over the plan allowance — leaves a specification
  * behind. The browser is granted no DELETE on specifications (deleting one cascades to its
- * products, which is not something a mis-click may do), so the row is ARCHIVED instead:
- * archived_at is the schema's own intended path, it is a grant this client has, and an
- * archived specification is invisible to every read in this file. If even that fails the row
- * is simply left; it is invisible either way, it meters nothing — only products are metered —
- * and one orphaned composition row is a far better outcome than a maker who cannot try again.
+ * products, which is not something a mis-click may do), so the row is ARCHIVED instead.
  *
- * Neither insert sends an account_id. See the note at the top of this file.
+ * BUT ONLY WHEN THE DATABASE ACTUALLY REFUSED IT. This used to archive on ANY failure of the
+ * product insert, which included the one case where the product had been created: a timeout
+ * or a proxy 5xx that loses the response after the row has committed. supabase-js hands those
+ * back as an error with no Postgres code, so the old code archived the specification of a LIVE
+ * product. The product then counted against sku_limit in the trigger and in the view's
+ * sku_count, while `fetchProducts` dropped it for having no specification — invisible on every
+ * screen, un-editable, un-deletable (no DELETE grant, no un-archive path), and on the 3-SKU
+ * free plan a third of the allowance gone to one dropped response.
+ *
+ * So the failure path now ASKS. A product carrying this specification means the insert won and
+ * the response was merely lost, and that product is returned as the success it is. Otherwise
+ * the specification is archived only on a definite refusal — a Postgres code or the meter's
+ * hint — and on anything else it is left alone: an orphaned composition is invisible, meters
+ * nothing (only products are metered) and can be reclaimed, whereas an archived specification
+ * under a live product cannot.
  */
-export async function createProduct(input: NewProductInput): Promise<WriteResult<Product>> {
+export async function createProduct(
+input: NewProductInput,
+accountId: string | null = null)
+: Promise<WriteResult<Product>> {
   const client = supabase;
   if (!client) return { ok: false, reason: 'not_configured', message: NOT_CONFIGURED_MESSAGE };
 
@@ -578,10 +671,13 @@ export async function createProduct(input: NewProductInput): Promise<WriteResult
   const spec = blankSpec(category, input.productType, input.fragranceId);
   const name = input.name.trim();
   const sku = input.sku.trim();
+  const account = accountId ? { account_id: accountId } : {};
+  const classify = { accountIdSupplied: Boolean(accountId) };
 
   const { data: specRow, error: specError } = await client.
   from('specifications').
   insert({
+    ...account,
     name,
     category_id: category.id,
     kind: category.specKind,
@@ -592,12 +688,15 @@ export async function createProduct(input: NewProductInput): Promise<WriteResult
   select(SPECIFICATION_COLUMNS).
   single();
 
-  if (specError || !specRow) return { ok: false, ...classifyWriteError(specError) };
+  if (specError || !specRow) return { ok: false, ...classifyWriteError(specError, classify) };
+
+  const specificationId = (specRow as SpecificationRow).id;
 
   const { data: productRow, error: productError } = await client.
   from('products').
   insert({
-    specification_id: (specRow as SpecificationRow).id,
+    ...account,
+    specification_id: specificationId,
     name,
     sku: sku || null,
     ...packColumns(spec)
@@ -606,11 +705,30 @@ export async function createProduct(input: NewProductInput): Promise<WriteResult
   single();
 
   if (productError || !productRow) {
-    await client.
-    from('specifications').
-    update({ archived_at: new Date().toISOString() }).
-    eq('id', (specRow as SpecificationRow).id);
-    return { ok: false, ...classifyWriteError(productError) };
+    // Did it land anyway? Only the database can answer that, and the answer decides whether
+    // the specification below us is an orphan or the composition of a live product.
+    const { data: existing, error: lookupError } = await client.
+    from('products').
+    select(PRODUCT_COLUMNS).
+    eq('specification_id', specificationId).
+    is('archived_at', null).
+    limit(1).
+    maybeSingle();
+
+    if (!lookupError && existing) {
+      return { ok: true, value: toProduct(existing as ProductRow, specRow as SpecificationRow) };
+    }
+
+    // Archive only what the database told us it would not accept. A lookup that itself failed
+    // proves nothing either way, so it leaves the row alone as well.
+    if (!lookupError && isDefiniteRefusal(productError)) {
+      await client.
+      from('specifications').
+      update({ archived_at: new Date().toISOString() }).
+      eq('id', specificationId);
+    }
+
+    return { ok: false, ...classifyWriteError(productError, classify) };
   }
 
   return {

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Card, Field, FormError, Input, Select } from './ui/Primitives';
 import { SkuLimitNotice } from './SkuLimitNotice';
 import { CATEGORIES, categoryById } from '../lib/categories';
+import { useEntitlement } from '../lib/entitlement';
 import { createProduct, type WriteFailure } from '../lib/products';
 import { useProducts } from '../lib/product-store';
 import { regimeById } from '../lib/regimes';
@@ -20,9 +21,11 @@ import { useWorkspace } from '../lib/workspace';
  * writes two rows — a specification and the product that is one pack of it — and does not
  * close, does not navigate and does not congratulate anybody until the database has said yes.
  *
- * IT SENDS NO ACCOUNT ID. Both tables default `account_id` to `current_account_id()`, so the
- * account this lands in is decided from the session by the database and cannot be influenced
- * by anything typed into this form. See lib/products.ts.
+ * THE ACCOUNT IT LANDS IN IS NOT TYPED INTO THIS FORM. It comes from the entitlement, which
+ * the database resolved for the signed-in user and this deployment's brand; where that has not
+ * resolved one, the column is omitted and the database's own default decides. Either way the
+ * INSERT policy refuses an account the caller is not a member of, so no field on this screen
+ * can move a product into somebody else's workspace. See lib/products.ts, rule 2.
  *
  * THE PRODUCT CODE IS EDITABLE, which it was not before. It used to be generated from the
  * name and the clock — `BLA-4821` — and shown as an un-editable hint, so a maker was given a
@@ -40,6 +43,7 @@ export function NewProductDialog({
   const navigate = useNavigate();
   const { enabledCategories } = useWorkspace();
   const { reload } = useProducts();
+  const entitlement = useEntitlement();
   const categories = CATEGORIES.filter((category) => enabledCategories.includes(category.id));
   const startingMaterial = fragranceId ? ingredientById(fragranceId) : undefined;
 
@@ -63,13 +67,16 @@ export function NewProductDialog({
     setSaving(true);
     setFailure(null);
 
-    const result = await createProduct({
-      name: name.trim(),
-      sku: sku.trim(),
-      categoryId,
-      productType,
-      fragranceId: category.specKind === 'mixture' ? fragranceId : undefined
-    });
+    const result = await createProduct(
+      {
+        name: name.trim(),
+        sku: sku.trim(),
+        categoryId,
+        productType,
+        fragranceId: category.specKind === 'mixture' ? fragranceId : undefined
+      },
+      entitlement.accountId
+    );
 
     if (!result.ok) {
       // The dialog stays open, holding everything typed into it. A form that closes on

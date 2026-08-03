@@ -5,18 +5,15 @@ import {
   CheckIcon,
   PencilIcon,
   PlusIcon,
-  RefreshCwIcon,
   UploadIcon } from
 'lucide-react';
 import { NewProductDialog } from '../components/NewProductDialog';
 import { toast } from 'sonner';
-import type { DocumentRevision } from '../lib/model';
 import { PageHeader } from '../components/AppShell';
 import {
   Button,
   Callout,
   Card,
-  EmptyState,
   Input,
   Pill,
   SectionTitle } from
@@ -47,6 +44,26 @@ const DOCUMENT_FOR_CLASS: Record<MaterialClass, DocumentKind> = {
   component: 'Declaration of conformity'
 };
 
+/**
+ * The materials register, and WHOSE MATERIALS IT HOLDS.
+ *
+ * It holds Batchlabel's. Every material on this screen is shipped reference data (lib/
+ * catalog.ts), and the page used to be written as though it were the account's procurement
+ * record: "Everything you buy, held with the supplier document it was read from", 14
+ * ingredients counted in a tab, a safety data sheet version and date "on file", a certificate
+ * "valid to", and a warning that a supplier had published a newer sheet than the one being
+ * used. A maker signing in for the first time — with a virgin account, by construction — met a
+ * fully populated register of purchases they had never made, and an empty state that could
+ * never render.
+ *
+ * The catalogue itself stays: it is load-bearing for every classification, and shipping a
+ * reference library is a legitimate thing to do. What changes is that the screen now says
+ * whose it is, and stops asserting the things only an account could know — what was received,
+ * what is on file, and what a supplier has published since.
+ *
+ * The two account-shaped sections below (the document inbox and the conformity store) say they
+ * are not built, which they are not.
+ */
 export function Materials() {
   const { materialClass, materialId } = useParams();
   const navigate = useNavigate();
@@ -73,13 +90,17 @@ export function Materials() {
   return (
     <main className="flex-1 pb-24 xl:pb-0">
       <PageHeader
-        eyebrow="Products · materials"
+        eyebrow="Products · reference library"
         title="Materials"
-        description="Everything you buy, held with the supplier document it was read from. Nothing can be classified until a sheet has been read."
+        description="The materials Batchlabel ships with, each one classified from the supplier document its data was read from. These are ours, not yours: nothing here was bought, received or uploaded by your account, and holding your own materials is not built yet."
         actions={
-        <Button variant="primary" onClick={() => setImporting(activeClass)}>
+        /* Not "Add from a document". Reading one is a walkthrough of an unbuilt feature —
+           it parses nothing, saves nothing, and says so when you reach the end — and a
+           primary button promising to add a material sat directly under a description
+           saying you cannot yet hold one. */
+        <Button variant="secondary" onClick={() => setImporting(activeClass)}>
             <UploadIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
-            Add from a document
+            See how a document is read
           </Button>
         } />
       
@@ -117,32 +138,23 @@ export function Materials() {
             {definition.documentRule}
           </p>
 
-          {items.length === 0 ?
-          <EmptyState
-            icon={<UploadIcon className="h-5 w-5" strokeWidth={1.25} aria-hidden="true" />}
-            title={`No ${definition.label.toLowerCase()} yet`}
-            body={definition.emptyBody}
-            action={
-            <Button variant="secondary" onClick={() => setImporting(activeClass)}>
-                  Choose a document
-                </Button>
-            } /> :
-
-
+          {/* No empty state. There is nothing to be empty: the library ships in the bundle,
+              so `items.length === 0` was unreachable code whose copy — "No ingredients yet.
+              Drop a safety data sheet here" — described an account's own register and a
+              feature that does not exist. */}
           <Card className="overflow-hidden">
-              <div className="overflow-x-auto">
-                {activeClass === 'ingredient' &&
+            <div className="overflow-x-auto">
+              {activeClass === 'ingredient' &&
               <IngredientTable items={items as IngredientMaterial[]} onOpen={navigate} />
               }
-                {activeClass === 'packaging' &&
+              {activeClass === 'packaging' &&
               <PackagingTable items={items as PackagingMaterial[]} onOpen={navigate} />
               }
-                {activeClass === 'component' &&
+              {activeClass === 'component' &&
               <ComponentTable items={items as ComponentMaterial[]} onOpen={navigate} />
               }
-              </div>
-            </Card>
-          }
+            </div>
+          </Card>
 
           {activeClass === 'component' && <ConformityStore />}
         </section>
@@ -232,7 +244,9 @@ function IngredientTable({
         <tr className={headRow}>
           <th scope="col" className="px-5 py-3 font-medium">Name</th>
           <th scope="col" className="px-5 py-3 font-medium">Supplier</th>
-          <th scope="col" className="px-5 py-3 font-medium">Document</th>
+          {/* "Read from", not "Document": the version and date say which supplier document
+              this library's data was taken from, and not that a document is held for you. */}
+          <th scope="col" className="px-5 py-3 font-medium">Read from</th>
           <th scope="col" className="px-5 py-3 font-medium">Hazards at 100 percent</th>
           <th scope="col" className="px-5 py-3 font-medium">Allergens</th>
           <th scope="col" className="px-5 py-3 font-medium">INCI</th>
@@ -251,14 +265,9 @@ function IngredientTable({
             </td>
             <td className={cell}>{item.supplier}</td>
             <td className="px-5 py-3.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="tabular text-ink-secondary">
-                  v{item.document.version}, {formatDate(item.document.date)}
-                </span>
-                {item.document.latestVersion &&
-              <Pill tone="warn">v{item.document.latestVersion} available</Pill>
-              }
-              </div>
+              <span className="tabular text-ink-secondary">
+                {item.document.kind}, v{item.document.version}, {formatDate(item.document.date)}
+              </span>
             </td>
             <td className={cell}>
               {item.hazards.length ? item.hazards.map((h) => h.code).join(', ') : 'Not classified'}
@@ -337,7 +346,9 @@ function ComponentTable({
           <th scope="col" className="px-5 py-3 font-medium">Part number</th>
           <th scope="col" className="px-5 py-3 font-medium">RoHS</th>
           <th scope="col" className="px-5 py-3 font-medium">Standards</th>
-          <th scope="col" className="px-5 py-3 font-medium">Certificate expiry</th>
+          {/* The supplier's own certificate validity, from the document this data was read
+              from — not evidence held for this account, which holds none. */}
+          <th scope="col" className="px-5 py-3 font-medium">Supplier certificate to</th>
         </tr>
       </thead>
       <tbody>
@@ -374,9 +385,9 @@ function MaterialDetail({ material }: {material: Material;}) {
   return (
     <main className="flex-1 pb-24 xl:pb-0">
       <PageHeader
-        eyebrow={material.class === 'ingredient' ? material.role : material.class === 'packaging' ? 'Packaging' : 'Component'}
+        eyebrow={`Reference library · ${material.class === 'ingredient' ? material.role : material.class === 'packaging' ? 'Packaging' : 'Component'}`}
         title={material.name}
-        description={`${material.supplier}, ${material.supplierCode}. Read from ${material.document.kind.toLowerCase()} version ${material.document.version} dated ${formatDate(material.document.date)}.`}
+        description={`${material.supplier}, ${material.supplierCode}. Batchlabel's data for this material was read from ${material.document.kind.toLowerCase()} version ${material.document.version}, dated ${formatDate(material.document.date)}. Nothing is stored for your account.`}
         actions={
         <>
             <Button variant="quiet" onClick={() => navigate(`/materials/${material.class}`)}>
@@ -397,31 +408,11 @@ function MaterialDetail({ material }: {material: Material;}) {
       <NewProductDialog fragranceId={material.id} onClose={() => setCreating(false)} />
       }
       <div className="space-y-6 px-6 py-8 lg:px-10">
-        {material.document.latestVersion &&
-        <Callout tone="warn" title="A newer document exists">
-            {material.supplier} published version {material.document.latestVersion} on{' '}
-            {formatDate(material.document.latestDate)}. Version {material.document.version} is on
-            file. Classifications, percentages and declarations may have changed.
-            <div className="mt-3">
-              <Button
-              size="sm"
-              variant="secondary"
-              /* Reading a supplier document is not built. This used to say "Import started"
-                 and describe fields waiting to be confirmed; nothing started and no fields
-                 were extracted, so a maker who pressed it believed a newer sheet was on its
-                 way onto their classification. */
-              onClick={() =>
-              toast('Reading a document is not built yet', {
-                description: `Version ${material.document.latestVersion} has not been imported, and version ${material.document.version} is still what your classification uses.`
-              })
-              }>
-              
-                <RefreshCwIcon className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
-                Import version {material.document.latestVersion}
-              </Button>
-            </div>
-          </Callout>
-        }
+        {/* "A newer document exists" is gone, with the two fields that drove it. It said a
+            supplier had published a newer version than the one in use and that
+            "classifications, percentages and declarations may have changed" — a warning about
+            a real product's compliance, produced by a constant in the bundle, having checked
+            nothing. Its Import button then admitted that reading a document is not built. */}
 
         {material.class === 'component' && material.rohsStatus === 'Not declared' &&
         <Callout tone="warn" title="No declaration on file">
@@ -435,86 +426,37 @@ function MaterialDetail({ material }: {material: Material;}) {
         {material.class === 'packaging' && <PackagingDetail material={material} />}
         {material.class === 'component' && <ComponentDetail material={material} />}
 
-        <DocumentHistory material={material} />
+        <DocumentSource material={material} />
       </div>
     </main>);
 
 }
 
 /**
- * Every sheet ever received, and what each revision moved. A revised sheet is
- * the most common cause of a wrong label, so this has to be answerable.
+ * Which supplier document this library's data was read from.
+ *
+ * It was "Every sheet ever received, and what each revision moved" — a timeline with "received"
+ * dates, an "On file" pill and a "Waiting in the inbox" pill, read from a shipped constant. No
+ * revision history exists, nothing records one, and no account has received anything, so the
+ * timeline and the empty list it was reduced to are both gone: what is left is the one fact
+ * this file actually holds, said once, about Batchlabel's data rather than about the reader's.
  */
-function DocumentHistory({ material }: {material: Material;}) {
-  // No revision history exists: nothing records one, and the list this used to read was
-  // a shipped constant. What IS true is the single sheet on file, which the material
-  // itself carries — so say only that.
-  const revisions: DocumentRevision[] = [];
-
+function DocumentSource({ material }: {material: Material;}) {
   return (
     <Card className="px-5 py-5">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
-        <SectionTitle>Document history</SectionTitle>
+        <SectionTitle>Source document</SectionTitle>
         <p className="text-2xs text-ink-tertiary">
           {material.document.kind} · {material.supplier}
         </p>
       </div>
 
-      {revisions.length === 0 ?
       <p className="mt-3 max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
-          Only version {material.document.version} is on file, received{' '}
-          {formatDate(material.document.date)}. Earlier revisions were not recorded.
-        </p> :
-
-      <ol className="mt-4 space-y-4">
-          {revisions.map((revision, index) => {
-          const onFile = revision.version === material.document.version;
-          const pending = index === 0 && !onFile;
-          return (
-            <li key={revision.version} className="flex gap-4">
-                <div className="flex flex-none flex-col items-center">
-                  <span
-                  className={`mt-1 h-2 w-2 rounded-full ${
-                  pending ? 'bg-clay' : onFile ? 'bg-teal' : 'bg-paper-line'}`
-                  }
-                  aria-hidden="true" />
-                
-                  {index < revisions.length - 1 &&
-                <span className="mt-1 w-px flex-1 bg-paper-line" aria-hidden="true" />
-                }
-                </div>
-                <div className="min-w-0 flex-1 pb-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="tabular text-sm font-medium text-ink">
-                      Version {revision.version}
-                    </span>
-                    <span className="tabular text-2xs text-ink-tertiary">
-                      issued {formatDate(revision.date)} · received {formatDate(revision.received)}
-                    </span>
-                    {onFile && <Pill tone="good">On file</Pill>}
-                    {pending && <Pill tone="warn">Waiting in the inbox</Pill>}
-                  </div>
-                  <p className="mt-1 max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
-                    {revision.summary}
-                  </p>
-                  {revision.moved.length > 0 &&
-                <ul className="mt-1.5 space-y-1">
-                      {revision.moved.map((line) =>
-                  <li
-                    key={line}
-                    className="max-w-prose text-2xs leading-relaxed text-ink-tertiary">
-                    
-                          {line}
-                        </li>
-                  )}
-                    </ul>
-                }
-                </div>
-              </li>);
-
-        })}
-        </ol>
-      }
+        The classification above was read from {material.supplier}&rsquo;s{' '}
+        {material.document.kind.toLowerCase()} version {material.document.version}, dated{' '}
+        {formatDate(material.document.date)}. Batchlabel holds no copy of it for you, keeps no
+        revision history, and does not check whether a newer version has been published.
+      </p>
     </Card>);
 
 }
@@ -637,7 +579,7 @@ function PackagingDetail({ material }: {material: PackagingMaterial;}) {
         <dl className="space-y-2 text-sm">
           <Row term="Food contact" value={material.foodContact ? 'Declared' : 'Not declared'} />
           <Row term="Child resistant" value={material.childResistant ? 'Yes' : 'No'} />
-          <Row term="Document" value={`${material.document.kind}, v${material.document.version}`} />
+          <Row term="Read from" value={`${material.document.kind}, v${material.document.version}`} />
         </dl>
       </Card>
     </div>);
@@ -653,9 +595,13 @@ function ComponentDetail({ material }: {material: ComponentMaterial;}) {
           <Row term="Part number" value={material.partNumber} />
           <Row term="RoHS status" value={material.rohsStatus} />
           <Row term="Exemption claimed" value={material.rohsExemption ?? 'None'} />
-          <Row term="Document" value={`${material.document.kind} ${material.document.version}`} />
-          <Row term="Issued" value={formatDate(material.document.date)} />
-          <Row term="Valid to" value={formatDate(material.certificateExpiry)} />
+          <Row term="Read from" value={`${material.document.kind} ${material.document.version}`} />
+          <Row term="Document issued" value={formatDate(material.document.date)} />
+          <Row
+            term="Supplier certificate to"
+            value={formatDate(material.certificateExpiry)} />
+
+
         </dl>
       </Card>
       <Card className="px-5 py-5">
@@ -940,6 +886,21 @@ function ImportFlow({
         null
         } />
       
+
+      <div className="px-6 pt-8 lg:px-10">
+        {/* Said at the top rather than at the end. Every field below is a worked example
+            shipped in the bundle: no file has been uploaded, nothing has been parsed, and
+            "Save material" writes nothing. Without this the screen reads as a parser that
+            has just been over a document of yours and is asking you to confirm what it
+            found — and the fields it marks "missing" read as gaps in your own records. */}
+        <Callout tone="info" title="An example, not your document">
+          <p className="max-w-prose leading-relaxed">
+            Reading a supplier document is not built yet. This is what it will look like, using
+            an example document — nothing of yours has been uploaded or read, and saving adds
+            nothing to your materials.
+          </p>
+        </Callout>
+      </div>
 
       <div className="grid gap-6 px-6 py-8 lg:px-10 xl:grid-cols-2">
         <div className="space-y-4">

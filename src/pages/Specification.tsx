@@ -577,7 +577,10 @@ function MixtureEditor({
 
         <Field
           label="Base wax or carrier"
-          hint={`${ingredientById(spec.baseId)?.supplier ?? ''}, document v${ingredientById(spec.baseId)?.document.version ?? ''}`}>
+          /* "Read from", not "document v4.2" on its own: the version is the supplier document
+             the reference library's data was taken from, and the bare phrasing read as a
+             document held on this account's behalf. Nothing is held. */
+          hint={`Reference library · ${ingredientById(spec.baseId)?.supplier ?? ''}, read from document v${ingredientById(spec.baseId)?.document.version ?? ''}`}>
           
           <Select value={spec.baseId} onChange={(event) => set('baseId', event.target.value)}>
             {bases.map((base) =>
@@ -590,7 +593,7 @@ function MixtureEditor({
 
         <Field
           label="Fragrance oil"
-          hint={`${fragrance?.supplier ?? ''}, document v${fragrance?.document.version ?? ''}`}>
+          hint={`Reference library · ${fragrance?.supplier ?? ''}, read from document v${fragrance?.document.version ?? ''}`}>
           
           <Select
             value={spec.fragranceId}

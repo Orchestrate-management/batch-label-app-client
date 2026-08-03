@@ -33,16 +33,25 @@ vi.mock('../lib/meta-pixel', () => ({
 }));
 
 /**
- * Twelve products, read successfully. The store reports a STATUS as well as a list now,
- * because products come from the database and the read can fail — and this page renders the
- * count beside an allowance, where a zero from a failed read would read as "you have used
- * none of your plan".
+ * Twelve products, read successfully — and the STATUS is settable, which is the point.
+ *
+ * The store reports a status as well as a list, because products come from the database and
+ * the read can fail. This page renders the count beside an allowance, so all three states have
+ * to be distinguishable here: a zero from a failed read reads as "you have used none of your
+ * plan", and an apology during an ordinary load reads as a failure that has not happened. The
+ * old mock was permanently `ready`, which is why the loading path shipped saying "We could not
+ * count your products just now" on every visit.
  */
+const store = vi.hoisted(() => ({
+  status: 'ready' as 'loading' | 'ready' | 'error',
+  products: new Array(12).fill(null) as unknown[]
+}));
+
 vi.mock('../lib/product-store', () => ({
   useProducts: () => ({
-    status: 'ready',
-    products: new Array(12).fill(null),
-    error: null,
+    status: store.status,
+    products: store.products,
+    error: store.status === 'error' ? 'We could not read your products just now.' : null,
     refresh: () => {},
     reload: async () => {}
   })
@@ -70,6 +79,7 @@ function stateFor(row: Partial<EntitlementRow> | null, failed = false): Entitlem
   null :
   {
     brand: 'batchlabel',
+    accountId: 'acct-1111',
     membershipStatus: 'active',
     businessName: 'Hearth & Hollow',
     plan: 'free',
@@ -79,6 +89,9 @@ function stateFor(row: Partial<EntitlementRow> | null, failed = false): Entitlem
     cancelAtPeriodEnd: false,
     trialEnd: null,
     skuLimit: 3,
+    // Null by default, so the tests that do not care about the count exercise the fallback to
+    // the store's list length. The tests that DO care set it.
+    skuCount: null,
     skuUnlimited: false,
     editorSeatLimit: 1,
     canModify: null,
@@ -90,6 +103,8 @@ function stateFor(row: Partial<EntitlementRow> | null, failed = false): Entitlem
 const fetchMock = vi.fn();
 
 beforeEach(() => {
+  store.status = 'ready';
+  store.products = new Array(12).fill(null);
   fetchMock.mockReset();
   fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => CATALOGUE } as Response);
   vi.stubGlobal('fetch', fetchMock);
@@ -240,6 +255,50 @@ describe('the plan somebody is on', () => {
     // allows. They coincide until somebody is comped or grandfathered, which is exactly why
     // the panel reads the row rather than the card.
     expect(screen.getAllByText('45 SKUs')).toHaveLength(2);
+  });
+
+  it('counts with the number the database holds, not with the length of the list', async () => {
+    // entitlements.sku_count is counted over the same rows the enforcement trigger counts.
+    // The list in the browser drops a product whose specification did not come back, so
+    // trusting it here is how a page that takes money shows "12 of 45" while the next create
+    // is refused for holding 40.
+    entitlement.mockReturnValue(
+      stateFor({ plan: 'maker', planStatus: 'active', active: true, skuLimit: 45, skuCount: 40 })
+    );
+    renderPage();
+    const meter = await screen.findByRole('progressbar', { name: 'SKUs used' });
+    expect(meter).toHaveAttribute('aria-valuenow', '40');
+    expect(screen.getByText('40')).toBeInTheDocument();
+    expect(screen.queryByText('12')).not.toBeInTheDocument();
+  });
+
+  it('does not claim a failed count while the read is still in flight', async () => {
+    // The first paint of this page ALWAYS has products loading, so folding loading into "we
+    // could not count" opened every visit on an apology for a failure that had not happened.
+    store.status = 'loading';
+    store.products = [];
+    entitlement.mockReturnValue(
+      stateFor({ plan: 'maker', planStatus: 'active', active: true, skuLimit: 45 })
+    );
+    renderPage();
+    await waitFor(() =>
+    expect(screen.getByText(/Counting the products on your account/)).toBeInTheDocument()
+    );
+    expect(screen.queryByText(/could not count your products/)).not.toBeInTheDocument();
+  });
+
+  it('says the count failed only once a read has finished and failed', async () => {
+    store.status = 'error';
+    store.products = [];
+    entitlement.mockReturnValue(
+      stateFor({ plan: 'maker', planStatus: 'active', active: true, skuLimit: 45 })
+    );
+    renderPage();
+    await waitFor(() =>
+    expect(screen.getByText(/could not count your products/)).toBeInTheDocument()
+    );
+    // And never a zero, which beside an allowance reads as "you have used none of your plan".
+    expect(screen.queryByRole('progressbar', { name: 'SKUs used' })).not.toBeInTheDocument();
   });
 
   it('admits it when the allowance is unreadable rather than showing a ceiling', async () => {

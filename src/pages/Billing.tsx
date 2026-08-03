@@ -50,17 +50,38 @@ import { useProducts } from '../lib/product-store';
  *    were left implied.
  * 3. NOTHING HERE DESCRIBES A MECHANISM THAT DOES NOT EXIST. The tiers differ by SKU
  *    allowance and by editor seats, and editor seats are not built, so they are shown as
- *    recorded-but-unavailable rather than sold. The SKU allowance is displayed and is not
- *    enforced, so no sentence on this page says what happens at the limit.
+ *    recorded-but-unavailable rather than sold. The SKU allowance IS enforced — a trigger on
+ *    public.products refuses one over the limit, on creation and on nothing else — so the
+ *    sentence about the limit says that, and says the other half too: everything already here
+ *    stays editable and printable at any tier.
  */
 export function Billing() {
   const entitlement = useEntitlement();
-  // The SKU count is a READ that can fail, now that products live in the database. `null`
-  // means "we do not know" and is rendered as such — never as zero, which on a billing page
-  // sits next to an allowance and reads as "you have used none of your plan".
   const { status: productsStatus, products } = useProducts();
-  const skuCount = productsStatus === 'ready' ? products.length : null;
   const catalogue = usePlanCatalogue();
+
+  /**
+   * THE COUNT COMES FROM THE DATABASE FIRST.
+   *
+   * `entitlements.sku_count` is counted by the view over the same rows the enforcement trigger
+   * counts — live products for the ACCOUNT — which is the whole reason the column was added:
+   * "so the button the app disables and the insert the database refuses can never disagree".
+   * The list in this browser is not that: `fetchProducts` drops a product whose specification
+   * did not come back, so a page taking money could show "2 of 3 SKUs" beside a two-thirds
+   * full bar while the next create is refused for holding 3 of 3.
+   *
+   * The list length is the fallback for the moment before the entitlement resolves, and only
+   * then. `null` from both means WE DO NOT KNOW, and is rendered as such — never as zero,
+   * which sits beside an allowance and reads as "you have used none of your plan".
+   */
+  const skuCount =
+  entitlement.skuCount ?? (productsStatus === 'ready' ? products.length : null);
+
+  // A read in flight is not a read that failed. Loading is the ordinary first frame of this
+  // page — ProductsProvider starts at 'loading' and the entitlement starts unresolved — so
+  // collapsing it into "could not count" would open every visit on an apology for a failure
+  // that has not happened.
+  const countPending = entitlement.loading || productsStatus === 'loading';
 
   // Annual is the default and monthly is the secondary option, which is the founder
   // decision and also the honest one: annual is the cheaper way to buy the same thing.
@@ -132,6 +153,7 @@ export function Billing() {
           held={held}
           currency={catalogue.data?.currency ?? null}
           skuCount={skuCount}
+          countPending={countPending}
           portalPending={pending === 'portal'}
           busy={pending !== null}
           onManage={() => run('portal', createPortalSession)} />
@@ -266,6 +288,7 @@ function CurrentPlan({
   held,
   currency,
   skuCount,
+  countPending,
   portalPending,
   busy,
   onManage
@@ -275,7 +298,7 @@ function CurrentPlan({
 
 
 
-}: {held: PublicPlan | null;currency: string | null;skuCount: number | null;portalPending: boolean;busy: boolean;onManage: () => void;}) {
+}: {held: PublicPlan | null;currency: string | null;skuCount: number | null;countPending: boolean;portalPending: boolean;busy: boolean;onManage: () => void;}) {
   const entitlement = useEntitlement();
 
   const tone =
@@ -349,11 +372,16 @@ function CurrentPlan({
       </Card>
 
       <Card className="px-5 py-5">
-        {/* "We could not read your allowance" is only true once a read has finished. While
-            one is in flight it would be an admission of a failure that has not happened. */}
+        {/* THREE STATES, KEPT APART. "We could not count your products" is only true once a
+            read has finished and failed; while one is in flight it is an admission of a
+            failure that has not happened, and this page opens in flight every single time.
+            Loading says it is counting, error says it could not, and a number says the
+            number — and the same rule governs the allowance sentence below it. */}
         <p className="text-sm text-ink">
           <span className="tabular font-medium">{skuCount ?? '—'}</span>
           {skuCount === null ?
+          countPending ?
+          <> SKUs. Counting the products on your account…</> :
           <> SKUs. We could not count your products just now.</> :
           entitlement.loading ?
           <> SKUs. Checking what your plan allows…</> :

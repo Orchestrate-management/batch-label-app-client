@@ -27,9 +27,16 @@
  * WHETHER versus HOW MUCH. `active` answers "may they use the product". `sku_limit` and
  * `editor_seat_limit` answer "how many things may they have". The migration that added them
  * keeps the two apart on purpose and so does this file: an account over its SKU allowance is
- * `active = true` AND at its limit, which is two facts, not one. NOTE that sku_limit is
- * DISPLAYED and not enforced — the enforcement trigger ships with the cofounder's products
- * table — so nothing here may claim what happens at the limit.
+ * `active = true` AND at its limit, which is two facts, not one.
+ *
+ * THE ALLOWANCE IS NOW ENFORCED, which is a change from what this comment used to say. The
+ * account data schema ships a trigger on public.products that counts live rows for the
+ * ACCOUNT and refuses one too many — on INSERT and on un-archiving, and on nothing else. So
+ * everything already created stays editable, printable and exportable at any tier, and this
+ * file may now say what happens at the limit, because something happens. `sku_count` and
+ * `can_modify` arrive on the view from the same migration, computed by the same function the
+ * trigger calls, so the number the app shows and the insert the database refuses cannot
+ * disagree.
  *
  * THIS CLIENT NEVER WRITES. RLS grants SELECT on your own row and grants nobody INSERT or
  * UPDATE; every write is server-side, from the marketing site's Stripe webhook under the
@@ -72,6 +79,12 @@ export type EntitlementStatus =
  */
 export interface EntitlementRow {
   brand: string | null;
+  /**
+   * THE ACCOUNT KEY, and not a user id. The view aliased `m.user_id as account_id` until the
+   * account data schema landed; it now resolves to `accounts.id` for this membership's brand.
+   * Null means we could not resolve one, never "use auth.uid() instead".
+   */
+  accountId: string | null;
   /** The account lifecycle: active | suspended | left. About us, not about Stripe. */
   membershipStatus: string | null;
   businessName: string | null;
@@ -85,13 +98,20 @@ export interface EntitlementRow {
   trialEnd: string | null;
   /** How many live SKUs this membership may hold. Null when unreadable. */
   skuLimit: number | null;
+  /**
+   * How many live SKUs the account is holding, counted by the database over
+   * `products where archived_at is null` — the same definition the enforcement trigger uses.
+   * Null is UNKNOWN and never zero: the view is built so that a membership with no account
+   * yields null rather than a count of nought, because zero is a claim.
+   */
+  skuCount: number | null;
   /** The view's own answer, so the 2147483647 sentinel never reaches a browser. */
   skuUnlimited: boolean | null;
   editorSeatLimit: number | null;
   /**
-   * Ships with the SKU enforcement trigger and does not exist yet. Absent reads as null,
-   * and null MUST fail open — see `mayModify`. A column that is not there must never become
-   * a lockout.
+   * Computed by the same function the enforcement trigger calls. Absent reads as null, and
+   * null MUST fail open — see `mayModify`. A column that is not there must never become a
+   * lockout.
    */
   canModify: boolean | null;
 }
@@ -100,6 +120,14 @@ export interface Entitlement {
   status: EntitlementStatus;
   /** Copied from the view's `active` column. Never recomputed here. */
   active: boolean;
+  /**
+   * The account this deployment's brand resolves to for the signed-in user, or null when we
+   * could not resolve one. `fetchEntitlement` filters on BRAND_SLUG, so this is the account
+   * for THIS brand — which is the whole reason it can be handed to a write: the migration
+   * header says "Prefer passing entitlements.account_id explicitly", and the INSERT policy
+   * (`with check (is_member_of(account_id))`) refuses one that is not yours.
+   */
+  accountId: string | null;
   /** Lower-cased plan slug, or null when there is no membership / no read. */
   plan: string | null;
   planStatus: string | null;
@@ -110,8 +138,17 @@ export interface Entitlement {
    */
   skuLimit: number | null;
   skuUnlimited: boolean;
+  /**
+   * Live SKUs the DATABASE counted for this account. Null is unknown, never zero.
+   *
+   * This is the number a screen should show beside the allowance, in preference to the length
+   * of any list this client assembled: the products read drops a product whose specification
+   * did not come back, and the meter counts products whatever their specification, so the two
+   * can differ by exactly the amount that turns "2 of 3" into a refused insert.
+   */
+  skuCount: number | null;
   editorSeatLimit: number | null;
-  /** Null = the column does not exist yet. Read it through `mayModify`, never directly. */
+  /** Null = we could not read it. Read it through `mayModify`, never directly. */
   canModify: boolean | null;
   /** ISO timestamp. When the paid period ends, or when a cancellation takes effect. */
   currentPeriodEnd: string | null;
@@ -123,11 +160,13 @@ export interface Entitlement {
 const UNREADABLE: Entitlement = {
   status: 'unknown',
   active: false,
+  accountId: null,
   plan: null,
   planStatus: null,
   businessName: null,
   skuLimit: null,
   skuUnlimited: false,
+  skuCount: null,
   editorSeatLimit: null,
   canModify: null,
   currentPeriodEnd: null,
@@ -163,6 +202,7 @@ export function readEntitlementRow(raw: unknown): EntitlementRow {
   const row = (raw ?? {}) as Record<string, unknown>;
   return {
     brand: text(row.brand),
+    accountId: text(row.account_id),
     membershipStatus: text(row.membership_status),
     businessName: text(row.business_name),
     plan: text(row.plan),
@@ -172,6 +212,7 @@ export function readEntitlementRow(raw: unknown): EntitlementRow {
     cancelAtPeriodEnd: bool(row.cancel_at_period_end),
     trialEnd: text(row.trial_end),
     skuLimit: count(row.sku_limit),
+    skuCount: count(row.sku_count),
     skuUnlimited: bool(row.sku_unlimited),
     editorSeatLimit: count(row.editor_seat_limit),
     canModify: bool(row.can_modify)
@@ -209,11 +250,13 @@ export function mapEntitlement(row: EntitlementRow | null, failed = false): Enti
   const allowance = readAllowance(row);
   const base = {
     active: row.active === true,
+    accountId: row.accountId,
     plan: key(row.plan) || 'free',
     planStatus: row.planStatus,
     businessName: row.businessName,
     skuLimit: allowance.skuLimit,
     skuUnlimited: allowance.skuUnlimited,
+    skuCount: row.skuCount,
     editorSeatLimit: row.editorSeatLimit,
     canModify: row.canModify,
     currentPeriodEnd: row.currentPeriodEnd,
@@ -257,13 +300,15 @@ export function mapEntitlement(row: EntitlementRow | null, failed = false): Enti
 }
 
 /**
- * The reader every future SKU-enforcement point must use. FAILS OPEN.
+ * The reader every SKU-enforcement point must use. FAILS OPEN.
  *
- * `can_modify` ships with the enforcement trigger and does not exist yet, so today this is
- * always true. It exists now, with its rule written down once, precisely so that the day the
- * column lands nobody writes `canModify === true` at a call site — which would deny every
- * account whose read predates the column, including a paying Consultant, silently, with no
- * error anywhere.
+ * `can_modify` now exists: the account data schema computes it from the same function the
+ * enforcement trigger calls, so this agrees with the insert the database would refuse. It is
+ * still read through here rather than as `canModify === true`, because null means the read
+ * failed or the schema predates the column, and denying on null would lock out every account
+ * whose read went wrong — including a paying Consultant, silently, with no error anywhere.
+ * The trigger fails open on a missing allowance for the same reason; one refused write with
+ * an honest message is the whole cost of guessing wrong this way round.
  */
 export function mayModify(entitlement: Entitlement): boolean {
   return entitlement.canModify !== false;
@@ -287,9 +332,14 @@ export interface EntitlementFetch {
  * brand_memberships read and is deliberate. The view IS the published contract surface — it
  * is per-user, it holds no secret, and there is nothing to over-fetch. In exchange: it cannot
  * raise 42703, so the old "retry with `*` on undefined_column" dance is gone; and the columns
- * the migration says are still to come — `can_modify` with the enforcement trigger,
- * `sku_count` with the products table — arrive here the day they are created, with no code
- * change, mapped to null until then by the tolerant reader above.
+ * the migration promised — `can_modify` with the enforcement trigger, `sku_count` with the
+ * products table, and `account_id` moving from the user id to a real accounts.id — arrived
+ * exactly that way, with the tolerant reader mapping each to null on any schema that predates
+ * them.
+ *
+ * `.eq('brand', BRAND_SLUG)` is what makes `account_id` usable as a write target: it is the
+ * account for THIS deployment's brand, not "whichever account sorted first" across the shared
+ * Orchestrate identity pool.
  */
 export async function fetchEntitlement(): Promise<EntitlementFetch> {
   const client = supabase;

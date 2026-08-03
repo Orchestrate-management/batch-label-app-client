@@ -1,6 +1,77 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+/**
+ * A stand-in for the two tables, chained the way supabase-js chains.
+ *
+ * It exists for one function: createProduct, whose failure path decides whether a
+ * specification is archived — and archiving the specification of a product that DID commit
+ * hides a live, metered SKU on every screen, permanently, with no way back from the browser.
+ * That decision cannot be reasoned about from a type check; it needs the shapes supabase-js
+ * actually hands back, including the one with no Postgres code in it.
+ */
+const db = vi.hoisted(() => {
+  const state = {
+    specInsert: { data: null as unknown, error: null as unknown },
+    productInsert: { data: null as unknown, error: null as unknown },
+    lookup: { data: null as unknown, error: null as unknown },
+    specPayload: null as Record<string, unknown> | null,
+    productPayload: null as Record<string, unknown> | null,
+    lookupFilters: [] as Array<[string, unknown]>,
+    archived: [] as string[]
+  };
+
+  const query = (result: () => {data: unknown;error: unknown;}, onEq?: (column: string, value: unknown) => void) => {
+    const q: Record<string, unknown> = {};
+    const chain = () => q;
+    Object.assign(q, {
+      select: chain,
+      is: chain,
+      limit: chain,
+      order: chain,
+      eq: (column: string, value: unknown) => {
+        onEq?.(column, value);
+        return q;
+      },
+      single: async () => result(),
+      maybeSingle: async () => result(),
+      then: (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+      Promise.resolve(result()).then(resolve, reject)
+    });
+    return q;
+  };
+
+  const supabase = {
+    from(table: string) {
+      return {
+        insert(payload: Record<string, unknown>) {
+          if (table === 'specifications') state.specPayload = payload;
+          else state.productPayload = payload;
+          return query(() => table === 'specifications' ? state.specInsert : state.productInsert);
+        },
+        // Only createProduct's "did it land anyway?" lookup reaches this.
+        select: () =>
+        query(
+          () => state.lookup,
+          (column, value) => state.lookupFilters.push([column, value])
+        ),
+        update: (payload: Record<string, unknown>) => ({
+          eq: (_column: string, value: unknown) => {
+            if (payload.archived_at) state.archived.push(String(value));
+            return Promise.resolve({ data: null, error: null });
+          }
+        })
+      };
+    }
+  };
+
+  return { state, supabase };
+});
+
+vi.mock('./supabase', () => ({ supabase: db.supabase, isSupabaseConfigured: true }));
+
 import {
   classifyWriteError,
+  createProduct,
   toProduct,
   type ProductRow,
   type SpecificationRow } from
@@ -178,5 +249,121 @@ describe('classifying a refused write', () => {
       'failed'
     );
     expect(classifyWriteError(null).reason).toBe('failed');
+  });
+
+  it('does not blame a missing account when the call supplied one', () => {
+    // A 23502 on a write that sent account_id cannot be about the account. Saying it is would
+    // be inventing a cause, and the sentence tells somebody to wait for something that has
+    // already happened.
+    const classified = classifyWriteError(
+      { code: '23502', message: 'null value in column' },
+      { accountIdSupplied: true }
+    );
+    expect(classified.reason).toBe('failed');
+  });
+
+  it('does not tell anybody their account is nearly ready', () => {
+    // current_account_id() returns NULL for two reasons — no membership, which resolves on
+    // its own, and more than one, which never does. Both arrive as 23502, so the one sentence
+    // that covers both must not promise that waiting fixes it.
+    const message = classifyWriteError({ code: '23502', message: 'null value in column' }).message;
+    expect(message).toMatch(/nothing has been saved/i);
+    expect(message).not.toMatch(/usually takes a moment/i);
+  });
+});
+
+/**
+ * Creating a product, and the two rows it takes.
+ *
+ * Every case below is about the SECOND insert failing, because that is where a specification
+ * is left behind and a decision has to be made about it. Getting that decision wrong in the
+ * direction the code used to has no recovery path in this app at all: the browser holds no
+ * DELETE on specifications and there is no un-archive.
+ */
+describe('creating a product', () => {
+  const SPEC = { id: 'spec-1', name: 'Black Fig and Cassis', category_id: 'home-fragrance', kind: 'mixture' };
+  const PRODUCT = { id: 'prod-1', specification_id: 'spec-1', name: 'Black Fig and Cassis', sku: 'CC-BFC-220' };
+
+  const input = {
+    name: 'Black Fig and Cassis',
+    sku: 'CC-BFC-220',
+    categoryId: 'home-fragrance' as const,
+    productType: 'Container candle'
+  };
+
+  beforeEach(() => {
+    db.state.specInsert = { data: SPEC, error: null };
+    db.state.productInsert = { data: PRODUCT, error: null };
+    db.state.lookup = { data: null, error: null };
+    db.state.specPayload = null;
+    db.state.productPayload = null;
+    db.state.lookupFilters = [];
+    db.state.archived = [];
+  });
+
+  it('sends the account id it was given, on both rows', async () => {
+    await createProduct(input, 'acct-1111');
+    expect(db.state.specPayload?.account_id).toBe('acct-1111');
+    expect(db.state.productPayload?.account_id).toBe('acct-1111');
+  });
+
+  it('omits the column entirely when no account has been resolved', async () => {
+    // Omitted means the database's own default decides. Sending null would be an explicit
+    // claim that the row belongs to no account, and would fail the NOT NULL constraint.
+    await createProduct(input);
+    expect(db.state.specPayload).not.toHaveProperty('account_id');
+    expect(db.state.productPayload).not.toHaveProperty('account_id');
+  });
+
+  it('archives the specification when the meter definitely refused the product', async () => {
+    db.state.productInsert = {
+      data: null,
+      error: { code: 'P0001', hint: 'sku_limit_reached', message: 'SKU limit reached' }
+    };
+    const result = await createProduct(input, 'acct-1111');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('sku_limit');
+    expect(db.state.archived).toEqual(['spec-1']);
+  });
+
+  it('leaves the specification alone when the failure carried no refusal', async () => {
+    // A dropped socket or a proxy 5xx: supabase-js hands back an error with no Postgres code.
+    // Nothing here establishes that the database refused anything, so nothing may be archived
+    // on the strength of it.
+    db.state.productInsert = { data: null, error: { message: 'Failed to fetch' } };
+    const result = await createProduct(input, 'acct-1111');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('failed');
+    expect(db.state.archived).toEqual([]);
+  });
+
+  it('returns the product when the insert won and only the answer was lost', async () => {
+    // The expensive case. The row committed, the response did not come back, and archiving
+    // the specification would hide a product that counts against the plan allowance on every
+    // screen, for good.
+    db.state.productInsert = { data: null, error: { message: 'Failed to fetch' } };
+    db.state.lookup = { data: PRODUCT, error: null };
+
+    const result = await createProduct(input, 'acct-1111');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.id).toBe('prod-1');
+    expect(db.state.archived).toEqual([]);
+    expect(db.state.lookupFilters).toContainEqual(['specification_id', 'spec-1']);
+  });
+
+  it('archives nothing when it could not find out what happened', async () => {
+    db.state.productInsert = { data: null, error: { code: '23505', message: 'duplicate key' } };
+    db.state.lookup = { data: null, error: { message: 'Failed to fetch' } };
+
+    const result = await createProduct(input, 'acct-1111');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('duplicate_sku');
+    // A lookup that itself failed proves nothing either way. An orphaned specification is
+    // invisible and meters nothing; an archived one under a live product is unreachable.
+    expect(db.state.archived).toEqual([]);
   });
 });

@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useAuth } from './auth';
+import { useEntitlement } from './entitlement';
 import { Product } from './model';
 import { fetchProducts } from './products';
 
@@ -29,6 +30,14 @@ import { fetchProducts } from './products';
  * screen and the settings identity tab all want the same list at the same time, and four
  * components each firing their own query on every render is how you turn one read into a rate
  * limit. Same reasoning, and the same shape, as EntitlementProvider.
+ *
+ * WHY IT WAITS FOR THE ENTITLEMENT. The account to scope the read to comes from the
+ * entitlement, which resolves it for THIS deployment's brand. Firing the read before that
+ * lands would mean one unscoped read followed by a scoped one — twice the queries, and, the
+ * day a person holds accounts on two Orchestrate brands, a first paint listing both accounts'
+ * products before the correct list replaces it. One read, after one row, is the cheaper and
+ * the honest order. Holding at `loading` in the meantime is exactly what that state is for:
+ * screens show a skeleton, and none of them claims the account is empty.
  */
 
 export type ProductsStatus = 'loading' | 'ready' | 'error';
@@ -52,6 +61,7 @@ const ProductsContext = createContext<ProductsValue | null>(null);
 
 export function ProductsProvider({ children }: {children: React.ReactNode;}) {
   const { user } = useAuth();
+  const entitlement = useEntitlement();
   const [state, setState] = useState<{status: ProductsStatus;products: Product[];error: string | null;}>(
     { status: 'loading', products: [], error: null }
   );
@@ -62,15 +72,20 @@ export function ProductsProvider({ children }: {children: React.ReactNode;}) {
   // re-query the whole list on each one.
   const userId = user?.id ?? null;
 
+  // Null is "we do not know which account", not "no filter is needed" — a failed entitlement
+  // read lands here too. fetchProducts falls back to RLS alone in that case and says so.
+  const accountId = entitlement.loading ? null : entitlement.accountId;
+  const accountResolved = !entitlement.loading;
+
   const read = useCallback(async () => {
     if (!userId) return;
-    const result = await fetchProducts();
+    const result = await fetchProducts(accountId);
     setState(
       result.ok ?
       { status: 'ready', products: result.products, error: null } :
       { status: 'error', products: [], error: result.message }
     );
-  }, [userId]);
+  }, [userId, accountId]);
 
   useEffect(() => {
     if (!userId) {
@@ -79,11 +94,15 @@ export function ProductsProvider({ children }: {children: React.ReactNode;}) {
       setState({ status: 'loading', products: [], error: null });
       return;
     }
+    // Hold at `loading` until the entitlement has answered, so the one read we fire is scoped
+    // to the account it resolved. A failed entitlement read still resolves — to null — so this
+    // cannot wait forever on one that went wrong.
+    if (!accountResolved) return;
     let active = true;
     // No reset to 'loading' on a re-read: a retry revalidates in the background and keeps
     // showing the answer we already have, so pressing "try again" does not blank a screen
     // somebody is working on.
-    void fetchProducts().then((result) => {
+    void fetchProducts(accountId).then((result) => {
       if (!active) return;
       setState(
         result.ok ?
@@ -94,7 +113,7 @@ export function ProductsProvider({ children }: {children: React.ReactNode;}) {
     return () => {
       active = false;
     };
-  }, [userId, attempt]);
+  }, [userId, accountId, accountResolved, attempt]);
 
   const value = useMemo<ProductsValue>(
     () => ({

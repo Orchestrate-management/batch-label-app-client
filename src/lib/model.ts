@@ -53,14 +53,19 @@ export type DocumentKind =
 'Declaration of conformity' |
 'Test report';
 
+/**
+ * The supplier document a reference material's data was read from.
+ *
+ * `latestVersion` / `latestDate` were removed with the screens that rendered them. They said a
+ * newer version had been published and the one in use was behind — a claim about a supplier's
+ * publishing that nothing in this application checks, and one that read as compliance work
+ * outstanding on a real product.
+ */
 export type SupplierDocument = {
   kind: DocumentKind;
   reference: string;
   version: string;
   date: string;
-  /** Set when the supplier has published a newer version than the one on file. */
-  latestVersion?: string;
-  latestDate?: string;
   expires?: string;
 };
 
