@@ -24,11 +24,22 @@ import type { EntitlementValue } from '../lib/entitlement';
  *   Studio    "0 products · 3 things outstanding across 1 product"
  *   Settings  "It affects every output on all 0 products this account holds."
  *
- * Both sentences are printed beside the products they are denying. The real fix is upstream —
- * the create asks for a re-read now (NewProductDialog.test.tsx) — and this is the backstop
- * either side of it: a count of nought, in a clause that only renders because the list is not
- * empty, is not a fact about the account. It is the two sources disagreeing, and the honest
- * answer is the wording that names no number, which both screens already have for `null`.
+ * Both sentences are printed beside the products they are denying. The first fix for that was
+ * to read nought as unknown on these two screens, which hid the symptom and modelled nothing:
+ * it made a genuine zero unsayable everywhere, and left a stale 3 — the same bug on a maker's
+ * fourth create rather than their first — as sayable as ever.
+ *
+ * The shape underneath it is named now, in three parts:
+ *
+ *   the create says the count MOVED, not merely "read it again" (NewProductDialog)
+ *   the provider publishes that as `skuCountStale` until the read answering for it lands
+ *   `readSkuCount` / `skuCountBeside` turn the pair into "no number", "moved" or a number
+ *
+ * So these two clauses ask one question — may this number be stated beside this list — and the
+ * answer is no when there is no count, no when a write of ours has moved it, and no when the
+ * count is lower than what the screen has already drawn, because an account cannot hold fewer
+ * products than we just read out of it. A genuine zero stays sayable; it is simply never
+ * reached from inside a non-empty branch.
  *
  * Nothing here invents a number, and neither screen falls back to `products.length`.
  */
@@ -75,8 +86,14 @@ const ROW: EntitlementRow = {
   canModify: true
 };
 
-function withCount(skuCount: number | null): EntitlementValue {
-  return { ...mapEntitlement({ ...ROW, skuCount }), loading: false, refresh: () => {} };
+function withCount(skuCount: number | null, skuCountStale = false): EntitlementValue {
+  return {
+    ...mapEntitlement({ ...ROW, skuCount }),
+    loading: false,
+    skuCountStale,
+    refresh: () => {},
+    noteSkuCountChanged: () => {}
+  };
 }
 
 function drawStudio() {
@@ -129,6 +146,28 @@ describe('the studio header', () => {
     expect(screen.queryByText('0')).not.toBeInTheDocument();
     expect(screen.getByText(/things outstanding across/)).toBeInTheDocument();
   });
+
+  it('says nothing while a count a create has moved is being re-read', () => {
+    // The state the zero guard could not see: a real number, from before the write, on a
+    // screen already showing what the write produced. Stating it is how "3 products" appears
+    // over four of them for a whole session.
+    entitlement.mockReturnValue(withCount(3, true));
+    drawStudio();
+    // Read off the header's own text, because the number is in a span of its own and the
+    // outstanding-work half of the same sentence carries digits too.
+    const meta = screen.getByText(/things outstanding across/);
+    expect(meta.textContent).not.toMatch(/3 products/);
+    expect(meta.textContent).toMatch(/things outstanding across/);
+  });
+
+  it('says nothing when the count is lower than the list it is printed beside', () => {
+    store.products = [PRODUCTS[0], PRODUCTS[1], PRODUCTS[2]];
+    entitlement.mockReturnValue(withCount(1));
+    drawStudio();
+    const meta = screen.getByText(/things outstanding across/);
+    expect(meta.textContent).not.toMatch(/^1 product/);
+    expect(meta.textContent).toMatch(/things outstanding across/);
+  });
 });
 
 describe('the settings identity tab', () => {
@@ -148,6 +187,13 @@ describe('the settings identity tab', () => {
     entitlement.mockReturnValue(withCount(0));
     drawIdentityTab();
     expect(screen.queryByText(/all 0 products/)).not.toBeInTheDocument();
+    expect(screen.getByText(/every product this account holds/)).toBeInTheDocument();
+  });
+
+  it('names no number while a count a create has moved is being re-read', () => {
+    entitlement.mockReturnValue(withCount(3, true));
+    drawIdentityTab();
+    expect(screen.queryByText(/all 3 products/)).not.toBeInTheDocument();
     expect(screen.getByText(/every product this account holds/)).toBeInTheDocument();
   });
 });

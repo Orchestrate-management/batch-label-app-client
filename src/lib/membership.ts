@@ -355,6 +355,73 @@ export function createIsCertainToFail(entitlement: Entitlement): boolean {
   return entitlement.status === 'suspended' || entitlement.status === 'no_membership';
 }
 
+/**
+ * WHAT WE KNOW ABOUT THE ACCOUNT'S LIVE-SKU COUNT, WHICH IS THREE THINGS AND NOT TWO.
+ *
+ * `Entitlement.skuCount` is `number | null`, and null already carries one meaning: the database
+ * declined to state a count (no account resolved, or the read failed). That is the whole reason
+ * the view yields null rather than nought — "zero is a claim; the honest answer is that we do
+ * not know".
+ *
+ * There is a third state and it has been getting answered with a number. The count is read once,
+ * when the entitlement provider mounts; a create then moves it, and until the re-read lands the
+ * number in hand is KNOWN to be wrong — not unread, not right. Two screens patched over that by
+ * treating 0 as unknown, which is not a model: it made a genuine zero unsayable everywhere while
+ * leaving a stale 3 perfectly sayable. Overloading nought only hid the first create.
+ *
+ * So the three are named:
+ *
+ *   `{ known: false, reason: 'unread' }`  no number at all. Say nothing, or an em dash.
+ *   `{ known: false, reason: 'stale' }`   we hold a number and we know a write moved it. Do not
+ *                                         state it; a re-read is already in flight.
+ *   `{ known: true, count }`              the database counted this, and nothing we did since has
+ *                                         moved it. Nought here is a fact and may be stated.
+ */
+export type SkuCount =
+{known: true;count: number;} |
+{known: false;reason: 'unread' | 'stale';};
+
+/**
+ * The sanctioned reader for the count, in the same spirit as `mayModify`: the raw field is still
+ * there, and a screen that states the number should come through here rather than reading it and
+ * deciding on its own what a null or a nought means.
+ *
+ * `unread` beats `stale`: having no number at all is the stronger answer, and after a refresh that
+ * failed both are true at once.
+ */
+export function readSkuCount(skuCount: number | null, stale: boolean): SkuCount {
+  if (skuCount === null) return { known: false, reason: 'unread' };
+  if (stale) return { known: false, reason: 'stale' };
+  return { known: true, count: skuCount };
+}
+
+/**
+ * The count as a sentence may state it BESIDE A LIST of the same account's products — Studio's
+ * header and the Settings identity tab, both of which print the account's total next to products
+ * they have just drawn.
+ *
+ * THE RULE IS NOT "ZERO IS UNKNOWN", which is what those two screens used to do. It is that an
+ * account cannot hold fewer live products than this client has just read out of it, so a count
+ * BELOW what is on screen is not a fact about the account — it is the two sources disagreeing,
+ * and neither of them is worth printing as the winner. Zero beside a non-empty list is only the
+ * loudest case of that; "1 product · 3 things outstanding across 3 products" is the same nonsense
+ * one row further up.
+ *
+ * A genuine zero stays sayable. `skuCountBeside({ known: true, count: 0 }, 0)` is 0, so a screen
+ * that wants to state an empty account can — Billing already does, beside no list at all, and it
+ * does not come through here.
+ *
+ * It does not reconcile the disagreement and must not: `fetchProducts` drops a product whose
+ * specification did not come back, and the count is the database's own over the rows the
+ * enforcement trigger counts, so a difference is real information about one of them being
+ * incomplete. What this decides is only whether a number may be printed in that sentence.
+ */
+export function skuCountBeside(skus: SkuCount, shown: number): number | null {
+  if (!skus.known) return null;
+  if (skus.count < shown) return null;
+  return skus.count;
+}
+
 export interface EntitlementFetch {
   row: EntitlementRow | null;
   /** True when the read itself failed, as opposed to succeeding and finding nothing. */

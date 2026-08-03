@@ -18,7 +18,7 @@ import {
 import { categoryById } from '../lib/categories';
 import { derive } from '../lib/derive';
 import { useEntitlement } from '../lib/entitlement';
-import { createIsCertainToFail } from '../lib/membership';
+import { createIsCertainToFail, readSkuCount, skuCountBeside } from '../lib/membership';
 import { outstandingFor } from '../lib/pipeline';
 import { useProducts } from '../lib/product-store';
 
@@ -100,17 +100,18 @@ export function Studio() {
    * Null is unknown and is simply not said. The clause below disappears rather than
    * substituting a number, which is the whole rule the view's `sku_count` was built around.
    *
-   * ZERO IS TREATED THE SAME WAY, in this clause only. The clause renders beside a work queue
-   * built from products that are on the screen, so nought is not a fact about the account here
-   * — it is this header contradicting the list underneath it. "0 products · 3 things
-   * outstanding across 1 product" was the first line a maker read after creating their first
-   * product, every time, because the count is read once when the provider mounts and nothing
-   * asked for it again after a write. The create now does (see NewProductDialog); this is the
-   * backstop for the frame in between, and it drops the clause rather than inventing a
-   * number.
+   * IT USED TO READ NOUGHT AS UNKNOWN, here and on the Settings identity tab, which fixed the
+   * symptom ("0 products · 3 things outstanding across 1 product", the first line a maker read
+   * after their first create) by making a genuine zero unsayable while leaving a stale 3 sayable.
+   * The two real states are named now instead: `readSkuCount` separates a count we do not have
+   * from one we know a write of ours has moved, and `skuCountBeside` refuses any count lower
+   * than the list it is printed next to — the account cannot hold fewer products than this
+   * screen just read out of it, so that is the two sources disagreeing rather than a total.
    */
-  const skuCount = entitlement.skuCount;
-  const countWorthStating = skuCount !== null && skuCount > 0;
+  const stated = skuCountBeside(
+    readSkuCount(entitlement.skuCount, entitlement.skuCountStale),
+    products.length
+  );
 
   return (
     <main className="flex-1 pb-24 xl:pb-0">
@@ -131,10 +132,10 @@ export function Studio() {
         <Skeleton className="h-4 w-72 bg-paper-line/70" /> :
         ready && products.length > 0 ?
         <p className="text-[0.8125rem] text-ink-secondary">
-              {countWorthStating &&
+              {stated !== null &&
           <>
-                  <span className="tabular">{skuCount}</span>{' '}
-                  {skuCount === 1 ? 'product' : 'products'}
+                  <span className="tabular">{stated}</span>{' '}
+                  {stated === 1 ? 'product' : 'products'}
                   <span className="mx-2 text-ink-tertiary" aria-hidden="true">
                     ·
                   </span>

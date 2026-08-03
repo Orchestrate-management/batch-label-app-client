@@ -68,8 +68,12 @@ function Probe() {
     <div>
       <span data-testid="loading">{String(entitlement.loading)}</span>
       <span data-testid="account">{entitlement.accountId ?? 'none'}</span>
+      <span data-testid="stale">{String(entitlement.skuCountStale)}</span>
       <button type="button" onClick={entitlement.refresh}>
         refresh
+      </button>
+      <button type="button" onClick={entitlement.noteSkuCountChanged}>
+        note
       </button>
     </div>);
 
@@ -177,5 +181,120 @@ describe('the entitlement of whoever is signed in now', () => {
     );
 
     await waitFor(() => expect(screen.getByTestId('account')).toHaveTextContent('none'));
+  });
+});
+
+/**
+ * THE COUNT WE ARE HOLDING, AND WHETHER IT IS STILL TRUE.
+ *
+ * `sku_count` is read once when this provider mounts. A create moves it, and for the round trip
+ * it takes to ask again the number in hand is not unknown and not right — it is a create behind.
+ * Nothing in the row can show that: 3 looks exactly as authoritative after the write as before
+ * it. So the provider holds the fact, and `readSkuCount` is what turns the pair into an answer.
+ */
+describe('a count a write of ours has moved', () => {
+  it('is not stale before anything has moved it', async () => {
+    render(
+      <EntitlementProvider>
+        <Probe />
+      </EntitlementProvider>
+    );
+    await waitFor(() => expect(screen.getByTestId('account')).toHaveTextContent('acct-for-user-a'));
+    expect(screen.getByTestId('stale')).toHaveTextContent('false');
+  });
+
+  it('is marked stale the moment the create says so, and re-read', async () => {
+    let resolveSecond = () => {};
+    fetchEntitlement.
+    mockImplementationOnce(async () => ({ row: rowFor('user-a'), failed: false })).
+    mockImplementationOnce(
+      () =>
+      new Promise((resolve) => {
+        resolveSecond = () => resolve({ row: rowFor('user-a'), failed: false });
+      })
+    );
+
+    render(
+      <EntitlementProvider>
+        <Probe />
+      </EntitlementProvider>
+    );
+    await waitFor(() => expect(screen.getByTestId('account')).toHaveTextContent('acct-for-user-a'));
+
+    act(() => {
+      screen.getByRole('button', { name: 'note' }).click();
+    });
+
+    // The number is still on the value — nothing is blanked, and the screen somebody is
+    // reading does not flash — but it is now published as one we know has moved.
+    expect(screen.getByTestId('stale')).toHaveTextContent('true');
+    expect(fetchEntitlement).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolveSecond();
+    });
+
+    // And the read that answers for the write clears it. Only that read: not a timeout, not a
+    // render, so there is no frame in which we have quietly decided the old number is current.
+    await waitFor(() => expect(screen.getByTestId('stale')).toHaveTextContent('false'));
+  });
+
+  it('does not clear on a plain refresh that was already in flight', async () => {
+    // The ordering that matters. A read started BEFORE the note cannot answer for the write,
+    // and if its landing cleared the flag the pre-create number would be published as current
+    // for the rest of the second round trip — the exact bug, one layer deeper.
+    let resolveFirstRefresh = () => {};
+    fetchEntitlement.
+    mockImplementationOnce(async () => ({ row: rowFor('user-a'), failed: false })).
+    mockImplementationOnce(
+      () =>
+      new Promise((resolve) => {
+        resolveFirstRefresh = () => resolve({ row: rowFor('user-a'), failed: false });
+      })
+    ).
+    // The read the note fires stays in flight for the whole test, so the only thing that
+    // could clear the flag is the earlier one landing — which is the thing being ruled out.
+    mockImplementationOnce(() => new Promise(() => {}));
+
+    render(
+      <EntitlementProvider>
+        <Probe />
+      </EntitlementProvider>
+    );
+    await waitFor(() => expect(screen.getByTestId('account')).toHaveTextContent('acct-for-user-a'));
+
+    act(() => {
+      screen.getByRole('button', { name: 'refresh' }).click();
+    });
+    act(() => {
+      screen.getByRole('button', { name: 'note' }).click();
+    });
+    expect(screen.getByTestId('stale')).toHaveTextContent('true');
+
+    await act(async () => {
+      resolveFirstRefresh();
+    });
+    expect(screen.getByTestId('stale')).toHaveTextContent('true');
+  });
+
+  it('does not follow the next person into their first frame', async () => {
+    const view = render(
+      <EntitlementProvider>
+        <Probe />
+      </EntitlementProvider>
+    );
+    await waitFor(() => expect(screen.getByTestId('account')).toHaveTextContent('acct-for-user-a'));
+    act(() => {
+      screen.getByRole('button', { name: 'note' }).click();
+    });
+
+    auth.userId = null;
+    view.rerender(
+      <EntitlementProvider>
+        <Probe />
+      </EntitlementProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('stale')).toHaveTextContent('false'));
   });
 });

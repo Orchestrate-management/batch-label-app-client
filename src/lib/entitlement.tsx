@@ -21,12 +21,40 @@ export interface EntitlementValue extends Entitlement {
   /** True until the first read resolves. Check this before trusting `status`. */
   loading: boolean;
   /**
+   * True when a write THIS APP MADE has moved the SKU count and the read that answers for it has
+   * not landed yet. The number in `skuCount` is then the one from before the write: not unread,
+   * and not right.
+   *
+   * Read it through `readSkuCount(entitlement.skuCount, entitlement.skuCountStale)` rather than
+   * as a bare boolean, for the same reason `canModify` is read through `mayModify` — the pair
+   * has three meaningful states and a screen that looks at either half alone will get one of
+   * them wrong.
+   */
+  skuCountStale: boolean;
+  /**
    * Re-read the entitlement. Used by the retry on a failed read, and by the
    * return-from-checkout poll: the subscription row is written by a Stripe
    * webhook that races the browser redirect, so the billing return screen asks
    * again on a backoff until the row says what happened.
    */
   refresh: () => void;
+  /**
+   * SAY THAT A WRITE WE JUST MADE MOVED THE SKU COUNT. Marks the held number stale and re-reads,
+   * in that order and as one call, because they are one fact: the number we are holding is wrong
+   * and we have gone to find the new one.
+   *
+   * This is the seam a create calls (NewProductDialog) and the seam an archive or delete path
+   * must call when one exists — the browser holds no DELETE grant on `products` today and
+   * nothing in `src/pages/**` archives one, so there is exactly one caller. Whoever adds the
+   * second should call this and not `refresh`: `refresh` alone re-reads while leaving a number
+   * on screen that we already know is a create behind, which is what happened before this
+   * existed.
+   *
+   * Not for a REFUSED create. Nothing moved, and SkuLimitNotice takes the refusal itself as its
+   * input precisely because the refusal is the established fact and a re-read would replace it
+   * with an older guess.
+   */
+  noteSkuCountChanged: () => void;
 }
 
 const EntitlementContext = createContext<EntitlementValue | null>(null);
@@ -56,6 +84,16 @@ export function EntitlementProvider({ children }: {children: React.ReactNode;}) 
    */
   const [read, setRead] = useState<{userId: string | null;entitlement: Entitlement;} | null>(null);
   const [attempt, setAttempt] = useState(0);
+  /**
+   * Whether a write of ours has moved the SKU count since the number we are holding was read.
+   *
+   * Held here rather than derived, because nothing in the row can show it: `sku_count` is a
+   * number and looks exactly as authoritative a create later as it did a create earlier. It is
+   * set by `noteSkuCountChanged` and cleared by the read that answers for it — never by a
+   * timeout and never by a render, so there is no frame in which we have quietly decided the
+   * old number is current again.
+   */
+  const [countStale, setCountStale] = useState(false);
 
   // Key on the user id, not the session object. supabase-js hands out a freshly
   // parsed session on every token refresh and tab refocus, so depending on the
@@ -65,6 +103,9 @@ export function EntitlementProvider({ children }: {children: React.ReactNode;}) 
   useEffect(() => {
     if (!userId) {
       setRead({ userId: null, entitlement: mapEntitlement(null) });
+      // Nobody's count is outstanding once nobody is signed in. Left set, it would follow the
+      // next person into their first frame and suppress a number that is theirs and current.
+      setCountStale(false);
       return;
     }
     let active = true;
@@ -74,7 +115,14 @@ export function EntitlementProvider({ children }: {children: React.ReactNode;}) 
     // check below is on the value rather than in this effect — a re-read for the
     // SAME user keeps the old row, a change of user does not.
     fetchEntitlement().then(({ row, failed }) => {
-      if (active) setRead({ userId, entitlement: mapEntitlement(row, failed) });
+      if (!active) return;
+      setRead({ userId, entitlement: mapEntitlement(row, failed) });
+      // This read started at or after the note that set the flag — an earlier one in flight has
+      // already had `active` set false by the cleanup below — so its answer is the one that
+      // covers the write, and the number it carries is current. A failed read clears the flag
+      // too, and correctly: `mapEntitlement(null, true)` carries no count at all, so it reads as
+      // `unread` rather than as a stale number we are still pretending to hold.
+      setCountStale(false);
     });
     return () => {
       active = false;
@@ -82,6 +130,11 @@ export function EntitlementProvider({ children }: {children: React.ReactNode;}) 
   }, [userId, attempt]);
 
   const refresh = useCallback(() => setAttempt((value) => value + 1), []);
+
+  const noteSkuCountChanged = useCallback(() => {
+    setCountStale(true);
+    setAttempt((value) => value + 1);
+  }, []);
 
   // Derived at render, not in an effect, so there is no frame in which the previous user's
   // account id is published as resolved. `loading` stays true until the entitlement for the
@@ -92,9 +145,11 @@ export function EntitlementProvider({ children }: {children: React.ReactNode;}) 
     () => ({
       ...(entitlement ?? UNRESOLVED_ENTITLEMENT),
       loading: entitlement === null,
-      refresh
+      skuCountStale: countStale,
+      refresh,
+      noteSkuCountChanged
     }),
-    [entitlement, refresh]
+    [entitlement, countStale, refresh, noteSkuCountChanged]
   );
 
   return <EntitlementContext.Provider value={value}>{children}</EntitlementContext.Provider>;

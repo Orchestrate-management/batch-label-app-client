@@ -123,6 +123,12 @@ export function NewProductDialog({
      * back, so the client's length and the meter's count can differ by exactly the amount
      * that makes a screen say "2 of 3" while the next insert is refused for holding 3.
      *
+     * IT SAYS WHAT HAPPENED, NOT WHAT TO DO ABOUT IT. `noteSkuCountChanged` rather than a bare
+     * `refresh`, because the fact this dialog holds is "the count moved", and a re-read on its
+     * own leaves every screen free to keep stating the pre-create number for the round trip it
+     * takes to answer. The provider marks the held count stale and re-reads; the screens then
+     * have a state to render instead of a number they would have had to guess was old.
+     *
      * IT IS FIRED HERE AND NOT INSIDE `reload`. The store's reload is also what a saved
      * composition calls, and a composition changes no count — refreshing the entitlement
      * there would be a round trip per save for a number that cannot have moved. A create is
@@ -132,7 +138,7 @@ export function NewProductDialog({
      * reads, this one blocks nothing on screen, and the provider revalidates in the
      * background without blanking anything (see lib/entitlement.tsx).
      */
-    entitlement.refresh();
+    entitlement.noteSkuCountChanged();
 
     // Land the list before leaving, so the product screen finds the product it is about to
     // render rather than racing a background refresh into a "no such product" state.

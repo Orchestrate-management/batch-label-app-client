@@ -401,7 +401,28 @@ in the direction that costs a maker a product they could have created.
 undefined : ...}`), `src/pages/Materials.tsx:390` (`suspended`, in `MaterialDetail`), backstopped in
 `src/components/NewProductDialog.tsx`. Failure copy: `src/lib/products.ts:200-230`.
 
-### 11. A create now re-reads the SKU count. Nothing else that moves it exists yet
+### 11. A create now re-reads the SKU count. Nothing else that moves it exists yet — DONE (with 12)
+
+**DONE** (commit `fix(11,12)`), together with entry 12, whose recommendation is the one that
+changed: 12 called its own guard "a backstop, not a model", and doing (a) there would have been
+a second patch. The shape was fixed instead.
+
+Three states are now named where there were two. `SkuCount` in `src/lib/membership.ts` is
+`{known:true,count}` | `{known:false,reason:'unread'|'stale'}`, read through `readSkuCount`;
+`EntitlementValue` gained `skuCountStale` and `noteSkuCountChanged()`, which the create calls
+instead of `refresh()` — it states the fact ("the count moved") rather than the request, and the
+provider marks the held number stale until the read that answers for it lands. Clearing is done
+by that read only, and the `active` guard means an earlier in-flight read cannot clear it
+(pinned).
+
+Entry 11's own recommendation, (a), stands: no abstraction over mutations, two call sites do not
+justify one. What it gains is a named seam — `noteSkuCountChanged` — so the archive path entry 11
+worries about has one obvious call and a comment saying to use it rather than `refresh`.
+
+**Where the recommendation was wrong.** 11 says only that whoever builds archive must remember to
+`refresh()`. Reading the code, `refresh()` is not enough on its own: it re-reads while leaving
+every screen free to keep stating the pre-write number for the whole round trip, which is exactly
+the bug 12 then patched. The seam has to carry the fact, not just the request.
 
 **The gap.** `entitlement.skuCount` is the database's own count and was read once at mount; until
 this stream, `BillingReturn` was the only caller of `refresh()` in the app. `NewProductDialog` now
@@ -433,7 +454,33 @@ an abstraction; four would.
 `NewProductDialog.test.tsx`), `src/lib/entitlement.tsx` (`refresh`), `src/pages/Billing.tsx:58`
 and `src/pages/Studio.tsx` (`skuCount` in `Studio`) and `src/pages/Settings.tsx` (`skuCount` in `IdentityTab`) — the three readers.
 
-### 12. Zero is now read as "unknown" in two sentences, which is a patch over entry 11's shape
+### 12. Zero is now read as "unknown" in two sentences, which is a patch over entry 11's shape — DONE (with 11)
+
+**DONE** (commit `fix(11,12)`), and NOT by its own recommendation (a), which the entry itself
+argues against in the sentence above it. The two local guards are gone.
+
+What replaced them is two rules, each in one place:
+
+- **Is the count knowable?** `readSkuCount(skuCount, stale)` — `unread` (no number: the view
+  declined, or the read failed), `stale` (a write of ours moved it, re-read in flight), or the
+  number. `unread` beats `stale`, since after a failed refresh both are true and having no
+  number is the stronger answer.
+- **May it be stated beside a list?** `skuCountBeside(skus, shown)` — refuses any count LOWER
+  than the products the screen has already drawn, because an account cannot hold fewer live
+  products than this client just read out of it. Zero beside a non-empty list is the loudest
+  case of that, not a special one; `1 product · 3 things outstanding across 3 products` was the
+  same nonsense and the old guard printed it.
+
+So a genuine zero is sayable again — `skuCountBeside({known:true,count:0}, 0)` is `0` — which is
+the objection entry 12 raised against its own fix. Billing does not go through `skuCountBeside`
+at all (no list beside its number) but does use `readSkuCount`: it used to state a count a create
+had moved, with a matching meter and `aria-valuenow`, for the rest of the session. It now folds
+that into the "counting…" state it already had for a read in flight, which is what is happening.
+
+Callers: `Studio.tsx`, `Settings.tsx` (`IdentityTab`), `Billing.tsx`, `NewProductDialog.tsx`.
+Tests: 9 in `membership.test.ts`, 4 in `entitlement.test.tsx` (including the in-flight ordering),
+3 new in `account-count.test.tsx`, 1 in `Billing.test.tsx`, 1 in `NewProductDialog.test.tsx`
+pinning that the dialog says the count MOVED rather than only asking again.
 
 **The gap.** Studio's header and the Settings identity tab both state the account's product count
 beside a list of that account's products, and both only render the clause when the list is

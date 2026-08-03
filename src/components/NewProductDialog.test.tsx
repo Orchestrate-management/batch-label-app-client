@@ -33,6 +33,7 @@ import type { WriteFailure } from '../lib/products';
  */
 
 const entitlementRefresh = vi.fn();
+const entitlementCountMoved = vi.fn();
 const reload = vi.fn(async () => {});
 const navigate = vi.fn();
 const createProduct = vi.hoisted(() => vi.fn());
@@ -79,7 +80,9 @@ const ROW: EntitlementRow = {
 const value: EntitlementValue = {
   ...mapEntitlement(ROW),
   loading: false,
-  refresh: entitlementRefresh
+  skuCountStale: false,
+  refresh: entitlementRefresh,
+  noteSkuCountChanged: entitlementCountMoved
 };
 
 vi.mock('../lib/entitlement', () => ({
@@ -106,6 +109,7 @@ async function createNamed(name: string) {
 
 beforeEach(() => {
   entitlementRefresh.mockReset();
+  entitlementCountMoved.mockReset();
   reload.mockClear();
   navigate.mockReset();
   createProduct.mockReset();
@@ -119,7 +123,19 @@ describe('after a product is created', () => {
   it('asks the database for the account\'s count again', async () => {
     draw();
     await createNamed('Black Fig and Cassis');
-    await waitFor(() => expect(entitlementRefresh).toHaveBeenCalled());
+    await waitFor(() => expect(entitlementCountMoved).toHaveBeenCalled());
+  });
+
+  it('says the count MOVED rather than only asking for it again', async () => {
+    // `refresh` alone re-reads and leaves every screen holding a number we already know is a
+    // create behind — which is what happened for the round trip it takes to answer, and is
+    // why the three sentences above were wrong for a whole session before either existed.
+    // `noteSkuCountChanged` carries the fact as well as the request. Collapsing this back to
+    // `refresh()` is a one-word change that reads as tidying and quietly restores the frame.
+    draw();
+    await createNamed('Black Fig and Cassis');
+    await waitFor(() => expect(entitlementCountMoved).toHaveBeenCalled());
+    expect(entitlementRefresh).not.toHaveBeenCalled();
   });
 
   it('still lands the list before navigating to the new product', async () => {
@@ -149,6 +165,7 @@ describe('after a create the database refused', () => {
       draw();
       await createNamed('Black Fig and Cassis');
       await waitFor(() => expect(createProduct).toHaveBeenCalled());
+      expect(entitlementCountMoved).not.toHaveBeenCalled();
       expect(entitlementRefresh).not.toHaveBeenCalled();
       expect(navigate).not.toHaveBeenCalled();
     }

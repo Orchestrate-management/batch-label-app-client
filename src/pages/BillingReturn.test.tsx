@@ -44,7 +44,14 @@ function stateFor(row: Partial<EntitlementRow> | null, extra: Partial<Entitlemen
     canModify: null,
     ...row
   };
-  return { ...mapEntitlement(full), loading: false, refresh, ...extra };
+  return {
+    ...mapEntitlement(full),
+    loading: false,
+    skuCountStale: false,
+    refresh,
+    noteSkuCountChanged: vi.fn(),
+    ...extra
+  };
 }
 
 function renderReturn() {
@@ -142,7 +149,13 @@ describe('the states that are not "not yet"', () => {
   it('blames itself when the entitlement could not be read', async () => {
     // A failed read, as opposed to a successful read that found no row. The two are
     // different admissions, and only the second should make somebody wonder about their card.
-    entitlement.mockReturnValue({ ...mapEntitlement(null, true), loading: false, refresh });
+    entitlement.mockReturnValue({
+      ...mapEntitlement(null, true),
+      loading: false,
+      skuCountStale: false,
+      refresh,
+      noteSkuCountChanged: vi.fn()
+    });
     renderReturn();
     await exhaustTheSchedule();
     expect(screen.getByText('We could not check your plan')).toBeInTheDocument();

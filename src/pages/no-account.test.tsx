@@ -86,7 +86,13 @@ const ROW: EntitlementRow = {
 };
 
 function published(value: Entitlement): EntitlementValue {
-  return { ...value, loading: false, refresh: entitlementRefresh };
+  return {
+    ...value,
+    loading: false,
+    skuCountStale: false,
+    refresh: entitlementRefresh,
+    noteSkuCountChanged: vi.fn()
+  };
 }
 
 /** Signup never finished. No row for this brand at all. */
