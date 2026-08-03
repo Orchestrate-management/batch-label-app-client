@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { CheckIcon, ExternalLinkIcon, RefreshCwIcon } from 'lucide-react';
 import { PageHeader } from '../components/AppShell';
 import { Button, Callout, Card, Pill, SectionTitle, Skeleton } from '../components/ui/Primitives';
@@ -7,6 +8,7 @@ import { allowanceLabel, entitlementMessage, periodLine, planLabel } from '../li
 import { metaInitiateCheckout } from '../lib/meta-pixel';
 import {
   createCheckoutSession,
+  createRailTestSession,
   createPortalSession,
   leaveFor,
   type BillingResult } from
@@ -59,6 +61,15 @@ export function Billing() {
   // Annual is the default and monthly is the secondary option, which is the founder
   // decision and also the honest one: annual is the cheaper way to buy the same thing.
   const [interval, setInterval] = useState<BillingInterval>('annual');
+
+  // The rail test is reachable at /billing?railtest=1 and is advertised nowhere.
+  //
+  // Obscurity is NOT the control. www refuses the 30p price to any email that is not on
+  // RAIL_TEST_ALLOWED_EMAILS, checked against the verified token, so a customer who finds
+  // this URL gets a 403 and nothing else. Hiding it just keeps a confusing card off the
+  // page for the people it would only confuse.
+  const [params] = useSearchParams();
+  const showRailTest = params.get('railtest') === '1';
   const [pending, setPending] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -90,6 +101,26 @@ export function Billing() {
         {failure &&
         <Callout tone="warn" title="That did not go through">
             <p className="max-w-prose leading-relaxed">{failure}</p>
+          </Callout>
+        }
+
+        {showRailTest &&
+        <Callout tone="info" title="Payment rail test">
+            <p className="max-w-prose leading-relaxed">
+              Proves the live payment path end to end with a real card — Checkout, the
+              webhook, the entitlement write and the purchase events — for a few pence
+              instead of a full plan. Stripe shows the exact amount before you confirm. It
+              grants no plan and no allowance.
+            </p>
+            <Button
+            size="sm"
+            variant="secondary"
+            className="mt-3"
+            disabled={pending !== null}
+            onClick={() => run('rail_test', createRailTestSession)}>
+
+              {pending === 'rail_test' ? 'Opening…' : 'Run the rail test'}
+            </Button>
           </Callout>
         }
 
