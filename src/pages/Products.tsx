@@ -8,6 +8,8 @@ import { NoAccountNotice } from '../components/NoAccountNotice';
 import { PlanNotice } from '../components/PlanNotice';
 import { SkuLimitNotice } from '../components/SkuLimitNotice';
 import { CATEGORIES } from '../lib/categories';
+import { useEntitlement } from '../lib/entitlement';
+import { createIsCertainToFail } from '../lib/membership';
 import { outstandingObligations } from '../lib/regimes';
 import { specSummary } from '../lib/derive';
 import { formatDate } from '../lib/model';
@@ -30,12 +32,19 @@ export function Products() {
   const navigate = useNavigate();
   const { enabledCategories } = useWorkspace();
   const { status, products, error, refresh } = useProducts();
+  const entitlement = useEntitlement();
   const [creating, setCreating] = useState(false);
 
   // See product-store.tsx. Published only for a suspended membership, which the entitlement
   // read established before this screen rendered — so there is something true to say, and no
   // reason to offer a create the database will refuse.
   const unavailable = status === 'unavailable';
+
+  // Suspension AND an unfinished signup: the two states where the insert is already
+  // established to fail, so a form here would take four fields in order to be refused. NOT a
+  // failed entitlement read, where the database resolves the account itself and the create
+  // would have worked. The whole argument is on `createIsCertainToFail`.
+  const offerCreate = !createIsCertainToFail(entitlement);
 
   // Only categories that hold something get a section. A brand new account gets ONE empty
   // state rather than three — "nothing in home fragrance yet", "nothing in cosmetics yet",
@@ -54,12 +63,12 @@ export function Products() {
         title="What you make"
         description="Each product holds a composition, the classification it produces, and the two outputs that follow: a label and a safety data sheet."
         actions={
-        unavailable ?
-        undefined :
+        offerCreate ?
         <Button variant="primary" onClick={() => setCreating(true)}>
             <PlusIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
             New product
-          </Button>
+          </Button> :
+        undefined
         } />
 
 

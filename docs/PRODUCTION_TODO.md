@@ -337,7 +337,25 @@ It is about fifteen minutes now that both ends exist.
 `src/pages/ArtefactDesigner.tsx` and `src/pages/Products.tsx` are the receiving end, tested in
 `src/pages/no-account.test.tsx`.
 
-### 10. A workspace with no account behind it still offers **New product**
+### 10. A workspace with no account behind it still offers **New product** — DONE
+
+**DONE** (commit `feat(10)`): option (b). The rule is one exported predicate,
+`createIsCertainToFail(entitlement)` in `src/lib/membership.ts`, rather than three-way logic
+copied onto four surfaces — it names `suspended` and `no_membership` and fails OPEN on
+everything else, with the `unknown` case (where the database resolves the account itself and
+the create WOULD have worked) argued in the comment so a later pass does not "tidy" it into
+covering all of `no-account`. Wired into `Studio.tsx`, `Products.tsx` and `Materials.tsx`
+(`MaterialDetail`), which replaced their local `suspended` checks with it.
+
+`NewProductDialog` deliberately gained no second early return: unlike suspension — a bare
+42501 the migration will not explain — the `no_account` write path already answers with
+NO_ACCOUNT_MESSAGE, which names the cause and points at the setup step. A duplicate of that
+sentence in the dialog would be a second place for it to drift. Its header comment says so.
+
+Tests: 5 in `membership.test.ts` (including the two that pin the fail-open cases) and 6 in
+`no-account.test.tsx` asserting the button is gone for the unfinished signup and still present
+for the other two causes.
+
 
 **The gap.** Studio, Products and a material detail page all keep their create button when the
 store says `no-account`, because only `suspended` hides it. The dialog opens, the maker fills in

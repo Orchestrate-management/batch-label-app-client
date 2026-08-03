@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   allowanceLabel,
+  createIsCertainToFail,
   entitlementMessage,
   mapEntitlement,
   mayModify,
@@ -236,6 +237,62 @@ describe('can_modify, which does not exist yet', () => {
   it('denies only when the column is actually false', () => {
     expect(mayModify(mapEntitlement(row({ canModify: false })))).toBe(false);
     expect(mayModify(mapEntitlement(row({ canModify: true })))).toBe(true);
+  });
+});
+
+/**
+ * Whether to offer a create button, which is a NARROWER question than "can this account
+ * create a product" and must stay narrower.
+ *
+ * The expensive direction is a false positive: hiding the control from somebody whose create
+ * would have worked takes away a thing they can genuinely do, on the strength of one read of
+ * ours going wrong. So the two named states are the two the DATABASE has already settled, and
+ * everything else — including every state we are unsure about — keeps the button and lets the
+ * write answer.
+ */
+describe('the create button, and the two states that make it a waste of typing', () => {
+  it('hides it for a suspended account, whose insert the policy refuses', () => {
+    expect(createIsCertainToFail(mapEntitlement(row({ membershipStatus: 'suspended' })))).toBe(
+      true
+    );
+  });
+
+  it('hides it for a signup that never finished, which has no account to insert into', () => {
+    // No row for this brand at all. There is nothing for account_id to be, and nothing for
+    // the database's own current_account_id() default to resolve. Finishing signup is the
+    // fix; pressing a button is not.
+    const unfinished = mapEntitlement(null);
+    expect(unfinished.status).toBe('no_membership');
+    expect(createIsCertainToFail(unfinished)).toBe(true);
+  });
+
+  it('KEEPS it when our own entitlement read failed', () => {
+    // THE ONE THAT MATTERS. `createProduct` omits account_id when it has none, and
+    // current_account_id() resolves it server-side — so for a maker holding one account the
+    // create would have worked. A blipped read must not cost them a product.
+    const unreadable = mapEntitlement(null, true);
+    expect(unreadable.status).toBe('unknown');
+    expect(createIsCertainToFail(unreadable)).toBe(false);
+  });
+
+  it('keeps it on every money state, because none of them withholds a create', () => {
+    // §6.1: no new, keep everything old fully working. The SKU allowance is what governs a
+    // create, and SkuLimitNotice states that separately, before anything is typed.
+    expect(createIsCertainToFail(mapEntitlement(row({ plan: 'free' })))).toBe(false);
+    expect(createIsCertainToFail(mapEntitlement(row({ plan: 'studio', active: false }))))
+      .toBe(false);
+    expect(
+      createIsCertainToFail(mapEntitlement(row({ plan: 'studio', planStatus: 'past_due' })))
+    ).toBe(false);
+    expect(createIsCertainToFail(mapEntitlement(row({ plan: 'studio', active: true })))).toBe(
+      false
+    );
+  });
+
+  it('keeps it for a membership whose account this brand could not single out', () => {
+    // `account_ambiguous` is a write hint, not a status: it comes back from the attempt, with
+    // a true sentence and correctly no retry. We cannot see it in advance, so we do not guess.
+    expect(createIsCertainToFail(mapEntitlement(row({ accountId: null })))).toBe(false);
   });
 });
 

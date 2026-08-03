@@ -316,6 +316,45 @@ export function mayModify(entitlement: Entitlement): boolean {
   return entitlement.canModify !== false;
 }
 
+/**
+ * The two states where offering "New product" wastes a maker's time, and ONLY those two.
+ *
+ * It is deliberately not "can this account create a product", which we do not know and must
+ * not pretend to: the SKU allowance may be full, the code may be a duplicate, the read may be
+ * a moment old. It answers the narrower question a create BUTTON needs — is this a state where
+ * the insert is already established to fail, so that a form collecting four fields would
+ * collect them in order to be refused?
+ *
+ *   suspended       the INSERT policy refuses it with a bare 42501. Already gated this way on
+ *                   every create surface; this function is where that rule now lives.
+ *   no_membership   there is no account row for this brand, so there is nothing for the
+ *                   column to be and nothing for the database's own `current_account_id()`
+ *                   default to resolve. Signup was not finished. The write fails, and the
+ *                   thing that fixes it is finishing signup, not pressing the button again.
+ *
+ * EVERYTHING ELSE KEEPS THE BUTTON, and the two near misses are the point of this comment.
+ *
+ *   unknown         the entitlement read failed, or has not landed. `createProduct` then omits
+ *                   account_id and `current_account_id()` resolves it server-side — so for a
+ *                   maker holding exactly one account the create WOULD have worked. Hiding it
+ *                   here would take away something they can genuinely do because one read of
+ *                   ours blipped, which is the expensive direction to be wrong in.
+ *   account_ambiguous
+ *                   is not a status; it is a write hint the database returns for a person
+ *                   holding more than one account. It arrives after the attempt, with a true
+ *                   sentence and correctly no retry (see NO_ACCOUNT / ACCOUNT_AMBIGUOUS in
+ *                   lib/products.ts). We cannot see it in advance, so we do not guess at it.
+ *   free / lapsed / past_due
+ *                   are money states. §6.1: no new, keep everything old working — and the
+ *                   allowance, not the plan, is what governs a create. SkuLimitNotice states
+ *                   that separately and before anything is typed.
+ *
+ * Fails OPEN on every state it does not name, for the same reason `mayModify` does.
+ */
+export function createIsCertainToFail(entitlement: Entitlement): boolean {
+  return entitlement.status === 'suspended' || entitlement.status === 'no_membership';
+}
+
 export interface EntitlementFetch {
   row: EntitlementRow | null;
   /** True when the read itself failed, as opposed to succeeding and finding nothing. */

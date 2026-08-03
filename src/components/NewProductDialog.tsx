@@ -41,6 +41,14 @@ import { useWorkspace } from '../lib/workspace';
  * from a read taken before anything rendered, so the dialog says that instead. The screens
  * that open it hide their create buttons on the same fact; this is the backstop for a
  * suspension that lands between their render and this one.
+ *
+ * AN UNFINISHED SIGNUP DOES SEE THE FORM, AND THAT IS DELIBERATE. The create surfaces now hide
+ * their button for `no_membership` too (`createIsCertainToFail`, lib/membership.ts), so the
+ * only way to reach this dialog in that state is the same narrow race. It gets no early return
+ * of its own because, unlike suspension, the write path can already name the cause exactly:
+ * `createProduct` answers `no_account` with NO_ACCOUNT_MESSAGE, which says the signup was not
+ * finished, says nothing was saved, and points at the step that fixes it. A second copy of
+ * that sentence here would be a second place for it to drift.
  */
 export function NewProductDialog({
   onClose,

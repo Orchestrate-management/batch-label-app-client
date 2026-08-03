@@ -18,6 +18,7 @@ import {
 import { categoryById } from '../lib/categories';
 import { derive } from '../lib/derive';
 import { useEntitlement } from '../lib/entitlement';
+import { createIsCertainToFail } from '../lib/membership';
 import { outstandingFor } from '../lib/pipeline';
 import { useProducts } from '../lib/product-store';
 
@@ -70,6 +71,23 @@ export function Studio() {
   const unavailable = status === 'unavailable';
 
   /**
+   * Whether to offer "New product" at all.
+   *
+   * Was `!unavailable` — suspension only. That left an unfinished signup a create button that
+   * opens a dialog, takes four fields, and is refused: `no_membership` means there is no
+   * account row for the column to point at and none for the database's own default to
+   * resolve, so the insert cannot land however carefully it is filled in. The refusal is
+   * honest (lib/products.ts names the cause and points at the setup step) but it arrives
+   * after the typing.
+   *
+   * The rule lives in `createIsCertainToFail` rather than here, because it is the same rule on
+   * four surfaces and the case it must NOT cover — a blipped entitlement read, where the
+   * create would have worked — is the one that costs a maker a product. See the comment on
+   * that function; it is doing the arguing.
+   */
+  const offerCreate = !createIsCertainToFail(entitlement);
+
+  /**
    * How many products the ACCOUNT holds, which is not the length of the list on this screen.
    *
    * `entitlement.skuCount` is counted by the database over the same rows the enforcement
@@ -101,12 +119,12 @@ export function Studio() {
         title={greeting(entitlement.businessName)}
         description="Ingredients in, the right label and a compliant safety data sheet out. Here is what is between you and that today."
         actions={
-        unavailable ?
-        undefined :
+        offerCreate ?
         <Button variant="primary" onClick={() => setCreating(true)}>
             <PlusIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
             New product
-          </Button>
+          </Button> :
+        undefined
         }
         meta={
         status === 'loading' ?

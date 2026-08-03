@@ -192,6 +192,50 @@ describe('the three causes, which are three different next steps', () => {
 });
 
 /**
+ * The create button, on the two screens that carry one.
+ *
+ * A workspace with no account behind it used to keep "New product" — only `suspended` hid it.
+ * The dialog opened, the maker filled in four fields, and the write was refused. It was not
+ * refused badly (lib/products.ts names the cause and points at the setup step) but the refusal
+ * arrived after the typing, on the one cause where we knew before they started.
+ *
+ * The gate is `entitlement.status`, not the store's `no-account`, and the difference IS the
+ * feature: all three causes publish `no-account`, and only one of them means the write cannot
+ * land. Hiding the button on the other two would take a create away from somebody whose create
+ * would have worked — see `createIsCertainToFail` in lib/membership.ts.
+ */
+describe('the create button, in a workspace with no account behind it', () => {
+  const WITH_A_CREATE = [SCREENS[0], SCREENS[1]];
+
+  it.each(WITH_A_CREATE)('$name does not offer one to an unfinished signup', ({ draw }) => {
+    entitlement.mockReturnValue(UNFINISHED);
+    draw();
+    expect(screen.queryByRole('button', { name: /new product/i })).not.toBeInTheDocument();
+    // And the screen is not silent about why the button is gone: the notice is already there
+    // saying signup was not finished. A control that vanishes with nothing explaining it is
+    // its own small mystery.
+    expect(screen.getByText(/has not finished being set up/i)).toBeInTheDocument();
+  });
+
+  it.each(WITH_A_CREATE)('$name still offers one when OUR read failed', ({ draw }) => {
+    // The expensive direction. `createProduct` omits account_id and the database resolves it,
+    // so a single-account maker's create works — taking the button away because one read of
+    // ours blipped costs them a product they could have made.
+    entitlement.mockReturnValue(UNREADABLE);
+    draw();
+    expect(screen.getByRole('button', { name: /new product/i })).toBeInTheDocument();
+  });
+
+  it.each(WITH_A_CREATE)('$name still offers one when the account is ambiguous', ({ draw }) => {
+    // Not a status we can see in advance; it is a hint the write returns. The refusal that
+    // follows is honest and offers no retry, which is the right place for it.
+    entitlement.mockReturnValue(AMBIGUOUS);
+    draw();
+    expect(screen.getByRole('button', { name: /new product/i })).toBeInTheDocument();
+  });
+});
+
+/**
  * The retry has to re-read the thing that failed.
  *
  * It used to call the PRODUCTS store's refresh, which cannot change this answer: the store has
