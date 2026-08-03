@@ -1,6 +1,6 @@
 import { ArtefactInstance, Market, Product } from '../../lib/model';
 import { Derivation } from '../../lib/derive';
-import { BUSINESS, addressForMarket } from '../../lib/products';
+import { BUSINESS, addressForMarket } from '../../lib/identity';
 import { packagingById } from '../../lib/catalog';
 import { CandleSafetySymbols, CeMark, PaoSymbol, Pictogram, WeeeBin } from './Symbols';
 import { SdsDocument } from './SdsDocument';

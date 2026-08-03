@@ -140,20 +140,33 @@ const ACTION_CLASS =
 /**
  * `feature` names the thing being withheld, so the free-plan copy can name the control the
  * maker is actually looking at rather than waving at "premium features".
+ *
+ * `states` narrows which of them this instance is allowed to speak for, and exists because
+ * most of this component's copy is about a PLAN and one piece of it is not. The products and
+ * studio screens need the `suspended` sentence — nothing else on the app can say it, and
+ * without it a suspended maker is shown an empty account — but they must not carry the `free`
+ * or `lapsed` copy, because creating and editing products is free and always has been (R9,
+ * and §6.1 on the database side). Mounting a bare PlanNotice over the products list would put
+ * "this is part of a paid plan" over something that is not. So the callers that want exactly
+ * one state ask for exactly one state, rather than the file growing a second component whose
+ * copy would drift from this one's.
  */
 export function PlanNotice({
   feature = 'Exporting',
-  className
+  className,
+  states
 
 
 
 
-}: {feature?: string;className?: string;}) {
+
+}: {feature?: string;className?: string;states?: EntitlementStatus[];}) {
   const entitlement = useEntitlement();
 
   // Nothing to say until the read resolves. Flashing "you are on the free plan" at a paying
   // customer for half a second is worse than saying nothing.
   if (entitlement.loading) return null;
+  if (states && !states.includes(entitlement.status)) return null;
 
   const copy = copyFor(entitlement.status, feature, planLabel(entitlement));
   if (!copy) return null;

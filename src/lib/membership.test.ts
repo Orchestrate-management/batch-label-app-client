@@ -26,6 +26,7 @@ import {
 function row(overrides: Partial<EntitlementRow> = {}): EntitlementRow {
   return {
     brand: 'batchlabel',
+    accountId: 'acct-1111',
     membershipStatus: 'active',
     businessName: 'Hearth & Hollow',
     plan: 'free',
@@ -35,6 +36,7 @@ function row(overrides: Partial<EntitlementRow> = {}): EntitlementRow {
     cancelAtPeriodEnd: false,
     trialEnd: null,
     skuLimit: 3,
+    skuCount: null,
     skuUnlimited: false,
     editorSeatLimit: 1,
     canModify: null,
@@ -277,13 +279,15 @@ describe('what happens next, and when', () => {
 
 describe('reading the raw row', () => {
   /**
-   * The marketing side owns this view and is still adding columns to it — `can_modify` with
-   * the enforcement trigger, `sku_count` with the products table. Anything missing has to
-   * read as absent rather than throwing, and absent must never read as zero or as false.
+   * The marketing side owns this view and adds columns to it — `can_modify` and `sku_count`
+   * arrived with the account data schema, and `account_id` changed from a user id to a real
+   * accounts.id in the same migration. Anything missing has to read as absent rather than
+   * throwing, and absent must never read as zero or as false.
    */
   it('tolerates an empty object', () => {
     expect(readEntitlementRow({})).toEqual({
       brand: null,
+      accountId: null,
       membershipStatus: null,
       businessName: null,
       plan: null,
@@ -293,10 +297,28 @@ describe('reading the raw row', () => {
       cancelAtPeriodEnd: null,
       trialEnd: null,
       skuLimit: null,
+      skuCount: null,
       skuUnlimited: null,
       editorSeatLimit: null,
       canModify: null
     });
+  });
+
+  it('reads sku_count as a number, and a missing one as unknown rather than zero', () => {
+    // Zero is a claim — "this account holds no products" — and the billing page renders it
+    // next to an allowance. The view is built to yield null when no account resolves, and
+    // this reader has to carry that through rather than defaulting it.
+    expect(readEntitlementRow({ sku_count: 3 }).skuCount).toBe(3);
+    expect(readEntitlementRow({}).skuCount).toBeNull();
+    expect(readEntitlementRow({ sku_count: null }).skuCount).toBeNull();
+    expect(readEntitlementRow({ sku_count: '3' }).skuCount).toBeNull();
+  });
+
+  it('reads account_id, which is an account and not the user id', () => {
+    // The column used to be `m.user_id as account_id`. It resolves to accounts.id now, and
+    // this is the value a write may be told to land in — so it is read, never derived.
+    expect(readEntitlementRow({ account_id: 'acct-1111' }).accountId).toBe('acct-1111');
+    expect(readEntitlementRow({}).accountId).toBeNull();
   });
 
   it.each([[null], [undefined], ['not an object'], [42]])(
@@ -340,9 +362,10 @@ describe('reading the raw row', () => {
         cancel_at_period_end: false,
         trial_end: null,
         updated_at: '2026-08-01T00:00:00Z',
-        account_id: '00000000-0000-0000-0000-000000000000',
+        account_id: 'aaaaaaaa-0000-0000-0000-00000000000a',
         business_name: 'Hearth & Hollow',
         sku_limit: 180,
+        sku_count: 12,
         editor_seat_limit: 3,
         sku_unlimited: false
       })
@@ -350,11 +373,15 @@ describe('reading the raw row', () => {
     expect(entitlement).toEqual({
       status: 'active',
       active: true,
+      // Deliberately not the user_id in the same row: the view's account_id is an accounts.id
+      // now, and anything that treats the two as interchangeable writes to the wrong place.
+      accountId: 'aaaaaaaa-0000-0000-0000-00000000000a',
       plan: 'studio',
       planStatus: 'active',
       businessName: 'Hearth & Hollow',
       skuLimit: 180,
       skuUnlimited: false,
+      skuCount: 12,
       editorSeatLimit: 3,
       canModify: null,
       currentPeriodEnd: '2026-09-14T00:00:00Z',

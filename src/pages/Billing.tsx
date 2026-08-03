@@ -27,7 +27,6 @@ import {
   type PlanCatalogue,
   type PublicPlan } from
 '../lib/plans';
-import { useProducts } from '../lib/workspace';
 
 /**
  * Plan and billing. This is where a purchase happens.
@@ -50,13 +49,46 @@ import { useProducts } from '../lib/workspace';
  *    were left implied.
  * 3. NOTHING HERE DESCRIBES A MECHANISM THAT DOES NOT EXIST. The tiers differ by SKU
  *    allowance and by editor seats, and editor seats are not built, so they are shown as
- *    recorded-but-unavailable rather than sold. The SKU allowance is displayed and is not
- *    enforced, so no sentence on this page says what happens at the limit.
+ *    recorded-but-unavailable rather than sold. The SKU allowance IS enforced — a trigger on
+ *    public.products refuses one over the limit, on creation and on nothing else — so the
+ *    sentence about the limit says that, and says the other half too: everything already here
+ *    stays editable and printable at any tier.
  */
 export function Billing() {
   const entitlement = useEntitlement();
-  const products = useProducts();
   const catalogue = usePlanCatalogue();
+
+  /**
+   * THE COUNT COMES FROM THE DATABASE, AND FROM NOWHERE ELSE.
+   *
+   * `entitlements.sku_count` is counted by the view over the same rows the enforcement trigger
+   * counts — live products for the ACCOUNT — which is the whole reason the column was added:
+   * "so the button the app disables and the insert the database refuses can never disagree".
+   *
+   * THERE USED TO BE A FALLBACK TO `products.length`, and it was the one thing this page must
+   * not do. The view's `where acct.id is not null` is load-bearing on purpose: a membership
+   * with no resolvable account yields sku_count NULL rather than 0, because "zero is a claim
+   * ('you have none'); the honest answer is that we do not know" (migration §10). The fallback
+   * then answered that null with a client-side 0 — fetchProducts returns [] and 'ready' when
+   * there is no account — and rendered "0 of 3 SKUs on your plan", a 0% meter and
+   * aria-valuenow=0 on the page that takes money. Exactly the number the database had just
+   * refused to state.
+   *
+   * Its comment claimed it covered "the moment before the entitlement resolves, and only
+   * then". That moment does not exist: ProductsProvider holds at 'loading' until the
+   * entitlement resolves, so the fallback could only ever fire AFTER the database had said
+   * unknown. And the list is not the same number anyway — fetchProducts drops a product whose
+   * specification did not come back, so it could show "2 of 3" while the next create is
+   * refused for holding 3 of 3.
+   *
+   * `null` means WE DO NOT KNOW and is rendered as such: an em dash, no meter, no percentage.
+   */
+  const skuCount = entitlement.skuCount;
+
+  // A read in flight is not a read that failed. The entitlement starts unresolved on every
+  // visit, so collapsing that into "could not count" would open every visit on an apology for
+  // a failure that has not happened.
+  const countPending = entitlement.loading;
 
   // Annual is the default and monthly is the secondary option, which is the founder
   // decision and also the honest one: annual is the cheaper way to buy the same thing.
@@ -127,7 +159,8 @@ export function Billing() {
         <CurrentPlan
           held={held}
           currency={catalogue.data?.currency ?? null}
-          skuCount={products.length}
+          skuCount={skuCount}
+          countPending={countPending}
           portalPending={pending === 'portal'}
           busy={pending !== null}
           onManage={() => run('portal', createPortalSession)} />
@@ -262,6 +295,7 @@ function CurrentPlan({
   held,
   currency,
   skuCount,
+  countPending,
   portalPending,
   busy,
   onManage
@@ -271,7 +305,7 @@ function CurrentPlan({
 
 
 
-}: {held: PublicPlan | null;currency: string | null;skuCount: number;portalPending: boolean;busy: boolean;onManage: () => void;}) {
+}: {held: PublicPlan | null;currency: string | null;skuCount: number | null;countPending: boolean;portalPending: boolean;busy: boolean;onManage: () => void;}) {
   const entitlement = useEntitlement();
 
   const tone =
@@ -290,7 +324,8 @@ function CurrentPlan({
   // in this repo — a comped or grandfathered account has an allowance that no tier's card
   // describes, and it is the row that is true for them.
   const limit = entitlement.skuUnlimited ? null : entitlement.skuLimit;
-  const pct = limit && limit > 0 ? Math.min(100, Math.round(skuCount / limit * 100)) : 0;
+  const pct =
+  limit && limit > 0 && skuCount !== null ? Math.min(100, Math.round(skuCount / limit * 100)) : 0;
 
   return (
     <section aria-labelledby="current-heading" className="space-y-4">
@@ -344,12 +379,22 @@ function CurrentPlan({
       </Card>
 
       <Card className="px-5 py-5">
-        {/* "We could not read your allowance" is only true once a read has finished. While
-            one is in flight it would be an admission of a failure that has not happened. */}
+        {/* THREE STATES, KEPT APART, and all three are the entitlement's. In flight says it
+            is counting: this page opens in flight every single time, so folding that into
+            "could not count" is an apology for a failure that has not happened. Resolved with
+            a number says the number. Resolved with NO number — the read failed, or no account
+            resolved and the view declined to call that nought — says we could not, and shows
+            no meter and no percentage, because a 0 sitting beside an allowance reads as "you
+            have used none of your plan". The same rule governs the allowance sentence. */}
         <p className="text-sm text-ink">
-          <span className="tabular font-medium">{skuCount}</span>
-          {entitlement.loading ?
-          <> SKUs. Checking what your plan allows…</> :
+          <span className="tabular font-medium">{skuCount ?? '—'}</span>
+          {/* One row answers both halves now, so the in-flight frame is one sentence rather
+              than two branches — while it is loading we know neither the count nor the
+              allowance, and there is no state where we know one and not the other. */}
+          {countPending ?
+          <> SKUs. Counting what you are holding and checking what your plan allows…</> :
+          skuCount === null ?
+          <> SKUs. We could not count your products just now.</> :
           entitlement.skuUnlimited ?
           <> SKUs. This plan has no SKU ceiling.</> :
           limit !== null ?
@@ -361,7 +406,7 @@ function CurrentPlan({
           <> SKUs. We could not read your allowance.</>
           }
         </p>
-        {!entitlement.loading && limit !== null && limit > 0 &&
+        {!entitlement.loading && skuCount !== null && limit !== null && limit > 0 &&
         <div
           className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-paper-line"
           role="progressbar"
@@ -373,12 +418,17 @@ function CurrentPlan({
             <div className="h-full rounded-full bg-teal" style={{ width: `${pct}%` }} />
           </div>
         }
-        {/* Says what a SKU IS and nothing about what happens at the limit. The allowance is
-            recorded and displayed; it is not enforced anywhere yet, and a sentence promising
-            either that it blocks you or that it does not would be a promise about software
-            that has not been written. */}
+        {/* This used to say what a SKU IS and deliberately nothing about what happens at
+            the limit, because nothing enforced it. Something does now: a trigger on
+            public.products counts live rows for the ACCOUNT and refuses one too many. So the
+            copy states the rule — and states the other half of it, which matters more to
+            somebody who has just downgraded: the meter fires on creating a product and on
+            nothing else, so everything already here stays editable and printable at any
+            tier, forever. */}
         <p className="mt-3 max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
-          A SKU is one thing you sell: one fragrance in one pack size.
+          A SKU is one thing you sell: one fragrance in one pack size. At your allowance you
+          cannot add a new one until you are under it or on a larger plan — everything you
+          already have stays editable and printable whatever happens to your plan.
         </p>
       </Card>
 

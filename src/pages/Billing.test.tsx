@@ -32,8 +32,29 @@ vi.mock('../lib/meta-pixel', () => ({
   metaInitiateCheckout: (...args: unknown[]) => mocks.metaInitiateCheckout(...args)
 }));
 
-vi.mock('../lib/workspace', () => ({
-  useProducts: () => new Array(12).fill(null)
+/**
+ * The products store, mocked so the tests can prove the page IGNORES it.
+ *
+ * It used to be the fallback for the SKU count, and that is the bug this mock now guards
+ * against rather than supports: with no account, fetchProducts returns [] at status 'ready',
+ * and the page turned that into "0 of 3 SKUs on your plan" — the one number
+ * `entitlements.sku_count` is deliberately null rather than zero for. The count now comes off
+ * the entitlement row and nowhere else, so a store that is ready with twelve, ready with none,
+ * or failed outright must make no difference to what the meter says.
+ */
+const store = vi.hoisted(() => ({
+  status: 'ready' as 'loading' | 'ready' | 'error',
+  products: new Array(12).fill(null) as unknown[]
+}));
+
+vi.mock('../lib/product-store', () => ({
+  useProducts: () => ({
+    status: store.status,
+    products: store.products,
+    error: store.status === 'error' ? 'We could not read your products just now.' : null,
+    refresh: () => {},
+    reload: async () => {}
+  })
 }));
 
 vi.mock('../lib/billing', () => ({
@@ -58,6 +79,7 @@ function stateFor(row: Partial<EntitlementRow> | null, failed = false): Entitlem
   null :
   {
     brand: 'batchlabel',
+    accountId: 'acct-1111',
     membershipStatus: 'active',
     businessName: 'Hearth & Hollow',
     plan: 'free',
@@ -67,6 +89,9 @@ function stateFor(row: Partial<EntitlementRow> | null, failed = false): Entitlem
     cancelAtPeriodEnd: false,
     trialEnd: null,
     skuLimit: 3,
+    // A real number by default, because the view supplies one for every resolved account.
+    // Null is a distinct claim — "we could not count" — and the tests that want it say so.
+    skuCount: 12,
     skuUnlimited: false,
     editorSeatLimit: 1,
     canModify: null,
@@ -78,6 +103,8 @@ function stateFor(row: Partial<EntitlementRow> | null, failed = false): Entitlem
 const fetchMock = vi.fn();
 
 beforeEach(() => {
+  store.status = 'ready';
+  store.products = new Array(12).fill(null);
   fetchMock.mockReset();
   fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => CATALOGUE } as Response);
   vi.stubGlobal('fetch', fetchMock);
@@ -217,7 +244,7 @@ describe('buying', () => {
 describe('the plan somebody is on', () => {
   it('measures usage against the allowance on the row, not against a client constant', async () => {
     entitlement.mockReturnValue(
-      stateFor({ plan: 'maker', planStatus: 'active', active: true, skuLimit: 45, editorSeatLimit: 1 })
+      stateFor({ plan: 'maker', planStatus: 'active', active: true, skuLimit: 45, skuCount: 12, editorSeatLimit: 1 })
     );
     renderPage();
     const meter = await screen.findByRole('progressbar', { name: 'SKUs used' });
@@ -228,6 +255,70 @@ describe('the plan somebody is on', () => {
     // allows. They coincide until somebody is comped or grandfathered, which is exactly why
     // the panel reads the row rather than the card.
     expect(screen.getAllByText('45 SKUs')).toHaveLength(2);
+  });
+
+  it('counts with the number the database holds, not with the length of the list', async () => {
+    // entitlements.sku_count is counted over the same rows the enforcement trigger counts.
+    // The list in the browser drops a product whose specification did not come back, so
+    // trusting it here is how a page that takes money shows "12 of 45" while the next create
+    // is refused for holding 40. The store below holds twelve; the row says forty.
+    store.status = 'ready';
+    store.products = new Array(12).fill(null);
+    entitlement.mockReturnValue(
+      stateFor({ plan: 'maker', planStatus: 'active', active: true, skuLimit: 45, skuCount: 40 })
+    );
+    renderPage();
+    const meter = await screen.findByRole('progressbar', { name: 'SKUs used' });
+    expect(meter).toHaveAttribute('aria-valuenow', '40');
+    expect(screen.getByText('40')).toBeInTheDocument();
+    expect(screen.queryByText('12')).not.toBeInTheDocument();
+  });
+
+  it('renders an unknown count as unknown, never as nought', async () => {
+    // THE FINDING THIS TEST EXISTS FOR. `entitlements.sku_count` is null exactly when no
+    // account resolves, because the view's `where acct.id is not null` refuses to call that
+    // zero: "Zero is a claim; the honest answer is that we do not know." The page used to
+    // answer that null with `products.length`, and with no account fetchProducts returns []
+    // at status 'ready' — so it rendered "0 of 3 SKUs on your plan", a 0% bar and
+    // aria-valuenow=0 on the screen that takes money. The store is deliberately ready and
+    // empty here, which is the exact shape that produced it.
+    store.status = 'ready';
+    store.products = [];
+    entitlement.mockReturnValue(
+      stateFor({ plan: 'free', skuLimit: 3, skuCount: null, accountId: null })
+    );
+    renderPage();
+    await waitFor(() =>
+    expect(screen.getByText(/could not count your products/)).toBeInTheDocument()
+    );
+    expect(screen.queryByRole('progressbar', { name: 'SKUs used' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/0 of 3/)).not.toBeInTheDocument();
+  });
+
+  it('does not claim a failed count while the read is still in flight', async () => {
+    // The first paint of this page ALWAYS has the entitlement unresolved, so folding that
+    // into "we could not count" opens every visit on an apology for a failure that has not
+    // happened. Both halves come off the one row now, so this is the row's loading state.
+    entitlement.mockReturnValue({
+      ...stateFor({ plan: 'maker', planStatus: 'active', active: true, skuLimit: 45 }),
+      loading: true
+    });
+    renderPage();
+    await waitFor(() =>
+    expect(screen.getByText(/Counting what you are holding/)).toBeInTheDocument()
+    );
+    expect(screen.queryByText(/could not count your products/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('progressbar', { name: 'SKUs used' })).not.toBeInTheDocument();
+  });
+
+  it('says the count failed only once the entitlement has resolved without one', async () => {
+    entitlement.mockReturnValue(stateFor(null, true));
+    renderPage();
+    await waitFor(() =>
+    expect(screen.getByText(/could not count your products/)).toBeInTheDocument()
+    );
+    // And never a zero, which beside an allowance reads as "you have used none of your plan".
+    expect(screen.queryByRole('progressbar', { name: 'SKUs used' })).not.toBeInTheDocument();
   });
 
   it('admits it when the allowance is unreadable rather than showing a ceiling', async () => {
@@ -241,7 +332,7 @@ describe('the plan somebody is on', () => {
 
   it('shows no ceiling for the unlimited tier', async () => {
     entitlement.mockReturnValue(
-      stateFor({ plan: 'consultant', planStatus: 'active', active: true, skuLimit: 2147483647, skuUnlimited: true })
+      stateFor({ plan: 'consultant', planStatus: 'active', active: true, skuLimit: 2147483647, skuUnlimited: true, skuCount: 12 })
     );
     renderPage();
     await waitFor(() =>
@@ -294,7 +385,7 @@ describe('the plan somebody is on', () => {
     // customer opens straight after paying.
     entitlement.mockReturnValue({ ...stateFor({ plan: 'maker' }), loading: true });
     renderPage();
-    await waitFor(() => expect(screen.getByText(/Checking what your plan allows/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/checking what your plan allows/)).toBeInTheDocument());
     expect(screen.queryByText(/could not read your allowance/)).not.toBeInTheDocument();
     // And nothing is offered for sale before we know whether they already have a plan.
     expect(screen.queryByRole('button', { name: /^Choose/ })).not.toBeInTheDocument();

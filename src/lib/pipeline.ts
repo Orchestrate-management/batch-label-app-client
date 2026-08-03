@@ -1,7 +1,6 @@
-import { INBOX, ingredientById, materialById } from './catalog';
+import { ingredientById, materialById } from './catalog';
 import { Derivation } from './derive';
 import { Market, Product } from './model';
-import { driftFor } from './products';
 import { outstandingObligations } from './regimes';
 import { buildSds } from './sds';
 
@@ -22,10 +21,23 @@ export type StageIssue = {
 export type Stage = {
   id: StageId;
   label: string;
-  settled: boolean;
+  /**
+   * Whether anything actually looked at this stage.
+   *
+   * THE THIRD STATE, and the reason it had to exist. `settled` is derived from
+   * `issues.length === 0`, which quietly turns "we found nothing wrong" and "we did not look"
+   * into the same green tick. Documents is the second of those: nothing watches supplier
+   * documents, so the stage raises no issues and rendered as settled — a tick, and the words
+   * "Documents settled", to an account that holds no documents and has nowhere to put one.
+   *
+   * A stage that ran no check is neither settled nor unsettled, and ProductPipeline renders it
+   * as neither: no tick, no issue count, and a line that says what has not been built.
+   */
+  checked: boolean;
   /** Shown when settled, so the stage always says something. */
   summary: string;
   issues: StageIssue[];
+  settled: boolean;
 };
 
 /** The materials a product's composition actually draws on. */
@@ -51,24 +63,20 @@ market: Market)
   const materials = ids.map((id) => materialById(id)).filter(Boolean);
 
   /* ------------------------------------------------------------ documents */
-  const revised = materials.filter(
-    (material) => material && material.document.latestVersion
-  );
-  const waiting = INBOX.filter(
-    (item) => item.matchedMaterialId && ids.includes(item.matchedMaterialId)
-  );
-  const documentIssues: StageIssue[] = [
-  ...revised.map((material) => ({
-    label: `${material!.name}, newer sheet published`,
-    detail: `Version ${material!.document.latestVersion} was published on ${material!.document.latestDate}. The classification still uses ${material!.document.version}.`,
-    to: `/materials/${material!.class}/${material!.id}`
-  })),
-  ...waiting.map((item) => ({
-    label: `${item.fileName} waiting in the inbox`,
-    detail: item.note,
-    to: '/materials/ingredient'
-  }))];
-
+  //
+  // NO DOCUMENT ISSUES ARE RAISED, because nothing watches supplier documents yet.
+  //
+  // This used to produce two, and both were invented. One matched a seeded inbox against the
+  // maker's own specification and told them a newer sheet was waiting and their allergen
+  // table had changed. The other read `latestVersion` off the shipped materials catalogue and
+  // told them "version 4.3 was published, the classification still uses 4.2". Neither had
+  // checked anything: both were constants shipped in the bundle, and they rendered under the
+  // customer's own product name as outstanding compliance work.
+  //
+  // Telling a maker their live classification may be wrong is the most consequential sentence
+  // this product can produce. It has to come from having looked. When the watchers in the
+  // spec are built, this is where their findings belong.
+  const documentIssues: StageIssue[] = [];
 
   /* ---------------------------------------------------------- composition */
   const compositionIssues: StageIssue[] = [];
@@ -122,13 +130,18 @@ market: Market)
   filter((ingredient) => ingredient && ingredient.hazards.length === 0 && ingredient.role === 'Fragrance oil');
   const classificationIssues: StageIssue[] = missingClassification.map((ingredient) => ({
     label: `${ingredient!.name} has no hazard data`,
-    detail: 'The sheet on file carries no classification, so this component contributes nothing.',
+    // Not "the sheet on file": no sheet of this account's is held. The gap is in Batchlabel's
+    // reference data for the material, which is a different sentence and a different owner.
+    detail: 'Batchlabel\'s reference data for it carries no classification, so this component contributes nothing.',
     to: `/materials/ingredient/${ingredient!.id}`
   }));
 
   /* ---------------------------------------------------------------- outputs */
+  // Nothing stores artefacts, so nothing a real account holds is ever out of date: an output
+  // that has never been produced cannot have drifted from the composition. The branch stays
+  // because a fixture product in the test suite does carry stale artefacts, and because the
+  // day artefacts are stored this is where "out of date" comes back.
   const stale = product.artefacts.filter((artefact) => !artefact.current);
-  const drift = driftFor(product);
   const sds = product.artefacts.some((artefact) => artefact.type === 'sds') ?
   buildSds(product, derivation, market) :
   null;
@@ -139,7 +152,7 @@ market: Market)
   [
   {
     label: `${stale.length} output${stale.length === 1 ? '' : 's'} out of date`,
-    detail: drift?.sentence ?? 'The composition changed after these were produced.',
+    detail: 'The composition changed after these were produced.',
     to: `/products/${product.id}`
   }] :
 
@@ -165,13 +178,24 @@ market: Market)
   {
     id: 'documents',
     label: 'Documents',
-    settled: documentIssues.length === 0,
-    summary: `${materials.length} materials, every sheet current`,
+    // NOT CHECKED, and therefore not settled. Removing the two invented warnings emptied
+    // `documentIssues`, and an empty issue list is exactly how the other three stages earn
+    // their tick — so the stage that stopped checking anything became the one claiming to be
+    // finished. There is no document store, nothing watches for a reissued supplier sheet,
+    // and an account has nowhere to put one; "Documents settled" is a statement about work
+    // this software has not done.
+    checked: false,
+    settled: false,
+    // Not "every sheet current": nothing checks whether a supplier has reissued, so that
+    // was a reassurance the product had not earned. Count what we know — the materials on
+    // the composition — and claim nothing about their currency.
+    summary: `Nothing watches supplier documents yet. ${materials.length} ${materials.length === 1 ? 'material is' : 'materials are'} on this composition`,
     issues: documentIssues
   },
   {
     id: 'composition',
     label: 'Composition',
+    checked: true,
     settled: compositionIssues.length === 0,
     summary:
     product.spec.kind === 'mixture' ?
@@ -184,6 +208,7 @@ market: Market)
   {
     id: 'classification',
     label: 'Classification',
+    checked: true,
     settled: classificationIssues.length === 0,
     summary: derivation.summary.map((entry) => entry.value).join(' · '),
     issues: classificationIssues
@@ -191,8 +216,14 @@ market: Market)
   {
     id: 'outputs',
     label: 'Outputs',
+    checked: true,
     settled: outputIssues.length === 0,
-    summary: `${product.artefacts.length} outputs, all current`,
+    // NOT "all current". `artefactsFor` gives every artefact version "Not yet produced" and
+    // no print date, precisely because there is no artefacts table and nothing has been
+    // produced — so "current" was describing the currency of documents that do not exist.
+    // What IS settled here is the work the maker owed: the obligations are ticked and the
+    // sheet has no section left needing a competent person.
+    summary: `${product.artefacts.length} outputs, none produced yet`,
     issues: outputIssues
   }];
 

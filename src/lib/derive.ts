@@ -77,8 +77,18 @@ export type Derivation = {
   device?: DeviceResult;
 };
 
-/** The register date the app reasons from. */
-export const TODAY = new Date('2026-07-30T00:00:00Z');
+/**
+ * The date this module reasons from: the wall clock, read at the moment of the derivation.
+ *
+ * It used to be `new Date('2026-07-30T00:00:00Z')` — a constant, frozen on the day the file
+ * was written. Every certificate countdown below was measured from it, so from 31 July onwards
+ * "expires in 45 days" was wrong by exactly as many days as had passed since, and got worse
+ * for as long as the build stayed deployed. A number of days is a claim about today; it has to
+ * come from today.
+ */
+function today(): Date {
+  return new Date();
+}
 
 const P_LIBRARY: Record<string, string> = {
   P101: 'If medical advice is needed, have product container or label at hand.',
@@ -412,6 +422,18 @@ export function derivePhased(spec: PhasedSpec): Derivation {
     items: allergenItems,
     emptyText: 'No declarable allergen reaches the threshold for this application.'
   },
+  /*
+   * NO CPSR AND NO PIF CITATION IN EITHER GROUP BELOW, and that is the correction rather than
+   * an omission. Both used to name a Cosmetic Product Safety Report and a Product Information
+   * File as their source — "12 months, set by the stability data in the product information
+   * file", "Source: Cosmetic product safety report, section on warnings" — while the
+   * obligations list on the same screen read "No product information file has been assembled
+   * for this product" and "No signed cosmetic product safety report is on file". Nothing holds
+   * a CPSR, nothing has measured a durability, and the 12 is a constant in blankSpec. It is
+   * the same citation-of-a-document-nobody-holds that was removed from the declaration of
+   * conformity one function below, and `WhyLine.source` is optional precisely so that a line
+   * with no honest source can carry none.
+   */
   {
     id: 'durability',
     title: 'Period after opening',
@@ -422,9 +444,8 @@ export function derivePhased(spec: PhasedSpec): Derivation {
       text: `Use within ${spec.paoMonths} months of opening.`,
       why: [
       {
-        lead: `A period after opening is shown because the product has a minimum durability of more than 30 months.`,
-        meta: `${spec.paoMonths} months, set by the stability data in the product information file. Shown with the open jar symbol.`,
-        source: 'Cosmetic product safety report, stability and challenge testing'
+        lead: 'A period after opening is carried on the label, shown with the open jar symbol.',
+        meta: `${spec.paoMonths} months, which is the value set on this composition. Nothing has measured it: there is no stability or challenge testing behind this number and no safety report holding one, so it is yours to set and to justify.`
       }]
 
     }]
@@ -438,8 +459,11 @@ export function derivePhased(spec: PhasedSpec): Derivation {
       text,
       why: [
       {
-        lead: 'Standard precaution for a leave-on facial product carried on the label and the carton.',
-        source: 'Cosmetic product safety report, section on warnings'
+        // The application and the product type are read off the composition rather than
+        // asserted. This said "a leave-on facial product" for every cosmetics product,
+        // including rinse-off ones and ones that never go near a face.
+        lead: `Standard precaution carried on the label for a ${spec.application.toLowerCase()} ${spec.productType.toLowerCase()}.`,
+        meta: 'Batchlabel\'s standard wording for this kind of product. It is not drawn from a safety assessment of yours — none is held — and a competent person has to confirm it is the right set for this formula.'
       }]
 
     }))
@@ -477,11 +501,12 @@ export function phasedTotal(spec: PhasedSpec): number {
 
 /* --------------------------------- bill of materials, CE, RoHS and WEEE */
 
-function daysUntil(iso: string): number | null {
+/** `from` is injectable so a test can pin the clock; nothing in the app passes it. */
+export function daysUntil(iso: string, from: Date = today()): number | null {
   if (!iso || iso === '—') return null;
   const target = new Date(`${iso}T00:00:00Z`);
   if (Number.isNaN(target.getTime())) return null;
-  return Math.round((target.getTime() - TODAY.getTime()) / 86400000);
+  return Math.round((target.getTime() - from.getTime()) / 86400000);
 }
 
 export function deriveBom(spec: BomSpec, product?: Product): Derivation {
@@ -507,7 +532,14 @@ export function deriveBom(spec: BomSpec, product?: Product): Derivation {
       meta: declarationSigned ?
       'Signed by the manufacturer and held with the technical file.' :
       'A component declaration is missing, so the declaration cannot yet be signed.',
-      source: 'HH-DOC-WW100-01, issued 8 June 2026'
+      // NO `source`, AND THERE CANNOT BE ONE. This used to read
+      // "HH-DOC-WW100-01, issued 8 June 2026" — a reference number and an issue date for the
+      // declaration of conformity held on the maker's own device. HH was Hearth and Hollow
+      // and WW100 its wax warmer: the invented business this round removed, hardcoded, and
+      // therefore identical for every account and every model. Nothing was issued, there is
+      // no document store, and a declaration reference is the number a market surveillance
+      // officer asks for. WhyLine.source is optional and DerivationPanel renders the
+      // "Source:" line only when it is set, so the honest thing is to cite nothing.
     }]
 
   },
@@ -516,9 +548,14 @@ export function deriveBom(spec: BomSpec, product?: Product): Derivation {
     text: standard,
     why: [
     {
-      lead: `Applied through the components that carry it in their own declarations.`,
-      meta: 'Listed on the declaration of conformity as a harmonised standard applied in full.',
-      source: 'Component declarations of conformity'
+      // Same correction as the DoC line above, one step milder. This cited "Component
+      // declarations of conformity" as its source, which is a document class no account
+      // holds — the standards come from Batchlabel's own reference data for the components,
+      // which is what the materials register now says plainly rather than implying it is the
+      // maker's paperwork.
+      lead: 'Carried by the components on this bill of materials.',
+      meta:
+      'From Batchlabel\'s reference data for those components. A signed declaration would list it as a harmonised standard applied in full; none is held for you.'
     }]
 
   }))];
@@ -532,9 +569,17 @@ export function deriveBom(spec: BomSpec, product?: Product): Derivation {
     const days = daysUntil(component.certificateExpiry);
     const missing = component.rohsStatus === 'Not declared';
     if (days != null && days > 0 && days <= 90) {
+      // WHOSE CERTIFICATE THIS IS, which is the whole correction. The date is a constant in
+      // the shipped component catalogue, identical for every account that picks this part, and
+      // it was being rendered as a countdown against the maker's OWN model — "the declaration
+      // for <their model> stops being supportable on that date unless a current document is on
+      // file" — outstanding compliance work, in their product's name, that they cannot
+      // discharge because there is no document store to put a document in. Same shape as the
+      // invented warnings removed from the documents pipeline stage. The fact is worth
+      // keeping; the ownership was wrong.
       proximity.push({
         code: 'Certificate',
-        message: `${component.name} has evidence expiring in ${days} days, on ${component.certificateExpiry}. The declaration for ${spec.model} stops being supportable on that date unless a current document is on file.`
+        message: `Batchlabel's data for ${component.name} was read from a document valid to ${component.certificateExpiry}, which is ${days} days away. Nothing of yours expires on that date — this is the reference library's paperwork, not evidence held for your account — but it is when our data for this part stops being current.`
       });
     }
     return {

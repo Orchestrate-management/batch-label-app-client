@@ -28,6 +28,7 @@ function stateFor(row: Partial<EntitlementRow> | null, extra: Partial<Entitlemen
   null :
   {
     brand: 'batchlabel',
+    accountId: 'acct-1111',
     membershipStatus: 'active',
     businessName: 'Hearth & Hollow',
     plan: 'free',
@@ -37,6 +38,7 @@ function stateFor(row: Partial<EntitlementRow> | null, extra: Partial<Entitlemen
     cancelAtPeriodEnd: false,
     trialEnd: null,
     skuLimit: 3,
+    skuCount: null,
     skuUnlimited: false,
     editorSeatLimit: 1,
     canModify: null,

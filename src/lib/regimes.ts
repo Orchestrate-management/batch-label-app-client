@@ -1,4 +1,5 @@
 import { ArtefactType, Market, Product, RegimeId } from './model';
+import { ingredientById } from './catalog';
 
 /**
  * A regime contributes exactly three things and nothing else: the artefact
@@ -15,12 +16,35 @@ export type ArtefactBlock = {
   note?: string;
 };
 
+/**
+ * Met, outstanding, or not tracked at all.
+ *
+ * The third state is the one that was missing, and its absence was a defect rather than an
+ * omission. `products.obligations` is written by nothing — createProduct inserts `{}` and no
+ * screen ever sets a key — so every obligation evaluated to "outstanding" forever, on every
+ * product of every account. That is survivable when the sentence is honest about who owes
+ * what. It is not survivable when the sentence asserts an event: "the composition changed
+ * after the label was printed" is a statement about a print that never happened, rendered
+ * under the maker's own product name on the first screen after sign-in.
+ *
+ * An obligation whose evidence Batchlabel cannot hold or observe is NOT_TRACKED. It still
+ * appears — a real legal duty does not stop existing because we cannot see it — but it says
+ * plainly that we are not the one checking, which is the difference between informing
+ * somebody and inventing a finding about their business.
+ */
+export type ObligationState = 'met' | 'outstanding' | 'not-tracked';
+
 export type Obligation = {
   id: string;
   regimeId: RegimeId;
   label: string;
   doneText: string;
   missingText: string;
+  /**
+   * Said when the obligation is NOT_TRACKED. Names what Batchlabel does not do, and what the
+   * maker must therefore do themselves. Never asserts a state we have not observed.
+   */
+  untrackedText?: string;
   /** Route that fixes it, with :id replaced by the product id. */
   to: string;
   /** When set, the obligation only applies to products sold into this market. */
@@ -73,6 +97,8 @@ export const REGIMES: Regime[] = [
     label: 'Label generated and current',
     doneText: 'The printed label matches the current composition.',
     missingText: 'The composition changed after the label was printed. Version the label.',
+    untrackedText:
+    'Batchlabel does not store the labels you print, so it cannot tell whether the one on your product matches the current composition. Check it yourself whenever you change a recipe, and reprint if the classification moved.',
     to: '/products/:id'
   },
   {
@@ -91,6 +117,8 @@ export const REGIMES: Regime[] = [
     doneText: 'Submitted through the ECHA submission portal.',
     missingText:
     'Not submitted. Required before this product can be placed on the EU or Northern Ireland market.',
+    untrackedText:
+    'Batchlabel does not submit poison centre notifications and does not record whether you have. Submit through the ECHA portal before placing this product on the EU or Northern Ireland market, and keep your own record of it.',
     to: '/settings',
     market: 'EU'
   },
@@ -100,6 +128,8 @@ export const REGIMES: Regime[] = [
     label: 'GB notification to the National Poisons Information Service',
     doneText: 'Submitted to the National Poisons Information Service.',
     missingText: 'Not submitted. Required for supply in Great Britain.',
+    untrackedText:
+    'Batchlabel does not submit to the NPIS and does not record whether you have. Submit before placing this product on the GB market, and keep your own record of it.',
     to: '/settings',
     market: 'GB'
   }]
@@ -127,6 +157,8 @@ export const REGIMES: Regime[] = [
     label: 'Candle safety symbols and wording present',
     doneText: 'The three safety symbols and the required wording are on the label.',
     missingText: 'The safety symbols or wording are missing from the current label version.',
+    untrackedText:
+    'Batchlabel renders the candle safety block on every label it produces, but it does not store what you actually printed, so it cannot confirm the wording on your product. Check the printed label carries it.',
     to: '/products/:id/artefacts/unit-label'
   }]
 
@@ -346,6 +378,8 @@ export const REGIMES: Regime[] = [
     label: 'Traceability records kept',
     doneText: 'Production records identify the product, the maker and the run.',
     missingText: 'Production records do not identify the run.',
+    untrackedText:
+    'Batchlabel does not hold production records, so it cannot tell whether a batch code on your product identifies the run that made it. Keep that link in your own batch records.',
     to: '/records'
   },
   {
@@ -363,6 +397,8 @@ export const REGIMES: Regime[] = [
     label: 'Safety information shown online before purchase',
     doneText: 'Signal word, pictograms and hazard statements appear on the listing.',
     missingText: 'The product page does not show the safety information before purchase.',
+    untrackedText:
+    'Batchlabel never sees your shop listing, so it cannot check what appears on it. Make sure the safety information is shown to a buyer before they purchase.',
     to: '/products/:id/artefacts/listing'
   }]
 
@@ -417,27 +453,93 @@ export function obligationRoute(obligation: Obligation, productId: string): stri
 }
 
 /**
- * Obligations an account cannot honestly hold, whatever is stored against the
- * product. Nothing in Batchlabel generates a UFI and nothing records one, so a
- * satisfied `clp-ufi` could only ever have come from data someone typed in;
- * trusting it tells a maker a CLP obligation is met when it is not, and the
- * next thing they skip is the poison centre notification. Ignoring the stored
- * value is deliberate: showing outstanding work that is done costs an hour,
- * hiding work that is not done ships an illegal label.
+ * Obligations Batchlabel has no way to observe, whatever is stored against the product.
  *
- * Delete an id from here the day the mechanism behind it exists.
+ * This was previously called UNSATISFIABLE and held only `clp-ufi`, and it meant "always
+ * render as outstanding". That was right for the UFI by accident: its copy already said
+ * plainly that Batchlabel does not generate one, so a permanent "outstanding" read as
+ * information rather than as a finding.
+ *
+ * It was wrong for everything else. `products.obligations` is written by nothing, so EVERY
+ * obligation was outstanding forever, and four of them assert events the software has never
+ * observed — a label printed, a composition changed since, a production run recorded, a shop
+ * listing inspected. Rendered under the maker's own product name on the first screen after
+ * sign-in, that is not a reminder. It is an invented finding about their business.
+ *
+ * These now resolve to 'not-tracked' and say what Batchlabel does not do. The duty is real
+ * and still shown; the claim to have checked it is what goes.
+ *
+ * Delete an id from here the day the mechanism behind it exists — and delete the
+ * untrackedText with it, so the two can never drift apart.
  */
-const UNSATISFIABLE: ReadonlySet<string> = new Set(['clp-ufi']);
+const NOT_TRACKED: ReadonlySet<string> = new Set([
+  // Needs stored artefacts. Nothing stores one.
+  'clp-artefact-current',
+  'en15494-safety-text',
+  // Needs a recorded submission. Batchlabel neither submits nor records.
+  'clp-ufi',
+  'clp-pcn-eu',
+  'clp-pcn-gb',
+  // Needs production records. There is no records table.
+  'gpsr-traceability',
+  // Needs sight of the shop listing, which Batchlabel will never have.
+  'gpsr-online-disclosure'
+]);
 
-/** The single answer to "is this obligation met", for every screen that asks. */
+/**
+ * Whether every component of the composition carries hazard data in the reference library.
+ *
+ * `clp-classification` used to read a flag nothing sets, so it rendered "one or more
+ * components have no classification on file" on the same screen where the classification
+ * stage showed a green tick and a full derivation. A screen that contradicts itself teaches
+ * a maker to ignore both halves.
+ *
+ * It is derivable, and the pipeline already derives it (pipeline.ts:128-137). Same rule here,
+ * so the two cannot disagree: a fragrance oil with no hazards in the reference data
+ * contributes nothing to the mixture, and that is the only gap this obligation is about.
+ */
+function classificationComplete(product: Product): boolean {
+  if (product.spec.kind !== 'mixture') return true;
+  const fragranceId = product.spec.fragranceId;
+  if (!fragranceId) return false;
+  const fragrance = ingredientById(fragranceId);
+  return Boolean(fragrance && fragrance.hazards.length > 0);
+}
+
+/** The single answer to "where does this obligation stand", for every screen that asks. */
+export function obligationState(product: Product, obligationId: string): ObligationState {
+  if (NOT_TRACKED.has(obligationId)) return 'not-tracked';
+  if (obligationId === 'clp-classification') {
+    return classificationComplete(product) ? 'met' : 'outstanding';
+  }
+  return product.obligations[obligationId] === true ? 'met' : 'outstanding';
+}
+
+/**
+ * Kept for callers that only need the boolean.
+ *
+ * `not-tracked` is NOT satisfied — the duty may well be unmet — but it is not outstanding
+ * work this app can claim to have found either. Anything rendering a work queue should ask
+ * obligationState and skip 'not-tracked'; anything rendering a checklist should show all
+ * three states.
+ */
 export function obligationSatisfied(product: Product, obligationId: string): boolean {
-  if (UNSATISFIABLE.has(obligationId)) return false;
-  return product.obligations[obligationId] === true;
+  return obligationState(product, obligationId) === 'met';
 }
 
 /** Every obligation the product still owes. */
 export function outstandingObligations(product: Product): Obligation[] {
+  // 'not-tracked' is excluded deliberately. This feeds work queues, and a queue is a list of
+  // things we have established are undone. An obligation we cannot observe belongs on the
+  // product's checklist, where it can say so, not in a count of the maker's outstanding work.
   return obligationsFor(product).filter(
-    (obligation) => !obligationSatisfied(product, obligation.id)
+    (obligation) => obligationState(product, obligation.id) === 'outstanding'
+  );
+}
+
+/** Obligations that are real duties Batchlabel does not check. Shown, never counted. */
+export function untrackedObligations(product: Product): Obligation[] {
+  return obligationsFor(product).filter(
+    (obligation) => obligationState(product, obligation.id) === 'not-tracked'
   );
 }

@@ -1,12 +1,35 @@
 import {
   ComponentMaterial,
-  DocumentRevision,
-  InboxDocument,
   IngredientMaterial,
   Material,
   MaterialClass,
   PackagingMaterial } from
 './model';
+
+/**
+ * THE SHIPPED REFERENCE LIBRARY. Ours, not the customer's.
+ *
+ * Every material below is data Batchlabel ships in the bundle: hazard classifications,
+ * allergen percentages, IFRA limits, capacities, printable areas, RoHS status. It is
+ * load-bearing — derive.ts classifies from it, and a specification stores fragrance_id /
+ * base_id / dye_id as text ids INTO it, because there is no materials table in the account
+ * data schema. Deleting it would take the classification with it.
+ *
+ * WHAT MAY LIVE HERE: facts about a material that are true wherever it is bought — what it is,
+ * who makes it, what its supplier's document says about it, the version and date of the
+ * document that data was read from.
+ *
+ * WHAT MAY NOT: anything that describes what THIS ACCOUNT did. Nothing here was bought,
+ * received, uploaded or held by any customer, and no screen may frame it as though it were.
+ * That is not a hypothetical rule — INBOX and DOCUMENT_HISTORY lived in this file and rendered
+ * as documents an account had received, which the pipeline then turned into invented
+ * compliance warnings under the maker's own product name. They are in lib/fixtures.ts now, and
+ * fixtures.guard.test.ts names them so they cannot come back.
+ *
+ * `latestVersion` / `latestDate` are gone for the same reason: nothing checks any supplier's
+ * website, so "version 4.3 was published and yours is behind" was a statement about the world
+ * that this application had not established, rendered as outstanding compliance work.
+ */
 
 /* ------------------------------------------------------------ ingredients */
 
@@ -25,9 +48,7 @@ export const INGREDIENTS: IngredientMaterial[] = [
     kind: 'Safety data sheet',
     reference: 'aurelia-fo-4471-sds',
     version: '4.2',
-    date: '2025-11-14',
-    latestVersion: '4.3',
-    latestDate: '2026-06-02'
+    date: '2025-11-14'
   },
   hazards: [
   {
@@ -141,9 +162,7 @@ export const INGREDIENTS: IngredientMaterial[] = [
     kind: 'Safety data sheet',
     reference: 'coastwise-fo-8802-sds',
     version: '3.0',
-    date: '2025-08-21',
-    latestVersion: '3.2',
-    latestDate: '2026-05-19'
+    date: '2025-08-21'
   },
   hazards: [
   {
@@ -403,9 +422,7 @@ export const INGREDIENTS: IngredientMaterial[] = [
     kind: 'INCI and allergen certificate',
     reference: 'verdant-jj04-inci',
     version: '1.1',
-    date: '2025-07-08',
-    latestVersion: '1.2',
-    latestDate: '2026-06-22'
+    date: '2025-07-08'
   },
   hazards: [],
   allergens: [],
@@ -682,104 +699,8 @@ export function materialById(id: string): Material | undefined {
 
 /* --------------------------------------------------- the document layer */
 
-/**
- * Documents dropped in but not yet reconciled against a material. This is the
- * front door of the product: nothing can be classified until a sheet is read.
- */
-export const INBOX: InboxDocument[] = [
-{
-  id: 'inb-1',
-  fileName: 'Aurelia_BlackFigCassis_SDS_v4.2_EN.pdf',
-  receivedOn: '2026-07-28',
-  appearsToBe: 'Safety data sheet',
-  supplier: 'Aurelia Fragrances',
-  matchedMaterialId: 'ing-black-fig',
-  matchConfidence: 'high',
-  note: 'Newer than the version on file. Section 3 and the allergen table both changed.'
-},
-{
-  id: 'inb-2',
-  fileName: 'scan_20260727_114302.pdf',
-  receivedOn: '2026-07-27',
-  appearsToBe: 'Safety data sheet',
-  supplier: 'Unidentified',
-  matchConfidence: 'none',
-  note: 'A photograph of a printed sheet. The supplier name and product identifier could not be read.'
-},
-{
-  id: 'inb-3',
-  fileName: 'Kestrel-silicone-cable-RoHS.pdf',
-  receivedOn: '2026-07-24',
-  appearsToBe: 'Declaration of conformity',
-  supplier: 'Kestrel Components',
-  matchedMaterialId: 'cmp-cable',
-  matchConfidence: 'low',
-  note: 'Part number on the document does not match the one on file. Confirm before it is accepted.'
-}];
 
 
-/**
- * Every sheet ever received for a material, and what each revision moved. A
- * revised sheet is the most common cause of a wrong label, so the app has to
- * be able to say exactly what it did.
- */
-export const DOCUMENT_HISTORY: Record<string, DocumentRevision[]> = {
-  'ing-black-fig': [
-  {
-    version: '4.2',
-    date: '2026-07-15',
-    received: '2026-07-28',
-    summary:
-    'Skin sensitisation specific concentration limit lowered from 0.6 percent to 0.4 percent. Linalool raised from 4.9 percent to 5.4 percent.',
-    moved: [
-    'Not yet accepted. Accepting it will re-run the classification for Black Fig and Cassis.']
-
-  },
-  {
-    version: '4.1',
-    date: '2025-11-02',
-    received: '2025-11-06',
-    summary: 'Aquatic chronic classification added. Allergen table unchanged.',
-    moved: ['Added H412 to Black Fig and Cassis, and P273 with it.']
-  },
-  {
-    version: '3.8',
-    date: '2024-06-18',
-    received: '2024-06-20',
-    summary: 'First sheet received for this material.',
-    moved: []
-  }],
-
-  'ing-smoked-vetiver': [
-  {
-    version: '2.4',
-    date: '2026-02-11',
-    received: '2026-02-14',
-    summary: 'Coumarin content revised from 1.8 percent to 2.1 percent.',
-    moved: ['No change to any output. Coumarin was already declared on the EUH208 line.']
-  },
-  {
-    version: '2.1',
-    date: '2024-09-30',
-    received: '2024-10-03',
-    summary: 'First sheet received for this material.',
-    moved: []
-  }],
-
-  'ing-alcohol': [
-  {
-    version: '6.0',
-    date: '2025-04-22',
-    received: '2025-04-25',
-    summary: 'Flash point restated as 12 °C closed cup. No classification change.',
-    moved: ['Updated section 9 of every sheet that carries this carrier.']
-  }]
-
-};
-
-export function documentHistory(materialId: string): DocumentRevision[] {
-  return DOCUMENT_HISTORY[materialId] ?? [];
-}
 
 export function ingredientById(id: string): IngredientMaterial | undefined {
   return INGREDIENTS.find((i) => i.id === id);
@@ -798,29 +719,22 @@ export const MATERIAL_CLASSES: Array<{
   label: string;
   blurb: string;
   documentRule: string;
-  emptyBody: string;
 }> = [
 {
   id: 'ingredient',
   label: 'Ingredients',
   blurb: 'Anything that goes into the mixture. Classified at 100 percent, before any load is applied.',
-  documentRule: 'A safety data sheet, or for cosmetics an INCI and allergen certificate.',
-  emptyBody:
-  'Drop a safety data sheet or an INCI and allergen certificate here. The extracted fields appear beside the source page so you can confirm or correct each one before the record is saved.'
+  documentRule: 'A safety data sheet, or for cosmetics an INCI and allergen certificate.'
 },
 {
   id: 'packaging',
   label: 'Packaging',
   blurb: 'Containers and cartons. Capacity and available label area drive label geometry.',
-  documentRule: 'A technical drawing or dimension sheet.',
-  emptyBody:
-  'Drop a technical drawing or dimension sheet here. Capacity and printable area are read from it and feed the minimum label size on every product that uses this packaging.'
+  documentRule: 'A technical drawing or dimension sheet.'
 },
 {
   id: 'component',
   label: 'Components',
   blurb: 'Parts in a bill of materials, each carrying its own conformity evidence.',
-  documentRule: 'A declaration of conformity or a test report.',
-  emptyBody:
-  'Drop a declaration of conformity or a test report here. Components without a declaration cannot be included in a signed declaration of conformity for the finished device.'
+  documentRule: 'A declaration of conformity or a test report.'
 }];

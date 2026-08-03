@@ -53,14 +53,19 @@ export type DocumentKind =
 'Declaration of conformity' |
 'Test report';
 
+/**
+ * The supplier document a reference material's data was read from.
+ *
+ * `latestVersion` / `latestDate` were removed with the screens that rendered them. They said a
+ * newer version had been published and the one in use was behind — a claim about a supplier's
+ * publishing that nothing in this application checks, and one that read as compliance work
+ * outstanding on a real product.
+ */
 export type SupplierDocument = {
   kind: DocumentKind;
   reference: string;
   version: string;
   date: string;
-  /** Set when the supplier has published a newer version than the one on file. */
-  latestVersion?: string;
-  latestDate?: string;
   expires?: string;
 };
 
@@ -185,6 +190,18 @@ export type Spec = MixtureSpec | PhasedSpec | BomSpec;
 
 /* ------------------------------------------------------------ artefacts */
 
+/**
+ * What `version` and `printedOn` hold when nothing has been produced.
+ *
+ * There is no artefacts table, so on a real account every artefact carries these. They are
+ * named here rather than written out at each site because two different files have to be able
+ * to ASK whether an artefact has been produced: products.ts sets them, and sds.ts must not
+ * print "Revision Not yet produced, issued —." onto the face of a sixteen-section safety data
+ * sheet somebody may hand to a regulator.
+ */
+export const ARTEFACT_NOT_PRODUCED = 'Not yet produced';
+export const ARTEFACT_NO_PRINT_DATE = '—';
+
 export type ArtefactInstance = {
   type: ArtefactType;
   label: string;
@@ -201,6 +218,16 @@ export type ArtefactInstance = {
 
 export type Product = {
   id: string;
+  /**
+   * The composition this SKU is a pack of — `specifications.id`.
+   *
+   * Optional because a fixture product has no database row behind it, and because the app
+   * must be able to render a product it cannot write back. Every product read from Supabase
+   * carries one, and a composition edit is refused rather than guessed without it: a
+   * specification id is the only thing that says WHICH recipe to update, and a wrong guess
+   * would rewrite a different product's classification.
+   */
+  specificationId?: string;
   name: string;
   sku: string;
   categoryId: CategoryId;

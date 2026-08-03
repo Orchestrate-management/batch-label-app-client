@@ -1,7 +1,15 @@
-import { BUSINESS, addressForMarket } from './products';
+import { BUSINESS, addressForMarket } from './identity';
 import { ingredientById } from './catalog';
 import { Derivation, WhyLine } from './derive';
-import { IngredientMaterial, Market, MixtureSpec, PhasedSpec, Product, round } from './model';
+import {
+  ARTEFACT_NOT_PRODUCED,
+  IngredientMaterial,
+  Market,
+  MixtureSpec,
+  PhasedSpec,
+  Product,
+  round } from
+'./model';
 
 /**
  * The finished-product safety data sheet. Sixteen sections in the order REACH
@@ -254,6 +262,15 @@ export function buildSds(product: Product, derivation: Derivation, market: Marke
   const clp = derivation.clp;
   const rows = componentRows(product);
   const sdsArtefact = product.artefacts.find((artefact) => artefact.type === 'sds');
+  // Null on a real account, always: nothing stores artefacts, so no sheet has a revision or an
+  // issue date. Section 16 then prints no revision line at all, rather than printing the
+  // placeholders — "Revision Not yet produced, issued —." on the face of the document is worse
+  // than an absent line, and a revision history is a regulatory claim. The branch stays rather
+  // than being deleted, because the day artefacts are stored a real revision MUST be stated.
+  const revisionLine =
+  sdsArtefact && sdsArtefact.version !== ARTEFACT_NOT_PRODUCED ?
+  `Revision ${sdsArtefact.version}, issued ${sdsArtefact.printedOn}.` :
+  null;
 
   const sections: SdsSection[] = [
   {
@@ -320,8 +337,13 @@ export function buildSds(product: Product, derivation: Derivation, market: Marke
     number: 3,
     title: 'Composition and information on ingredients',
     kind: 'derived',
+    // SdsDocument.tsx prints `intro` onto the face of the A4 sheet, so this sentence is
+    // handed to customers and to Trading Standards. It used to say "assembled from the
+    // supplier safety data sheets on file" — an assertion, on a legal document, that this
+    // account holds supplier SDSs it has never uploaded and cannot upload, two sections above
+    // section 16 saying the opposite. Same wording as section 16 now.
     intro:
-    'Hazardous components of the mixture, assembled from the supplier safety data sheets on file. Concentrations are declared as bands.',
+    'Hazardous components of the mixture, assembled from Batchlabel\'s reference data for those materials. No supplier document of yours is held. Concentrations are declared as bands.',
     components: rows
   },
   {
@@ -481,9 +503,15 @@ export function buildSds(product: Product, derivation: Derivation, market: Marke
     title: 'Other information',
     kind: 'workspace',
     lines: [
-    `Revision ${sdsArtefact?.version ?? 'v1'}, issued ${sdsArtefact?.printedOn ?? '—'}.`,
+    ...(revisionLine ? [revisionLine] : []),
     'Full text of the hazard statements appears in section 2.',
-    'This sheet was assembled from the supplier documents on file. It is a draft for review by a competent person and is not issued until signed.']
+    // WHERE THE DATA ACTUALLY CAME FROM. This said "assembled from the supplier documents on
+    // file", printed at A4 on a document a maker would hand to a customer or a regulator.
+    // There is no document store, no account holds a supplier document, and every
+    // classification in the sheet comes from Batchlabel's shipped reference library — which
+    // is what the materials register was rewritten to say plainly, and the same sentence has
+    // to survive onto the artefact itself.
+    'This sheet was assembled from Batchlabel\'s reference data for the materials in this composition. No supplier document of yours is held. It is a draft for review by a competent person and is not issued until signed.']
 
   }];
 

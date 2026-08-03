@@ -1,13 +1,25 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { ColumnsIcon, HistoryIcon, TagIcon } from 'lucide-react';
-import { toast } from 'sonner';
+import React, { useMemo, useState } from 'react';
+import { Link, useParams, useNavigate } from 'react-router-dom';
+import { ColumnsIcon, PackageIcon, RefreshCwIcon, SaveIcon } from 'lucide-react';
 import { PageHeader } from '../components/AppShell';
-import { Button, Card, Field, Input, Pill, SectionTitle, Select } from '../components/ui/Primitives';
+import {
+  Button,
+  Callout,
+  Card,
+  EmptyState,
+  Field,
+  Input,
+  Pill,
+  SectionTitle,
+  Select,
+  Skeleton } from
+'../components/ui/Primitives';
 import { DerivationPanel } from '../components/DerivationPanel';
+import { PlanNotice } from '../components/PlanNotice';
 import { ArtefactRail } from '../components/artefact/ArtefactRail';
 import { ArtefactRenderer, defaultArtefactOptions } from '../components/artefact/ArtefactRenderer';
 import {
+  ARTEFACT_NOT_PRODUCED,
   BomSpec,
   Market,
   MixtureSpec,
@@ -21,33 +33,117 @@ import { ProductPipeline } from '../components/ProductPipeline';
 import { StageId, stagesFor } from '../lib/pipeline';
 import { SdsDocumentModel, buildSds } from '../lib/sds';
 import { COMPONENTS, INGREDIENTS, PACKAGING, componentById, ingredientById, packagingById } from '../lib/catalog';
-import { PRODUCTS, addressForMarket, categoryById, driftFor, productById } from '../lib/products';
+import { categoryById } from '../lib/categories';
+import { addressForMarket } from '../lib/identity';
+import { saveComposition } from '../lib/products';
+import { useProduct, useProducts } from '../lib/product-store';
 import { regimeById } from '../lib/regimes';
 import { useCategorySurface } from '../lib/workspace';
 
+/**
+ * Resolves the product before anything renders, so the screen below can assume it has one.
+ *
+ * FIVE ANSWERS, AND THE OLD CODE HAD ONE. It used to be
+ * `productById(productId) ?? PRODUCTS[0]` — a URL that matched nothing silently rendered the
+ * first fixture product, so a stale bookmark, a deleted product or a typo all showed somebody
+ * a fully populated candle with a name and a classification that had nothing to do with what
+ * they asked for. There is no fallback here on purpose: not found says not found.
+ *
+ * `unavailable` is the fifth and it has to come BEFORE the not-found branch, because a
+ * suspended account reaches this route with a perfectly good bookmark and no product in the
+ * store. The not-found copy says "We read your products and there is nothing here with this
+ * address. It may have been archived" — every clause of which is false in that case, and it is
+ * the sentence a maker sees on a link they have used every week.
+ */
 export function Specification() {
   const { productId } = useParams();
-  const product = productById(productId ?? '') ?? PRODUCTS[0];
+  const navigate = useNavigate();
+  const { status, product, error, refresh } = useProduct(productId);
+
+  if (status === 'loading') {
+    return (
+      <main className="flex-1 px-6 py-8 lg:px-10" aria-busy="true" aria-label="Loading product">
+        <Skeleton className="h-4 w-40 bg-paper-line/70" />
+        <Skeleton className="mt-4 h-8 w-72 bg-paper-line/70" />
+        <Skeleton className="mt-6 h-40 w-full bg-paper-line/70" />
+      </main>);
+
+  }
+
+  if (status === 'error') {
+    return (
+      <main className="flex-1 px-6 py-8 lg:px-10">
+        <Callout tone="warn" role="alert" title="We could not read this product">
+          <p className="max-w-prose leading-relaxed">
+            {error} Nothing has been changed. This is not the same as the product not existing
+            — we simply could not get an answer.
+          </p>
+          <Button size="sm" variant="secondary" className="mt-3" onClick={refresh}>
+            <RefreshCwIcon className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
+            Try again
+          </Button>
+        </Callout>
+      </main>);
+
+  }
+
+  if (status === 'unavailable') {
+    return (
+      <main className="flex-1 px-6 py-8 lg:px-10">
+        <PlanNotice states={['suspended']} />
+      </main>);
+
+  }
+
+  if (!product) {
+    return (
+      <main className="flex-1 px-6 py-8 lg:px-10">
+        <EmptyState
+          icon={<PackageIcon className="h-5 w-5" strokeWidth={1.25} aria-hidden="true" />}
+          title="No such product"
+          body="We read your products and there is nothing here with this address. It may have been archived, or the link may be out of date."
+          action={
+          <Button variant="secondary" onClick={() => navigate('/products')}>
+              Back to your products
+            </Button>
+          } />
+
+      </main>);
+
+  }
+
+  return <SpecificationView product={product} />;
+}
+
+function SpecificationView({ product }: {product: Product;}) {
   const category = categoryById(product.categoryId);
   useCategorySurface(product.categoryId);
+  const { reload } = useProducts();
 
   const [spec, setSpec] = useState<Spec>(product.spec);
   const [market, setMarket] = useState<Market>(product.markets[0]);
   const [compare, setCompare] = useState(false);
   const [stage, setStage] = useState<StageId>('composition');
-
-  // The route reuses this component when only the product changes, so the
-  // working composition has to follow the product rather than the mount.
-  useEffect(() => {
-    setSpec(product.spec);
-    setMarket(product.markets[0]);
-    setStage('composition');
-  }, [product.id]);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [partialSave, setPartialSave] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   const working: Product = { ...product, spec };
   const derivation = useMemo(() => derive(spec, working, market), [spec, market, product.id]);
   const stale = product.artefacts.filter((artefact) => !artefact.current);
-  const identityCode = category.recordIdentity === 'batch' ? 'BFC-2607-014' : 'WW100-26-0001';
+
+  /**
+   * The batch or serial marking on the preview. A PLACEHOLDER, and it says so on the label.
+   *
+   * This used to be the string 'BFC-2607-014' — a batch code from a fixture production run,
+   * printed at actual size onto the label of whatever product was on screen. A batch code is
+   * a traceability claim: it is the number a recall is run against. Printing somebody else's
+   * onto a maker's proof is the single worst thing on this page to get wrong, and production
+   * records have no table yet, so there is no real one to print.
+   */
+  const identityCode = category.recordIdentity === 'batch' ? '[Batch code]' : '[Serial number]';
+
   const stages = useMemo(
     () => stagesFor(working, derivation, market),
     [derivation, market, product.id]
@@ -55,13 +151,42 @@ export function Specification() {
   const sds = product.artefacts.some((artefact) => artefact.type === 'sds') ?
   buildSds(working, derivation, market) :
   null;
-  const drift = driftFor(product);
+
+  // Compared by value rather than by identity: every keystroke in the editors below builds a
+  // new spec object, so an identity check would call an untouched composition dirty the
+  // moment somebody dragged the load slider and dragged it back.
+  const dirty = JSON.stringify(spec) !== JSON.stringify(product.spec);
+
+  const save = async () => {
+    if (saving || !dirty) return;
+    setSaving(true);
+    setSaveError(null);
+    setPartialSave(false);
+    setSaved(false);
+    const result = await saveComposition(product, spec);
+    setSaving(false);
+    if (!result.ok) {
+      setSaveError(result.message);
+      // A partial save COMMITTED the composition, so the shared list is now stale — every
+      // other screen would keep drawing the old recipe. Reloading also re-bases `dirty`
+      // against what is actually stored, which is the whole point: after this the difference
+      // the button is offering to save is the pack, which is exactly the half still missing.
+      // What is on screen stays what was typed; `spec` is seeded once and not resynced.
+      if (result.reason === 'partial_save') {
+        setPartialSave(true);
+        await reload();
+      }
+      return;
+    }
+    setSaved(true);
+    await reload();
+  };
 
   return (
     <div className="flex min-w-0 flex-1">
       <main className="min-w-0 flex-1 pb-24 xl:pb-0">
         <PageHeader
-          eyebrow={`${category.name} · ${product.sku}`}
+          eyebrow={`${category.name}${product.sku ? ` · ${product.sku}` : ''}`}
           title={product.name}
           description="The composition on this page produces both outputs. Change anything and the label and the safety data sheet move together."
           actions={
@@ -72,16 +197,14 @@ export function Specification() {
                   {compare ? 'Hide market comparison' : 'Compare GB and EU'}
                 </Button>
             }
-              <Button
-              variant="primary"
-              onClick={() =>
-              toast('Outputs generated', {
-                description: `${product.artefacts.length} outputs for ${product.name}, all from the current composition.`
-              })
-              }>
-              
-                <TagIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
-                Generate outputs
+              {/* This was "Generate outputs", which raised a toast saying outputs had been
+                  generated. Nothing was generated: the label and the sheet are derived on
+                  every keystroke and rendered in the rail, and there is no export yet. What
+                  the button does now is the write that was actually missing — saving the
+                  composition, so that a recipe survives a reload. */}
+              <Button variant="primary" onClick={save} disabled={!dirty || saving}>
+                <SaveIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
+                {saving ? 'Saving…' : 'Save composition'}
               </Button>
             </>
           }
@@ -100,6 +223,38 @@ export function Specification() {
         <ProductPipeline stages={stages} activeId={stage} onSelect={setStage} />
 
         <div className="space-y-10 px-6 py-8 lg:px-10">
+          {/* Two different failures and two different titles, because they are not the same
+              news. A refused save changed nothing, so the reassurance below it is true. A
+              PARTIAL save changed half of it — the recipe is stored against the old pack —
+              and "it is only the saving that failed" would be a false sentence printed over
+              the one state where the stored product is a combination nobody approved. */}
+          {saveError &&
+          <Callout
+            tone="warn"
+            role="alert"
+            title={partialSave ? 'Only part of that saved' : 'That did not save'}>
+
+              <p className="max-w-prose leading-relaxed">{saveError}</p>
+              {!partialSave &&
+            <p className="mt-2 max-w-prose leading-relaxed">
+                  What is on screen is still what you typed, and it is still what the preview is
+                  drawn from — it is only the saving that failed. Press save again.
+                </p>
+            }
+            </Callout>
+          }
+          {saved && !dirty && !saveError &&
+          <p role="status" className="text-[0.8125rem] text-ink-secondary">
+              Composition saved. Every output on this page is derived from it.
+            </p>
+          }
+          {dirty && !saveError &&
+          <p role="status" className="text-[0.8125rem] text-ink-secondary">
+              Unsaved changes. The classification and both outputs below already reflect them;
+              saving is what makes them survive a reload.
+            </p>
+          }
+
           <section aria-label="Composition" className="space-y-5">
             <SectionTitle>Composition</SectionTitle>
             {spec.kind === 'mixture' &&
@@ -147,29 +302,18 @@ export function Specification() {
           <section aria-label="Outputs" className="space-y-5">
             <SectionTitle>Outputs</SectionTitle>
 
-            {drift &&
-            <div className="rounded-card border border-clay/30 bg-clay-tint px-5 py-4">
-                <p className="max-w-prose text-[0.8125rem] leading-relaxed text-clay-dark">
-                  {drift.sentence}
+            {/* The drift banner and its "Version this output" buttons are gone. Both described
+                a difference between a PRINTED artefact and the current composition, and
+                nothing stores printed artefacts — the buttons raised a toast saying an output
+                had been versioned and versioned nothing. Outputs are derived live from the
+                composition above, which is why they cannot fall behind it. */}
+            {stale.length > 0 &&
+            <Callout tone="warn">
+                <p className="max-w-prose leading-relaxed">
+                  The composition changed after{' '}
+                  {stale.length === 1 ? 'this output was' : 'these outputs were'} produced.
                 </p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {stale.map((artefact) =>
-                <Button
-                  key={artefact.type}
-                  size="sm"
-                  variant="secondary"
-                  onClick={() =>
-                  toast('Output versioned', {
-                    description: `${artefact.label} versioned. ${artefact.version} is kept for runs already made.`
-                  })
-                  }>
-                  
-                      <HistoryIcon className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
-                      Version {artefact.label.toLowerCase()}
-                    </Button>
-                )}
-                </div>
-              </div>
+              </Callout>
             }
 
             <Card className="px-5 py-5">
@@ -197,9 +341,21 @@ export function Specification() {
                           {artefact.version} · {formatDate(artefact.printedOn)}
                         </p>
                       </div>
+                      {/* THREE STATES, as ProductPipeline already does for an unrun check.
+                          `current` is true for an unproduced artefact on purpose — a surface
+                          nobody has printed cannot have drifted from the composition — so
+                          reading it as a two-state good/warn painted a green "Current" pill on
+                          every row of a list whose every row also says "Not yet produced". A
+                          maker scanning the pills saw four ticks and concluded their label and
+                          their sheet were up to date and in existence. Current and Out of date
+                          are now reserved for artefacts that have actually been produced. */}
+                      {artefact.version === ARTEFACT_NOT_PRODUCED ?
+                      <Pill tone="quiet">Not produced</Pill> :
+
                       <Pill tone={artefact.current ? 'good' : 'warn'}>
-                        {artefact.current ? 'Current' : 'Out of date'}
-                      </Pill>
+                          {artefact.current ? 'Current' : 'Out of date'}
+                        </Pill>
+                      }
                     </li>);
 
                 })}
@@ -293,10 +449,14 @@ function SdsSummary({ sds }: {sds: SdsDocumentModel;}) {
           'Every section complete'}
         </Pill>
       </div>
+      {/* NOT "the supplier sheets on file". No supplier document of this account's is held,
+          there is nowhere to put one, and section 16 of the sheet itself now says so plainly —
+          this sentence was the last surface still contradicting it. */}
       <p className="mt-2 max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
-        {derived.length} of the sixteen sections are derived from the composition and the supplier
-        sheets on file, and carry the same reasoning as the label. The sheet is a draft for review
-        by a competent person; the app produces it and shows its working, but does not sign it.
+        {derived.length} of the sixteen sections are derived from the composition and from
+        Batchlabel&rsquo;s reference data for the materials in it, and carry the same reasoning
+        as the label. The sheet is a draft for review by a competent person; the app produces it
+        and shows its working, but does not sign it.
       </p>
       {needsYou.length > 0 &&
       <ul className="mt-4 space-y-2.5">
@@ -324,8 +484,8 @@ function comparisonRows(product: Product, spec: Spec) {
   <DiffRow
     key="address"
     element="Address block"
-    gb="Hearth and Hollow Ltd, Lewes BN7 2QA"
-    eu="Kelder Compliance BV, Rotterdam"
+    gb={addressForMarket('GB').lines.slice(0, 2).join(', ')}
+    eu={addressForMarket('EU').lines.slice(0, 2).join(', ')}
     differs />];
 
 
@@ -359,8 +519,8 @@ function comparisonRows(product: Product, spec: Spec) {
       <DiffRow
         key="rp"
         element="Responsible person"
-        gb="Hearth and Hollow Ltd, Lewes"
-        eu="Kelder Compliance BV, Rotterdam"
+        gb={addressForMarket('GB').lines[0]}
+        eu={addressForMarket('EU').lines[0]}
         differs />,
 
       <DiffRow
@@ -471,7 +631,10 @@ function MixtureEditor({
 
         <Field
           label="Base wax or carrier"
-          hint={`${ingredientById(spec.baseId)?.supplier ?? ''}, document v${ingredientById(spec.baseId)?.document.version ?? ''}`}>
+          /* "Read from", not "document v4.2" on its own: the version is the supplier document
+             the reference library's data was taken from, and the bare phrasing read as a
+             document held on this account's behalf. Nothing is held. */
+          hint={`Reference library · ${ingredientById(spec.baseId)?.supplier ?? ''}, read from document v${ingredientById(spec.baseId)?.document.version ?? ''}`}>
           
           <Select value={spec.baseId} onChange={(event) => set('baseId', event.target.value)}>
             {bases.map((base) =>
@@ -484,7 +647,7 @@ function MixtureEditor({
 
         <Field
           label="Fragrance oil"
-          hint={`${fragrance?.supplier ?? ''}, document v${fragrance?.document.version ?? ''}`}>
+          hint={`Reference library · ${fragrance?.supplier ?? ''}, read from document v${fragrance?.document.version ?? ''}`}>
           
           <Select
             value={spec.fragranceId}
