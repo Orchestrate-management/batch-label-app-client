@@ -36,9 +36,15 @@ import {
  *
  *   2. THE ACCOUNT ID IS SENT WHEN WE KNOW IT, AND OMITTED WHEN WE DO NOT. This file used to
  *      state the opposite as an absolute — "never, not even one it read back from the
- *      entitlement" — which contradicted the schema this file is written against. The
- *      migration header says, of current_account_id(): "NULL when none or ambiguous… Prefer
- *      passing entitlements.account_id explicitly." Both rules agree today, because only
+ *      entitlement" — which contradicted the schema this file is written against. Item 1 of
+ *      THE account_id CONTRACT in the migration header: "THE APP MAY — AND SHOULD — SEND
+ *      account_id EXPLICITLY. The id to send is the one it already reads back from
+ *      entitlements / get_entitlement(BRAND_SLUG). Send it on every insert into specifications
+ *      and products." (Quoted rather than paraphrased, and quoted from where the rule now
+ *      lives: an earlier draft of this file attributed it to a sentence about
+ *      current_account_id() that is in no migration on the schema branch, so anybody grepping
+ *      to check the two sides agreed found nothing and had to wonder whether they had
+ *      drifted.) Both rules agree today, because only
  *      `batchlabel` is seeded in public.brands and every user therefore has exactly one
  *      account; they stop agreeing the day a sibling Orchestrate brand ships and one person
  *      holds an account on each. current_account_id() then refuses to guess and returns NULL
@@ -87,6 +93,7 @@ export type WriteFailure =
 'account_ambiguous' |
 'not_configured' |
 'partial_save' |
+'refused' |
 'unknown' |
 'failed';
 
@@ -147,6 +154,32 @@ const ACCOUNT_AMBIGUOUS_HINT = 'account_ambiguous';
 /** Postgres unique violation: the account already holds a live product with this SKU code. */
 const UNIQUE_VIOLATION = '23505';
 
+/**
+ * A row level security refusal, with no hint on it. Three causes, and it names none of them.
+ *
+ * The migration header (contract item 5) lists them: "an account that is not yours, a null
+ * account_id on some path section 7c does not cover, and a suspended or departed membership
+ * (section 3). It is deliberately uninformative and the app must not dress it up as a
+ * diagnosis of any of the three."
+ *
+ * IT STILL NEEDS ITS OWN BRANCH, and not having one was the bug. Without it a 42501 fell
+ * through to the generic failure — "please try again in a moment" — and the one cause a real
+ * customer reaches is suspension, which no amount of waiting resolves. A suspended maker
+ * pressed create, was told to wait, waited, pressed again, and was told the same thing
+ * forever. So this branch exists to remove the retry, not to explain anything: it says the
+ * write was refused, that nothing changed, and that the way out is a human.
+ *
+ * The suspension itself is said elsewhere and earlier — `entitlement.status === 'suspended'`,
+ * from a read the app makes before it renders anything, which is exactly why section 3 of the
+ * migration declines to say it in the error. This is the backstop for a suspension that lands
+ * between that read and this write.
+ */
+const POLICY_REFUSAL = '42501';
+
+const POLICY_REFUSAL_MESSAGE =
+'That was refused, so nothing has been saved and nothing has changed. Waiting will not clear ' +
+'it and trying again will not either — get in touch and we will tell you why and put it right.';
+
 const GENERIC_WRITE_FAILURE =
 'We could not save that just now. Nothing has changed — please try again in a moment.';
 
@@ -203,12 +236,46 @@ const PARTIAL_SAVE_MESSAGE =
 'Only part of that saved. The composition was stored; the pack size and packaging were not, so ' +
 'this product is now the new recipe in the old pack. Press save again to finish it.';
 
+/**
+ * Said when an UPDATE ran, raised nothing, and changed nothing.
+ *
+ * AN UPDATE REFUSED BY AN RLS `using` CLAUSE DOES NOT RAISE. It matches no rows and reports
+ * success, and supabase-js hands back `{ error: null }` — so a save made after the caller lost
+ * access to the row (suspended mid-edit, removed from the account, the row archived in another
+ * tab) used to return `{ok: true}` and the screen congratulated somebody on a write that never
+ * happened, then reloaded into "No such product". `.select('id')` is what turns that into an
+ * answer: PostgREST returns the rows it actually touched, and none means none.
+ *
+ * The copy offers no retry for the same reason POLICY_REFUSAL_MESSAGE does not — whatever put
+ * the row out of reach is still true a second later — and it does not guess which of the
+ * causes it was.
+ */
+const UPDATE_REACHED_NOTHING_MESSAGE =
+'Nothing was saved. This is no longer a product this account can change, so the edit did not ' +
+'reach it — nothing has been altered, and trying again will not help. Get in touch and we will ' +
+'sort it out.';
+
 const DUPLICATE_SKU_MESSAGE =
 'You already have a product with that code. Product codes have to be unique, so give this one ' +
 'a different code.';
 
 const NOT_CONFIGURED_MESSAGE =
 'This app is not connected to its database, so nothing can be saved. This is us, not you.';
+
+/**
+ * Said when a read came back holding more than one account's products and we had no id to
+ * choose between them. See `fetchProducts`.
+ *
+ * The same shape of answer as `account_ambiguous` on the write side, for the same reason: we
+ * will not pick, and a retry produces the identical two accounts, so it may not be offered.
+ * It reports nothing about the products themselves — they are all this person's, and none of
+ * them is lost — only that we cannot tell which workspace this screen is.
+ */
+const AMBIGUOUS_ACCOUNT_READ_MESSAGE =
+'You hold more than one account, and we could not tell which of them this workspace should be ' +
+'showing — so it is showing none of them rather than the wrong one. Nothing has been lost, and ' +
+'trying again will not change it. Get in touch and we will point this workspace at the right ' +
+'account.';
 
 /**
  * The limit message itself is NOT produced here.
@@ -247,6 +314,7 @@ export function classifyWriteError(error: Postgrestish | null)
     return { reason: 'account_ambiguous', message: ACCOUNT_AMBIGUOUS_MESSAGE };
   }
   if (code === UNIQUE_VIOLATION) return { reason: 'duplicate_sku', message: DUPLICATE_SKU_MESSAGE };
+  if (code === POLICY_REFUSAL) return { reason: 'refused', message: POLICY_REFUSAL_MESSAGE };
   return { reason: 'failed', message: GENERIC_WRITE_FAILURE };
 }
 
@@ -268,7 +336,7 @@ export function classifyWriteError(error: Postgrestish | null)
  * fails first — but a refusal token that is missing from this list is a specification silently
  * left behind, and the next one added should not have to remember this file.
  */
-const DEFINITE_REFUSAL_CODES = ['23502', '23503', '23505', '23514', '42501'];
+const DEFINITE_REFUSAL_CODES = ['23502', '23503', '23505', '23514', POLICY_REFUSAL];
 const DEFINITE_REFUSAL_HINTS = [SKU_LIMIT_HINT, ACCOUNT_MISSING_HINT, ACCOUNT_AMBIGUOUS_HINT];
 
 function isDefiniteRefusal(error: Postgrestish | null): boolean {
@@ -283,6 +351,14 @@ type Json = Record<string, unknown>;
 
 export type SpecificationRow = {
   id: string;
+  /**
+   * Read back, and read back for one reason: without it two rows from two different accounts
+   * are indistinguishable on arrival. Nothing renders it and nothing writes from it — the id
+   * this app SENDS comes from the entitlement and from nowhere else (rule 2 above). It exists
+   * so that `fetchProducts` can tell whether an unscoped read spanned more than one account
+   * instead of quietly laying somebody's other workspace out under this brand's heading.
+   */
+  account_id: string | null;
   name: string | null;
   category_id: string | null;
   kind: string | null;
@@ -300,6 +376,8 @@ export type SpecificationRow = {
 
 export type ProductRow = {
   id: string;
+  /** See SpecificationRow.account_id. Detectability, not a write source. */
+  account_id: string | null;
   specification_id: string;
   name: string | null;
   sku: string | null;
@@ -313,10 +391,10 @@ export type ProductRow = {
 };
 
 const SPECIFICATION_COLUMNS =
-'id, name, category_id, kind, product_type, fragrance_id, base_id, dye_id, load, additive, markets, regimes, ufi, data';
+'id, account_id, name, category_id, kind, product_type, fragrance_id, base_id, dye_id, load, additive, markets, regimes, ufi, data';
 
 const PRODUCT_COLUMNS =
-'id, specification_id, name, sku, net_quantity, net_unit, packaging_id, identifiers, obligations, data, created_at';
+'id, account_id, specification_id, name, sku, net_quantity, net_unit, packaging_id, identifiers, obligations, data, created_at';
 
 /* -------------------------------------------------------------- coercion */
 
@@ -553,11 +631,27 @@ export function toProduct(product: ProductRow, spec: SpecificationRow): Product 
  * into one list with no column read back to tell them apart.
  *
  * So the account is filtered HERE as well, when we know it. `accountId` comes from the
- * entitlement, which the database resolved for this deployment's brand. Null means we do not
- * know it — the entitlement read has not landed or failed — and then the query is scoped by
- * RLS alone, which is the caller's own data and is what this app has always shown. That is
- * defence in depth over RLS, never a replacement for it: a wrong id here shows too little,
- * never somebody else's.
+ * entitlement, which the database resolved for this deployment's brand. That is defence in
+ * depth over RLS, never a replacement for it: a WRONG id here shows too little, never somebody
+ * else's.
+ *
+ * AN ABSENT ID IS NOT A WRONG ID, and the sentence above used to be offered as covering both.
+ * It does not. Null means we do not know which account — the entitlement read failed, or it
+ * resolved no account for this brand — and the fallback then drops the filter and takes
+ * whatever RLS allows. With one account per person that is the same list. With two it is not:
+ * a maker whose Batchlabel account is suspended has it hidden by is_member_of, so the only
+ * rows RLS still returns are their OTHER brand's, and the fallback would lay those out under
+ * this brand's heading as if they were this workspace's. Showing too little was always
+ * acceptable; showing a different workspace of the same person's is the thing section 1 says
+ * must not happen.
+ *
+ * So the unscoped read now checks what it got back. Rows from a single account are
+ * unambiguous and are returned. Rows spanning more than one are refused outright — with a
+ * message that offers no retry, because a retry returns the same two accounts — and the
+ * caller renders that rather than a list. `account_id` is read back for this and only this.
+ *
+ * The state upstream of it is better still and is handled there: ProductsProvider does not
+ * call this at all for a suspended membership, because the entitlement already said so.
  *
  * Archived rows are excluded, matching the meter's own definition of live.
  */
@@ -596,13 +690,22 @@ export async function fetchProducts(accountId: string | null = null): Promise<Re
     };
   }
 
+  const productRows = (productsResponse.data ?? []) as ProductRow[];
+
+  // Only when we had no id to filter on. With one, the filter already guaranteed this and the
+  // check would be a second copy of the same condition.
+  if (!accountId) {
+    const accounts = new Set(productRows.map((row) => row.account_id).filter(Boolean));
+    if (accounts.size > 1) return { ok: false, message: AMBIGUOUS_ACCOUNT_READ_MESSAGE };
+  }
+
   const specifications = new Map<string, SpecificationRow>();
   for (const row of (specificationsResponse.data ?? []) as SpecificationRow[]) {
     specifications.set(row.id, row);
   }
 
   const products: Product[] = [];
-  for (const row of (productsResponse.data ?? []) as ProductRow[]) {
+  for (const row of productRows) {
     const spec = specifications.get(row.specification_id);
     // A product whose specification did not come back is a product we cannot describe: no
     // composition, so no classification, no label and no sheet. Dropping it silently would
@@ -843,6 +946,15 @@ accountId: string | null = null)
  * not own: `using` decides which rows may be updated and `with check` decides what they may
  * become, so there is no way to move a row into somebody else's account either.
  *
+ * "NEITHER MAY REACH A ROW THIS CALLER DOES NOT OWN" IS NOT "A ROW WAS WRITTEN", and this
+ * function used to treat them as the same sentence. Both updates ran without `.select()`, so
+ * PostgREST answered 204 and supabase-js returned `{error: null}` whether one row changed or
+ * none did — and an UPDATE refused by a `using` clause changes none WITHOUT raising. A maker
+ * suspended, or removed from the account, while the specification screen was open therefore
+ * pressed save, was told it saved, and watched the reload turn the page into "No such
+ * product". Both statements now ask for `id` back and an empty result is read as the refusal
+ * it is.
+ *
  * NO SKU METER RUNS HERE, and that is a property of the schema rather than of this call. The
  * enforcement trigger fires on INSERT and on un-archiving, and on nothing else, precisely so
  * that editing, re-deriving and exporting an existing SKU can never be blocked by a limit —
@@ -868,21 +980,35 @@ spec: Spec)
     return { ok: false, reason: 'failed', message: GENERIC_WRITE_FAILURE };
   }
 
-  const { error: specError } = await client.
+  const { data: specRows, error: specError } = await client.
   from('specifications').
   update(specColumns(spec)).
-  eq('id', product.specificationId);
+  eq('id', product.specificationId).
+  select('id');
 
   if (specError) return { ok: false, ...classifyWriteError(specError) };
 
-  const { error: productError } = await client.
+  // No error and no row. The statement was accepted and reached nothing, which on these tables
+  // means the `using` clause excluded it. Nothing committed, so `partial_save` — which asserts
+  // that the composition WAS stored — is not available here and would be a claim about the
+  // database resting on nothing more than the absence of an error.
+  if (!specRows || specRows.length === 0) {
+    return { ok: false, reason: 'refused', message: UPDATE_REACHED_NOTHING_MESSAGE };
+  }
+
+  const { data: productRows, error: productError } = await client.
   from('products').
   update(packColumns(spec)).
-  eq('id', product.id);
+  eq('id', product.id).
+  select('id');
 
-  // The specification update above committed. Whatever this one says, half of the edit is
-  // stored, so none of the "nothing has changed" copy is available to us here.
-  if (productError) return { ok: false, reason: 'partial_save', message: PARTIAL_SAVE_MESSAGE };
+  // The specification update above is now KNOWN to have committed — a row came back from it.
+  // Whatever this one says, half of the edit is stored, so none of the "nothing has changed"
+  // copy is available to us here. A silent zero-row result is the same half-save as an error:
+  // the pack did not move and the recipe did.
+  if (productError || !productRows || productRows.length === 0) {
+    return { ok: false, reason: 'partial_save', message: PARTIAL_SAVE_MESSAGE };
+  }
 
   return { ok: true, value: undefined };
 }

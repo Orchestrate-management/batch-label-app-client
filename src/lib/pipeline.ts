@@ -130,7 +130,9 @@ market: Market)
   filter((ingredient) => ingredient && ingredient.hazards.length === 0 && ingredient.role === 'Fragrance oil');
   const classificationIssues: StageIssue[] = missingClassification.map((ingredient) => ({
     label: `${ingredient!.name} has no hazard data`,
-    detail: 'The sheet on file carries no classification, so this component contributes nothing.',
+    // Not "the sheet on file": no sheet of this account's is held. The gap is in Batchlabel's
+    // reference data for the material, which is a different sentence and a different owner.
+    detail: 'Batchlabel\'s reference data for it carries no classification, so this component contributes nothing.',
     to: `/materials/ingredient/${ingredient!.id}`
   }));
 

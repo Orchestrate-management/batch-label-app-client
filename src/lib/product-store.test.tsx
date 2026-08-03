@@ -190,3 +190,77 @@ describe('the products of whoever is signed in now', () => {
     await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('error'));
   });
 });
+
+/**
+ * A suspended account, which is the third way to arrive at "you have no products" and the only
+ * one where the read SUCCEEDS.
+ *
+ * `is_member_of` gained a second gate — the account's standing on its brand, not just the
+ * person's membership of the account — so a suspended business now reads zero rows from every
+ * table with no error at all, and its `entitlements` row comes back with account_id null,
+ * sku_count null and membership_status 'suspended'. Measured against a real Postgres; the
+ * fixture below is that measurement.
+ *
+ * Every ingredient of the empty state then lines up: read ok, list empty, status 'ready'. A
+ * maker holding forty SKUs was shown "Nothing here yet, and that is the right place to start"
+ * on route `/`, invited to create their first product, and refused when they did — while
+ * Billing, in the same session, said the account was suspended.
+ *
+ * The database is right not to explain itself in an error (§3 of the migration: a policy
+ * refusal that explains itself is one that can be used to probe). It does not have to. The
+ * true sentence is already on the client, in a read taken before anything renders.
+ */
+describe('an account whose membership has been suspended', () => {
+  const suspendedRow = (userId: string): EntitlementRow => ({
+    ...rowFor(userId),
+    // What the view actually hands back: the `acct` lateral runs under the caller's RLS, and
+    // is_member_of now hides the accounts row, so the id and the count go null together.
+    accountId: null,
+    skuCount: null,
+    membershipStatus: 'suspended',
+    active: false
+  });
+
+  beforeEach(() => {
+    fetchEntitlement.mockImplementation(async () => ({
+      row: suspendedRow(auth.userId ?? 'nobody'),
+      failed: false
+    }));
+    // Zero rows, no error. Exactly what RLS returns, and exactly what made this look like a
+    // brand new account.
+    fetchProducts.mockImplementation(async () => ({ ok: true, products: [] }));
+  });
+
+  it('publishes the refusal rather than an empty account', async () => {
+    render(tree());
+    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('unavailable'));
+    // NOT 'ready'. 'ready' with an empty list is the sentence "you have no products", and
+    // nothing has established it — the rows are there and are being withheld.
+    expect(screen.getByTestId('status')).not.toHaveTextContent('ready');
+  });
+
+  it('does not fire a read whose answer it can already predict', async () => {
+    render(tree());
+    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('unavailable'));
+    expect(fetchProducts).not.toHaveBeenCalled();
+  });
+
+  it('withholds nothing from a lapsed account, which keeps everything it holds', async () => {
+    // The gate is `suspended` and only `suspended`. is_member_of consults membership status
+    // and deliberately not plan, plan_status or period end (§6.1: "no new, keep everything old
+    // fully working"), so a maker whose card lapsed still reads and writes every product they
+    // have. Withholding their list would be the same lie pointing the other way.
+    fetchEntitlement.mockImplementation(async () => ({
+      row: { ...rowFor(auth.userId ?? 'nobody'), plan: 'maker', planStatus: 'canceled', active: false },
+      failed: false
+    }));
+    fetchProducts.mockImplementation(async (accountId: string | null) => ({
+      ok: true,
+      products: accountId ? [productNamed(accountId)] : []
+    }));
+
+    render(tree());
+    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('ready'));
+    expect(screen.getByTestId('names')).toHaveTextContent('acct-for-user-a');
+  });
+});

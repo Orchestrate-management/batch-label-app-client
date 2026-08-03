@@ -110,3 +110,68 @@ describe('the shipped materials catalogue', () => {
     expect(/export\s+const\s+MATERIALS\b/.test(catalogue)).toBe(true);
   });
 });
+
+/**
+ * NO SHIPPING COPY MAY SAY THE ACCOUNT HOLDS SUPPLIER DOCUMENTS.
+ *
+ * There is no document store. There is nowhere to upload a supplier safety data sheet and
+ * nothing that reads one, and section 16 of every generated sheet now says so outright: "This
+ * sheet was assembled from Batchlabel's reference data… No supplier document of yours is
+ * held." The claim kept surviving in other places because it is one phrase, spelled a few
+ * ways, spread over three files — the Materials register said it, then section 16 said it,
+ * then section 3 still said it two paragraphs above section 16 ON THE SAME A4 PAGE, and the
+ * product screen repeated it in a summary line. A maker hands that sheet to a Trading
+ * Standards officer with both sentences printed on it.
+ *
+ * This is the phrase-level guard, and a phrase-level guard is the right instrument here: the
+ * problem is not a module or an import, it is a sentence that reads perfectly and is false,
+ * and it comes back because it sounds like the thing anybody would write.
+ *
+ * WHAT IS DELIBERATELY NOT BANNED. "Composition on file" — that IS the account's, it is the
+ * recipe they typed. "No value on file", "No document on file", "No declaration on file", "No
+ * IFRA categories on file" — every one of those is a stated GAP, which is the honest form and
+ * the one the whole round has been moving towards.
+ */
+describe('copy about documents the account does not hold', () => {
+  /**
+   * Comments are stripped first. Every fix in this family left a comment behind explaining
+   * what the sentence used to say, and a guard that cannot tell the correction from the
+   * offence would force the corrections to be written in code.
+   */
+  function withoutComments(source: string): string {
+    return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^[ \t]*\/\/.*$/gm, ' ');
+  }
+
+  /** "the sheet on file", "supplier safety data sheets on file", "documents on file". */
+  const CLAIMS_DOCUMENTS = /\b(?:sheets?|documents)\s+on\s+file\b/i;
+
+  it('appears in nothing that ships', () => {
+    const offenders = walk(SRC).
+    filter((path) => !isTestFile(path)).
+    filter((path) => CLAIMS_DOCUMENTS.test(withoutComments(readFileSync(path, 'utf8')))).
+    map((path) => relative(SRC, path));
+
+    expect(
+      offenders,
+      'A screen or a generated document claims supplier sheets are on file for this account. ' +
+      'Nothing holds one and nothing can: name Batchlabel\'s reference data instead, as ' +
+      'section 16 of the safety data sheet does.'
+    ).toEqual([]);
+  });
+
+  it('is a check that can actually fail, and one that does not overreach', () => {
+    expect(CLAIMS_DOCUMENTS.test('assembled from the supplier safety data sheets on file.')).toBe(true);
+    expect(CLAIMS_DOCUMENTS.test('The sheet on file carries no classification')).toBe(true);
+    expect(CLAIMS_DOCUMENTS.test('derived from the composition and the supplier sheets on file')).toBe(true);
+    // A stated gap is the honest form and must stay sayable.
+    expect(CLAIMS_DOCUMENTS.test('No value on file')).toBe(false);
+    expect(CLAIMS_DOCUMENTS.test('No declaration on file')).toBe(false);
+    expect(CLAIMS_DOCUMENTS.test('Composition on file')).toBe(false);
+  });
+
+  it('strips comments rather than counting them as copy', () => {
+    expect(withoutComments('// it used to say sheets on file\nconst a = 1;')).not.toMatch(CLAIMS_DOCUMENTS);
+    expect(withoutComments('/* was: documents on file */\nconst a = 1;')).not.toMatch(CLAIMS_DOCUMENTS);
+    expect(withoutComments('const a = "documents on file";')).toMatch(CLAIMS_DOCUMENTS);
+  });
+});

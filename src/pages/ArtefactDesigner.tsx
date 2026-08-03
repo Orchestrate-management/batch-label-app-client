@@ -4,7 +4,6 @@ import {
   ArrowLeftIcon,
   CheckIcon,
   DownloadIcon,
-  GripVerticalIcon,
   PackageIcon,
   RefreshCwIcon,
   TriangleAlertIcon } from
@@ -74,6 +73,17 @@ export function ArtefactDesigner() {
             Try again
           </Button>
         </Callout>
+      </main>);
+
+  }
+
+  // Before the not-found branch, and for the same reason as on the specification screen: a
+  // suspended account arrives here on a bookmark it has used every week, and "there is nothing
+  // in your products with this address" is not true of it.
+  if (status === 'unavailable') {
+    return (
+      <main className="flex-1 px-6 py-8 lg:px-10">
+        <PlanNotice states={['suspended']} />
       </main>);
 
   }
@@ -341,12 +351,14 @@ function ArtefactDesignerView({ product }: {product: Product;}) {
               <li
                 key={block.key}
                 className="flex items-center gap-3 rounded-control px-2 py-2 hover:bg-paper-panel">
-                
-                  <GripVerticalIcon
-                  className="h-4 w-4 flex-none text-ink-tertiary"
-                  strokeWidth={1.25}
-                  aria-hidden="true" />
-                
+
+                  {/* THE GRIP HANDLE IS GONE WITH THE SENTENCE THAT PROMISED IT. There is no
+                      draggable attribute, no onDragStart, no onDrop and no pointer handling
+                      anywhere in this file: dragging a block did nothing at all, on the one
+                      screen whose promise is that the canvas is what will be printed, and a
+                      maker who tried it concluded the app was broken. Same treatment as the
+                      export buttons, which now say export is not ready rather than claim a
+                      file. */}
                   <span className="min-w-0 flex-1 text-[0.8125rem] text-ink">
                     {block.label}
                     <span className="mt-0.5 block text-2xs text-ink-tertiary">
@@ -371,7 +383,7 @@ function ArtefactDesignerView({ product }: {product: Product;}) {
             </ul>
             <p className="mt-3 text-2xs leading-relaxed text-ink-tertiary">
               Mandatory blocks come from the regimes this product is subject to and cannot be
-              removed. Reorder by dragging.
+              removed. Reordering is not built yet — the order here is the order that prints.
             </p>
           </Card>
         </section>

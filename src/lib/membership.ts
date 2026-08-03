@@ -123,9 +123,11 @@ export interface Entitlement {
   /**
    * The account this deployment's brand resolves to for the signed-in user, or null when we
    * could not resolve one. `fetchEntitlement` filters on BRAND_SLUG, so this is the account
-   * for THIS brand — which is the whole reason it can be handed to a write: the migration
-   * header says "Prefer passing entitlements.account_id explicitly", and the INSERT policy
-   * (`with check (is_member_of(account_id))`) refuses one that is not yours.
+   * for THIS brand — which is the whole reason it can be handed to a write. Item 1 of THE
+   * account_id CONTRACT in the migration header: "THE APP MAY — AND SHOULD — SEND account_id
+   * EXPLICITLY. The id to send is the one it already reads back from entitlements /
+   * get_entitlement(BRAND_SLUG)." And the INSERT policy (`with check (is_member_of(account_id))`)
+   * refuses one that is not yours, so sending it weakens nothing.
    */
   accountId: string | null;
   /** Lower-cased plan slug, or null when there is no membership / no read. */

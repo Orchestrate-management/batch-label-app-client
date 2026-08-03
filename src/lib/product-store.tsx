@@ -13,18 +13,36 @@ import { fetchProducts } from './products';
  * database introduces both, and the distinction between them is the entire point of this
  * module.
  *
- * THREE STATES, AND THEY ARE NOT INTERCHANGEABLE.
+ * FOUR STATES, AND THEY ARE NOT INTERCHANGEABLE.
  *
- *   loading  we have not finished asking. Screens show a skeleton. They must not show an
- *            empty state: "you have no products" is a claim, and we do not yet know.
- *   error    we asked and could not get an answer. Screens say so, blame us, and offer a
- *            retry. THIS IS THE ONE THAT MATTERS. A failed read rendered as "you have no
- *            products yet" is indistinguishable from a brand new account, and to a maker
- *            with forty SKUs it reads as "your data is gone" — which is a support ticket, a
- *            frightening ten minutes, and quite possibly a cancellation, over a dropped
- *            request that fixed itself on the next reload.
- *   ready    we asked and got an answer. An empty list here IS the answer, and it is the
- *            first screen every real customer ever sees.
+ *   loading      we have not finished asking. Screens show a skeleton. They must not show an
+ *                empty state: "you have no products" is a claim, and we do not yet know.
+ *   error        we asked and could not get an answer. Screens say so, blame us, and offer a
+ *                retry. THIS IS THE ONE THAT MATTERS. A failed read rendered as "you have no
+ *                products yet" is indistinguishable from a brand new account, and to a maker
+ *                with forty SKUs it reads as "your data is gone" — which is a support ticket,
+ *                a frightening ten minutes, and quite possibly a cancellation, over a dropped
+ *                request that fixed itself on the next reload.
+ *   unavailable  this account's rows are withheld from it, and we know why. Screens say the
+ *                why. See below; it is the state this file was missing.
+ *   ready        we asked and got an answer. An empty list here IS the answer, and it is the
+ *                first screen every real customer ever sees.
+ *
+ * WHY `unavailable` HAD TO EXIST. `is_member_of` gained a second gate — the ACCOUNT's standing
+ * on its brand, not just the person's membership of the account — so a suspended business now
+ * reads zero rows, with no error, from every table. Every ingredient of the paragraph above
+ * then lines up the wrong way: the read succeeds, the list is legitimately empty, the store
+ * publishes 'ready' with [], and Studio and Products render "Nothing here yet, and that is the
+ * right place to start" to a maker holding forty SKUs. It is the exact ticket this module's
+ * three states were written to prevent, arriving through the one door they did not cover — not
+ * a failed read, but a refused one that looks like an empty account.
+ *
+ * The database is right not to say so in an error (section 3 of the migration argues it at
+ * length: a policy refusal that explains itself is a policy refusal that can be used to probe).
+ * It does not have to. `entitlements.membership_status` is a column, the app reads it before it
+ * renders anything, and by the time this provider runs the answer is already in hand as
+ * `entitlement.status === 'suspended'`. So the read is not fired at all: a query whose answer
+ * we can predict, and whose answer would be a lie on the screen, is not worth a round trip.
  *
  * WHY A PROVIDER RATHER THAN A HOOK PER SCREEN. Studio, the products table, the specification
  * screen and the settings identity tab all want the same list at the same time, and four
@@ -40,7 +58,7 @@ import { fetchProducts } from './products';
  * screens show a skeleton, and none of them claims the account is empty.
  */
 
-export type ProductsStatus = 'loading' | 'ready' | 'error';
+export type ProductsStatus = 'loading' | 'ready' | 'error' | 'unavailable';
 
 export interface ProductsValue {
   status: ProductsStatus;
@@ -79,19 +97,36 @@ export function ProductsProvider({ children }: {children: React.ReactNode;}) {
   const userId = user?.id ?? null;
 
   // Null is "we do not know which account", not "no filter is needed" — a failed entitlement
-  // read lands here too. fetchProducts falls back to RLS alone in that case and says so.
+  // read lands here too. fetchProducts falls back to RLS alone in that case, and refuses to
+  // publish a list that turns out to span two accounts.
   const accountId = entitlement.loading ? null : entitlement.accountId;
   const accountResolved = !entitlement.loading;
 
+  /**
+   * Suspension, from the read the entitlement provider has already made.
+   *
+   * ONLY `suspended`. Not free, not lapsed, not past_due, not unknown — those are money
+   * states and `is_member_of` deliberately does not consult one of them, so every one of
+   * those customers can still read and write everything they hold (§6.1: "no new, keep
+   * everything old fully working"). Withholding the list from a lapsed maker would be the
+   * same lie in the other direction, and a worse one: they can see their products, and we
+   * would be telling them they cannot.
+   */
+  const suspended = accountResolved && entitlement.status === 'suspended';
+
   const read = useCallback(async () => {
     if (!userId) return;
+    if (suspended) {
+      setState({ userId, status: 'unavailable', products: [], error: null });
+      return;
+    }
     const result = await fetchProducts(accountId);
     setState(
       result.ok ?
       { userId, status: 'ready', products: result.products, error: null } :
       { userId, status: 'error', products: [], error: result.message }
     );
-  }, [userId, accountId]);
+  }, [userId, accountId, suspended]);
 
   useEffect(() => {
     if (!userId) {
@@ -104,6 +139,12 @@ export function ProductsProvider({ children }: {children: React.ReactNode;}) {
     // to the account it resolved. A failed entitlement read still resolves — to null — so this
     // cannot wait forever on one that went wrong.
     if (!accountResolved) return;
+    // The one read we would fire is a read we already know returns nothing, and 'ready' with
+    // nothing is the false sentence. Publish the fact instead.
+    if (suspended) {
+      setState({ userId, status: 'unavailable', products: [], error: null });
+      return;
+    }
     let active = true;
     // No reset to 'loading' on a re-read: a retry revalidates in the background and keeps
     // showing the answer we already have, so pressing "try again" does not blank a screen
@@ -119,7 +160,7 @@ export function ProductsProvider({ children }: {children: React.ReactNode;}) {
     return () => {
       active = false;
     };
-  }, [userId, accountId, accountResolved, attempt]);
+  }, [userId, accountId, accountResolved, suspended, attempt]);
 
   // Derived at render, so a change of signed-in user cannot leave one paint showing the
   // previous account's list. An answer about somebody else is `loading`, not `ready`.
@@ -149,10 +190,12 @@ export function useProducts(): ProductsValue {
  * One product from the list already in memory.
  *
  * `product === null` means nothing on its own — READ THE STATUS FIRST. Null while loading
- * means we have not looked yet; null on an error means we could not look; null when ready is
- * the only one that means "there is no such product". A screen that renders "no such product"
- * during the first two hundred milliseconds sends people back to a list they just came from,
- * and one that renders it after a failed read tells them their product has been deleted.
+ * means we have not looked yet; null on an error means we could not look; null on
+ * `unavailable` means the account's rows are withheld and this one is almost certainly still
+ * there; null when ready is the only one that means "there is no such product". A screen that
+ * renders "no such product" during the first two hundred milliseconds sends people back to a
+ * list they just came from, and one that renders it after a failed or refused read tells them
+ * their product has been deleted.
  */
 export function useProduct(id: string | undefined): {
   status: ProductsStatus;

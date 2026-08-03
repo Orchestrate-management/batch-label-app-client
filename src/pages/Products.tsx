@@ -4,6 +4,7 @@ import { PackageIcon, PlusIcon, RefreshCwIcon } from 'lucide-react';
 import { PageHeader } from '../components/AppShell';
 import { Button, Callout, Card, EmptyState, Pill, SectionTitle, Skeleton } from '../components/ui/Primitives';
 import { NewProductDialog } from '../components/NewProductDialog';
+import { PlanNotice } from '../components/PlanNotice';
 import { SkuLimitNotice } from '../components/SkuLimitNotice';
 import { CATEGORIES } from '../lib/categories';
 import { outstandingObligations } from '../lib/regimes';
@@ -16,18 +17,24 @@ import { useWorkspace } from '../lib/workspace';
  * Grouped by category, so a separate category filter would say the same thing
  * twice. One table language, shared with materials and records.
  *
- * THREE ANSWERS, NOT TWO. This screen used to have one: a list, read synchronously from an
+ * FOUR ANSWERS, NOT TWO. This screen used to have one: a list, read synchronously from an
  * array that was seeded with six products and could not fail. It now asks a database, so it
- * has to be able to say "we are still asking", "we asked and could not get an answer", and
- * "we asked, and you have none yet" — and the last two must never be rendered as each other.
- * An empty state shown after a failed read tells a maker with forty SKUs that their products
- * are gone. That is the ticket this file exists to prevent.
+ * has to be able to say "we are still asking", "we asked and could not get an answer", "your
+ * account's rows are being withheld and here is why", and "we asked, and you have none yet" —
+ * and none of the first three may be rendered as the last. An empty state shown after a failed
+ * or a refused read tells a maker with forty SKUs that their products are gone. That is the
+ * ticket this file exists to prevent.
  */
 export function Products() {
   const navigate = useNavigate();
   const { enabledCategories } = useWorkspace();
   const { status, products, error, refresh } = useProducts();
   const [creating, setCreating] = useState(false);
+
+  // See product-store.tsx. Published only for a suspended membership, which the entitlement
+  // read established before this screen rendered — so there is something true to say, and no
+  // reason to offer a create the database will refuse.
+  const unavailable = status === 'unavailable';
 
   // Only categories that hold something get a section. A brand new account gets ONE empty
   // state rather than three — "nothing in home fragrance yet", "nothing in cosmetics yet",
@@ -46,6 +53,8 @@ export function Products() {
         title="What you make"
         description="Each product holds a composition, the classification it produces, and the two outputs that follow: a label and a safety data sheet."
         actions={
+        unavailable ?
+        undefined :
         <Button variant="primary" onClick={() => setCreating(true)}>
             <PlusIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
             New product
@@ -57,6 +66,11 @@ export function Products() {
 
       <div className="space-y-10 px-6 py-8 lg:px-10">
         <SkuLimitNotice />
+
+        {/* Instead of the list and instead of the empty state, never alongside them. `states`
+            keeps this to suspension — a free or lapsed account keeps every product it holds,
+            fully readable and fully editable, and must not be shown a plan gate here. */}
+        {unavailable && <PlanNotice states={['suspended']} />}
 
         {status === 'loading' &&
         <div className="space-y-4" aria-busy="true" aria-label="Loading your products">
@@ -72,10 +86,11 @@ export function Products() {
 
         {status === 'error' &&
         <Callout tone="warn" role="alert" title="We could not read your products">
-            <p className="max-w-prose leading-relaxed">
-              {error} Nothing has been deleted and nothing has been changed — we simply could
-              not get an answer just now.
-            </p>
+            {/* The sentence is the reader's, not this screen's. A read can fail for more than
+                one reason now — a dropped request, or a list that turned out to span two of
+                your accounts — and only fetchProducts knows which, so a fixed "we simply could
+                not get an answer" appended here would contradict it half the time. */}
+            <p className="max-w-prose leading-relaxed">{error}</p>
             <Button size="sm" variant="secondary" className="mt-3" onClick={refresh}>
               <RefreshCwIcon className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
               Try again
@@ -114,7 +129,11 @@ export function Products() {
                       <tr className="border-b border-paper-line bg-paper-panel/60 text-2xs uppercase tracking-[0.1em] text-ink-tertiary">
                         <th scope="col" className="px-5 py-3 font-medium">Product</th>
                         <th scope="col" className="px-5 py-3 font-medium">Composition</th>
-                        <th scope="col" className="px-5 py-3 font-medium">Outputs</th>
+                        {/* NOT "Outputs", which read as outputs the product HOLDS. Nothing
+                            stores artefacts, so on a real account the number is always the
+                            count of surfaces this product will produce once there is an
+                            exporter — never a count of files anybody has. */}
+                        <th scope="col" className="px-5 py-3 font-medium">Outputs to produce</th>
                         <th scope="col" className="px-5 py-3 font-medium">Last produced</th>
                         <th scope="col" className="px-5 py-3 font-medium">Status</th>
                       </tr>

@@ -14,6 +14,10 @@ const db = vi.hoisted(() => {
     specInsert: { data: null as unknown, error: null as unknown },
     productInsert: { data: null as unknown, error: null as unknown },
     lookup: { data: null as unknown, error: null as unknown },
+    // fetchProducts' two reads, one per table. Told apart from the lookup above by how they
+    // are consumed: the lookup ends in maybeSingle(), these are awaited directly.
+    productsRead: { data: [] as unknown, error: null as unknown },
+    specificationsRead: { data: [] as unknown, error: null as unknown },
     specPayload: null as Record<string, unknown> | null,
     productPayload: null as Record<string, unknown> | null,
     lookupFilters: [] as Array<[string, unknown]>,
@@ -53,12 +57,29 @@ const db = vi.hoisted(() => {
           else state.productPayload = payload;
           return query(() => table === 'specifications' ? state.specInsert : state.productInsert);
         },
-        // Only createProduct's "did it land anyway?" lookup reaches this.
-        select: () =>
-        query(
-          () => state.lookup,
-          (column, value) => state.lookupFilters.push([column, value])
-        ),
+        // Two callers reach this: createProduct's "did it land anyway?" lookup, which ends in
+        // maybeSingle(), and fetchProducts' two table reads, which are awaited directly.
+        select: () => {
+          const q: Record<string, unknown> = {};
+          const chain = () => q;
+          Object.assign(q, {
+            select: chain,
+            is: chain,
+            limit: chain,
+            order: chain,
+            eq: (column: string, value: unknown) => {
+              state.lookupFilters.push([column, value]);
+              return q;
+            },
+            single: async () => state.lookup,
+            maybeSingle: async () => state.lookup,
+            then: (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+            Promise.resolve(
+              table === 'products' ? state.productsRead : state.specificationsRead
+            ).then(resolve, reject)
+          });
+          return q;
+        },
         update: (payload: Record<string, unknown>) => ({
           eq: (_column: string, value: unknown) => {
             if (payload.archived_at) {
@@ -66,9 +87,16 @@ const db = vi.hoisted(() => {
               return Promise.resolve({ data: null, error: null });
             }
             state.updated.push(table);
-            return Promise.resolve(
-              table === 'specifications' ? state.specUpdate : state.productUpdate
-            );
+            const result = () =>
+            table === 'specifications' ? state.specUpdate : state.productUpdate;
+            // `.select()` after `.eq()` is what makes an UPDATE return the rows it touched.
+            // Without it PostgREST answers 204 and supabase-js reports success whether one row
+            // changed or none did — which is how a write refused by an RLS `using` clause used
+            // to be reported to a maker as a successful save. The mock has to be able to hand
+            // back an empty array, because that is the shape the bug arrives in.
+            return Object.assign(Promise.resolve(result()), {
+              select: () => Promise.resolve(result())
+            });
           }
         })
       };
@@ -83,6 +111,7 @@ vi.mock('./supabase', () => ({ supabase: db.supabase, isSupabaseConfigured: true
 import {
   classifyWriteError,
   createProduct,
+  fetchProducts,
   saveComposition,
   toProduct,
   type ProductRow,
@@ -105,6 +134,7 @@ import {
 function specRow(overrides: Partial<SpecificationRow> = {}): SpecificationRow {
   return {
     id: 'spec-1',
+    account_id: 'acct-1111',
     name: 'Black Fig and Cassis',
     category_id: 'home-fragrance',
     kind: 'mixture',
@@ -125,6 +155,7 @@ function specRow(overrides: Partial<SpecificationRow> = {}): SpecificationRow {
 function productRow(overrides: Partial<ProductRow> = {}): ProductRow {
   return {
     id: 'prod-1',
+    account_id: 'acct-1111',
     specification_id: 'spec-1',
     name: 'Black Fig and Cassis',
     sku: 'CC-BFC-220',
@@ -299,15 +330,23 @@ describe('classifying a refused write', () => {
     expect(classifyWriteError(null).reason).toBe('failed');
   });
 
-  it('dresses up a bare policy refusal as nothing in particular', () => {
+  it('names no cause for a bare policy refusal, and offers no retry either', () => {
     // 42501 with no hint is what a genuine cross-account attempt returns, and the migration
     // keeps it deliberately uninformative. The app must not diagnose it as an account problem.
+    //
+    // BUT IT MUST NOT FALL THROUGH TO THE GENERIC FAILURE, which is what it used to do and is
+    // the other half of the same rule. Contract item 5 lists three ways to earn a 42501, and
+    // the one a paying customer actually reaches is a suspended membership — for which
+    // "please try again in a moment" is a promise nothing will keep. The maker retries, it
+    // fails identically, forever. So: still no diagnosis, and no waiting.
     const classified = classifyWriteError({
       code: '42501',
       message: 'new row violates row-level security policy'
     });
-    expect(classified.reason).toBe('failed');
-    expect(classified.message).not.toMatch(/account/i);
+    expect(classified.reason).toBe('refused');
+    expect(classified.message).not.toMatch(/account|suspend|member/i);
+    expect(classified.message).not.toMatch(/try again in a moment|in a moment/i);
+    expect(classified.message).toMatch(/nothing has been saved/i);
   });
 
   it('no longer treats a not-null violation as an account problem', () => {
@@ -486,21 +525,47 @@ describe('saving a composition', () => {
   };
 
   beforeEach(() => {
-    db.state.specUpdate = { data: null, error: null };
-    db.state.productUpdate = { data: null, error: null };
+    // A row came back from each. That is what a write that actually happened looks like, and
+    // the default has to be it — a `data: null` default would have made every test below pass
+    // through the refusal branch and hidden the thing this suite is for.
+    db.state.specUpdate = { data: [{ id: 'spec-1' }], error: null };
+    db.state.productUpdate = { data: [{ id: 'prod-1' }], error: null };
     db.state.updated = [];
   });
 
-  it('says nothing changed only when the first write is the one that failed', async () => {
+  it('does not offer a retry on a write the policy refused', async () => {
     db.state.specUpdate = { data: null, error: { code: '42501', message: 'refused' } };
     const result = await saveComposition(product, product.spec);
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toBe('failed');
+      // 42501 has three causes and the database will not say which (contract item 5). What
+      // the app must not do is dress the refusal up as weather: "try again in a moment" to a
+      // suspended maker is an invitation to press the button forever.
+      expect(result.reason).toBe('refused');
       expect(result.message).toMatch(/nothing has changed/i);
+      expect(result.message).not.toMatch(/try again in a moment/i);
     }
     // And it never reached the second table, so there is nothing to be half-saved.
+    expect(db.state.updated).toEqual(['specifications']);
+  });
+
+  it('does not report success for an update that changed nothing', async () => {
+    // THE ONE THIS PAIR OF `.select()` CALLS EXISTS FOR. An UPDATE refused by an RLS `using`
+    // clause matches no rows and does NOT raise, so this is exactly the shape supabase-js
+    // hands back when a maker is suspended, or removed from the account, with the
+    // specification screen open. It used to return {ok: true}; the screen said it had saved
+    // and then reloaded into "No such product".
+    db.state.specUpdate = { data: [], error: null };
+    const result = await saveComposition(product, product.spec);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('refused');
+      expect(result.message).not.toMatch(/try again in a moment/i);
+    }
+    // Nothing committed, so the second statement must not have been sent either — a
+    // 'partial_save' here would claim the composition was stored on no evidence at all.
     expect(db.state.updated).toEqual(['specifications']);
   });
 
@@ -521,9 +586,92 @@ describe('saving a composition', () => {
     expect(db.state.updated).toEqual(['specifications', 'products']);
   });
 
+  it('reads a silently refused pack update as a half-save too', async () => {
+    // Same silence as the case above, on the second table. The composition IS stored — a row
+    // came back from it — so this is a half-save however the pack failed, and the copy that
+    // says so is the only one available.
+    db.state.productUpdate = { data: [], error: null };
+    const result = await saveComposition(product, product.spec);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('partial_save');
+    expect(db.state.updated).toEqual(['specifications', 'products']);
+  });
+
   it('writes both halves when both succeed', async () => {
     const result = await saveComposition(product, product.spec);
     expect(result.ok).toBe(true);
     expect(db.state.updated).toEqual(['specifications', 'products']);
+  });
+});
+
+/**
+ * Reading the list, and the one case where RLS alone is not the same answer as "this account".
+ *
+ * `accountId` comes from the entitlement, which the database resolved for THIS deployment's
+ * brand. Null means we do not know it, and the read then falls back to RLS — which returns
+ * every account the caller is a member of, not one. With one account per person those are the
+ * same list, which is exactly why the gap is easy to ship.
+ *
+ * The way it stops being the same list is not hypothetical: a suspended membership makes
+ * `is_member_of` false for that account, so `entitlements.account_id` comes back NULL while
+ * RLS quietly keeps returning the person's OTHER account's rows. The fallback would then lay
+ * a sibling brand's products out under this brand's heading — the wrong workspace, which is
+ * what §1 of the migration says must not happen ("those are two accounts and they must not see
+ * each other's products").
+ *
+ * `account_id` is read back for this and only this. Nothing renders it.
+ */
+describe('reading the products list without an account to scope it to', () => {
+  beforeEach(() => {
+    db.state.lookupFilters = [];
+    db.state.productsRead = { data: [], error: null };
+    db.state.specificationsRead = { data: [], error: null };
+  });
+
+  it('refuses to render a list that turns out to span two accounts', async () => {
+    db.state.productsRead = {
+      data: [productRow(), productRow({ id: 'prod-2', account_id: 'acct-2222' })],
+      error: null
+    };
+    db.state.specificationsRead = { data: [specRow()], error: null };
+
+    const result = await fetchProducts(null);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      // Same shape of answer as `account_ambiguous` on the write side, and for the same
+      // reason: we will not pick, and a second attempt returns the identical two accounts.
+      expect(result.message).toMatch(/more than one account/i);
+      expect(result.message).not.toMatch(/try again|in a moment/i);
+      // Nothing is lost and nothing is broken — it is the wrong-workspace risk we are
+      // refusing, not a failure — and the copy has to say so or it reads as data loss.
+      expect(result.message).toMatch(/nothing has been lost/i);
+    }
+  });
+
+  it('returns a single account\'s rows unscoped, which is every real read today', async () => {
+    db.state.productsRead = { data: [productRow()], error: null };
+    db.state.specificationsRead = { data: [specRow()], error: null };
+
+    const result = await fetchProducts(null);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.products.map((p) => p.id)).toEqual(['prod-1']);
+  });
+
+  it('does not second-guess a read it scoped itself', async () => {
+    // With an id in hand the filter already guaranteed one account, so the check is not run —
+    // and must not be, or a stale account_id on a row would break a correctly scoped read.
+    db.state.productsRead = {
+      data: [productRow(), productRow({ id: 'prod-2', account_id: 'acct-2222' })],
+      error: null
+    };
+    db.state.specificationsRead = { data: [specRow()], error: null };
+
+    const result = await fetchProducts('acct-1111');
+
+    expect(result.ok).toBe(true);
+    expect(db.state.lookupFilters).toContainEqual(['account_id', 'acct-1111']);
   });
 });

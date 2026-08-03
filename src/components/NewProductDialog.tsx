@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, Field, FormError, Input, Select } from './ui/Primitives';
+import { PlanNotice } from './PlanNotice';
 import { SkuLimitNotice } from './SkuLimitNotice';
 import { CATEGORIES, categoryById } from '../lib/categories';
 import { useEntitlement } from '../lib/entitlement';
@@ -32,6 +33,14 @@ import { useWorkspace } from '../lib/workspace';
  * code they never chose and could not change. It is also the one field that can be REFUSED:
  * codes are unique per account across live products, so a duplicate has to be fixable in the
  * form that caused it.
+ *
+ * A SUSPENDED ACCOUNT NEVER SEES THE FORM. Its insert is refused by the policy with a bare
+ * 42501 — the migration will not say why, and is right not to (section 3) — so a form here
+ * would collect four fields in order to fail on all of them, every time, with a message that
+ * cannot name the cause. The cause is already in hand: `entitlement.status === 'suspended'`,
+ * from a read taken before anything rendered, so the dialog says that instead. The screens
+ * that open it hide their create buttons on the same fact; this is the backstop for a
+ * suspension that lands between their render and this one.
  */
 export function NewProductDialog({
   onClose,
@@ -55,6 +64,10 @@ export function NewProductDialog({
 
   const [saving, setSaving] = useState(false);
   const [failure, setFailure] = useState<{reason: WriteFailure;message: string;} | null>(null);
+
+  // Only `suspended`. Free, lapsed and past_due all create products — the SKU allowance is the
+  // only thing a plan governs here, and SkuLimitNotice below is what states it.
+  const suspended = !entitlement.loading && entitlement.status === 'suspended';
 
   const changeCategory = (next: CategoryId) => {
     setCategoryId(next);
@@ -94,14 +107,22 @@ export function NewProductDialog({
     navigate(`/products/${result.value.id}`);
   };
 
-  return (
-    <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-ink/20 px-6"
-      role="dialog"
-      aria-modal="true"
-      aria-label="New product">
+  if (suspended) {
+    return (
+      <Dialog>
+        <h2 className="font-display text-lg font-medium text-ink">New product</h2>
+        <PlanNotice states={['suspended']} className="mt-4" />
+        <div className="flex justify-end pt-4">
+          <Button type="button" variant="quiet" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      </Dialog>);
 
-      <Card className="max-h-[90vh] w-full max-w-lg overflow-y-auto px-6 py-6">
+  }
+
+  return (
+    <Dialog>
         <h2 className="font-display text-lg font-medium text-ink">New product</h2>
         <p className="mt-1 max-w-prose text-sm leading-relaxed text-ink-secondary">
           {startingMaterial ?
@@ -185,7 +206,26 @@ export function NewProductDialog({
             </Button>
           </div>
         </form>
-      </Card>
+    </Dialog>);
+
+}
+
+/**
+ * The modal chrome, shared by the form and by the suspension notice that replaces it.
+ *
+ * Extracted so the suspended branch can be an early return rather than a pair of fragments
+ * wrapped around the form — the form is long, and threading a condition through it to hide it
+ * is how a field ends up rendered on a screen that is not showing a form.
+ */
+function Dialog({ children }: {children: React.ReactNode;}) {
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-center justify-center bg-ink/20 px-6"
+      role="dialog"
+      aria-modal="true"
+      aria-label="New product">
+
+      <Card className="max-h-[90vh] w-full max-w-lg overflow-y-auto px-6 py-6">{children}</Card>
     </div>);
 
 }

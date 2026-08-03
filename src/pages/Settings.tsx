@@ -124,7 +124,26 @@ export function Settings() {
  */
 function IdentityTab() {
   const { status, products } = useProducts();
-  const affected = products.reduce((sum, product) => sum + product.artefacts.length, 0);
+  const entitlement = useEntitlement();
+
+  /**
+   * How many products the ACCOUNT holds, from the database's own count.
+   *
+   * This sentence is a claim about the account, not a label on a list this tab drew, so it may
+   * not be counted from `products.length` — `fetchProducts` drops a product whose
+   * specification did not come back, and Billing removed exactly this fallback for exactly
+   * this reason. The output total went with it: it was `products.length` again, one layer of
+   * arithmetic further from the truth, and there is nothing to count it from that the database
+   * has established.
+   *
+   * Null is unknown, and unknown is said by leaving the number out rather than by printing a
+   * plausible one.
+   */
+  const skuCount = entitlement.skuCount;
+  const scope =
+  skuCount === null ?
+  'It affects every output on every product this account holds.' :
+  `It affects every output on all ${skuCount} ${skuCount === 1 ? 'product' : 'products'} this account holds.`;
 
   return (
     <>
@@ -137,11 +156,8 @@ function IdentityTab() {
         </p>
         {status === 'ready' && products.length > 0 &&
         <p className="mt-2 max-w-prose leading-relaxed">
-            It affects <span className="tabular">{affected}</span>{' '}
-            {affected === 1 ? 'output' : 'outputs'} across your{' '}
-            <span className="tabular">{products.length}</span>{' '}
-            {products.length === 1 ? 'product' : 'products'}. Identity is printed rather than
-            configured, so when it becomes editable, changing it will move all of them.
+            {scope} Identity is printed rather than configured, so when it becomes editable,
+            changing it will move all of them.
           </p>
         }
       </Callout>

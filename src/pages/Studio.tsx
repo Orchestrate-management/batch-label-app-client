@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowRightIcon, PackageIcon, PlusIcon, RefreshCwIcon } from 'lucide-react';
 import { PageHeader } from '../components/AppShell';
 import { NewProductDialog } from '../components/NewProductDialog';
+import { PlanNotice } from '../components/PlanNotice';
 import { SkuLimitNotice } from '../components/SkuLimitNotice';
 import {
   Button,
@@ -22,6 +23,12 @@ import { useProducts } from '../lib/product-store';
 /**
  * A work queue, not a dashboard. Every row is something standing between a
  * product and shipping. Nothing here restates what another screen already says.
+ *
+ * IT IS ALSO ROUTE `/`, THE FIRST SCREEN AFTER SIGN-IN, which is why the `unavailable` branch
+ * below matters more here than anywhere. A suspended account reads zero products with no
+ * error; before that state existed this screen greeted the maker by their business name and
+ * then told them they had nothing and should create their first product. Billing, in the same
+ * session, said the account was suspended — so the app contradicted itself on two tabs.
  *
  * THREE FIXTURES LEFT THIS SCREEN AND ARE WORTH NAMING. It greeted everybody as Nadia, under
  * the date "Thursday, 30 July", after a 400 millisecond `setTimeout` pretending to be a read.
@@ -54,6 +61,28 @@ export function Studio() {
   const total = outstanding.reduce((sum, entry) => sum + entry.issues.length, 0);
   const ready = status === 'ready';
 
+  /**
+   * Withheld, not empty. The store publishes this only when the entitlement it already read
+   * says the membership is suspended, so there is a true sentence to show in place of the
+   * empty state — and no reason to offer a control whose write the database will refuse.
+   */
+  const unavailable = status === 'unavailable';
+
+  /**
+   * How many products the ACCOUNT holds, which is not the length of the list on this screen.
+   *
+   * `entitlement.skuCount` is counted by the database over the same rows the enforcement
+   * trigger counts. `products.length` is what came back and could be described:
+   * `fetchProducts` drops a product whose specification did not, so the two can differ by
+   * exactly the amount that makes this header say "3 products" while Billing says "4 of 45"
+   * and the next create is refused. Billing removed its own `products.length` fallback for
+   * this reason; the same argument applies to any screen stating a fact about the account.
+   *
+   * Null is unknown and is simply not said. The clause below disappears rather than
+   * substituting a number, which is the whole rule the view's `sku_count` was built around.
+   */
+  const skuCount = entitlement.skuCount;
+
   return (
     <main className="flex-1 pb-24 xl:pb-0">
       <PageHeader
@@ -61,6 +90,8 @@ export function Studio() {
         title={greeting(entitlement.businessName)}
         description="Ingredients in, the right label and a compliant safety data sheet out. Here is what is between you and that today."
         actions={
+        unavailable ?
+        undefined :
         <Button variant="primary" onClick={() => setCreating(true)}>
             <PlusIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
             New product
@@ -71,11 +102,15 @@ export function Studio() {
         <Skeleton className="h-4 w-72 bg-paper-line/70" /> :
         ready && products.length > 0 ?
         <p className="text-[0.8125rem] text-ink-secondary">
-              <span className="tabular">{products.length}</span>{' '}
-              {products.length === 1 ? 'product' : 'products'}
-              <span className="mx-2 text-ink-tertiary" aria-hidden="true">
-                ·
-              </span>
+              {skuCount !== null &&
+          <>
+                  <span className="tabular">{skuCount}</span>{' '}
+                  {skuCount === 1 ? 'product' : 'products'}
+                  <span className="mx-2 text-ink-tertiary" aria-hidden="true">
+                    ·
+                  </span>
+                </>
+          }
               <span className="tabular">{total}</span> things outstanding across{' '}
               <span className="tabular">{outstanding.length}</span>{' '}
               {outstanding.length === 1 ? 'product' : 'products'}
@@ -88,6 +123,11 @@ export function Studio() {
 
       <div className="px-6 py-8 lg:px-10">
         <SkuLimitNotice className="mb-6" />
+
+        {/* The one thing this screen may say instead of a work queue. `states` keeps it to
+            suspension: a free or lapsed maker gets the queue and the create button, because
+            neither the plan nor the policy withholds anything from them. */}
+        {unavailable && <PlanNotice states={['suspended']} />}
 
         {status === 'error' &&
         <Callout tone="warn" role="alert" title="We could not read your products">

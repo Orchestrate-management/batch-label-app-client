@@ -8,6 +8,7 @@ import {
   UploadIcon } from
 'lucide-react';
 import { NewProductDialog } from '../components/NewProductDialog';
+import { useEntitlement } from '../lib/entitlement';
 import { toast } from 'sonner';
 import { PageHeader } from '../components/AppShell';
 import {
@@ -382,6 +383,11 @@ function ComponentTable({
 function MaterialDetail({ material }: {material: Material;}) {
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
+  const entitlement = useEntitlement();
+  // Same gate as Studio and Products: a suspended account's insert is refused by the policy,
+  // so the button that starts one is not offered. The dialog carries the same check as a
+  // backstop, and says why.
+  const suspended = !entitlement.loading && entitlement.status === 'suspended';
   return (
     <main className="flex-1 pb-24 xl:pb-0">
       <PageHeader
@@ -394,7 +400,7 @@ function MaterialDetail({ material }: {material: Material;}) {
               <ArrowLeftIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
               Register
             </Button>
-            {material.class === 'ingredient' && material.role === 'Fragrance oil' &&
+            {material.class === 'ingredient' && material.role === 'Fragrance oil' && !suspended &&
           <Button variant="primary" onClick={() => setCreating(true)}>
                 <PlusIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
                 Make something with this

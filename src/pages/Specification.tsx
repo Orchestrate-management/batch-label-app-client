@@ -15,9 +15,11 @@ import {
   Skeleton } from
 '../components/ui/Primitives';
 import { DerivationPanel } from '../components/DerivationPanel';
+import { PlanNotice } from '../components/PlanNotice';
 import { ArtefactRail } from '../components/artefact/ArtefactRail';
 import { ArtefactRenderer, defaultArtefactOptions } from '../components/artefact/ArtefactRenderer';
 import {
+  ARTEFACT_NOT_PRODUCED,
   BomSpec,
   Market,
   MixtureSpec,
@@ -41,11 +43,17 @@ import { useCategorySurface } from '../lib/workspace';
 /**
  * Resolves the product before anything renders, so the screen below can assume it has one.
  *
- * FOUR ANSWERS, AND THE OLD CODE HAD ONE. It used to be
+ * FIVE ANSWERS, AND THE OLD CODE HAD ONE. It used to be
  * `productById(productId) ?? PRODUCTS[0]` — a URL that matched nothing silently rendered the
  * first fixture product, so a stale bookmark, a deleted product or a typo all showed somebody
  * a fully populated candle with a name and a classification that had nothing to do with what
  * they asked for. There is no fallback here on purpose: not found says not found.
+ *
+ * `unavailable` is the fifth and it has to come BEFORE the not-found branch, because a
+ * suspended account reaches this route with a perfectly good bookmark and no product in the
+ * store. The not-found copy says "We read your products and there is nothing here with this
+ * address. It may have been archived" — every clause of which is false in that case, and it is
+ * the sentence a maker sees on a link they have used every week.
  */
 export function Specification() {
   const { productId } = useParams();
@@ -75,6 +83,14 @@ export function Specification() {
             Try again
           </Button>
         </Callout>
+      </main>);
+
+  }
+
+  if (status === 'unavailable') {
+    return (
+      <main className="flex-1 px-6 py-8 lg:px-10">
+        <PlanNotice states={['suspended']} />
       </main>);
 
   }
@@ -325,9 +341,21 @@ function SpecificationView({ product }: {product: Product;}) {
                           {artefact.version} · {formatDate(artefact.printedOn)}
                         </p>
                       </div>
+                      {/* THREE STATES, as ProductPipeline already does for an unrun check.
+                          `current` is true for an unproduced artefact on purpose — a surface
+                          nobody has printed cannot have drifted from the composition — so
+                          reading it as a two-state good/warn painted a green "Current" pill on
+                          every row of a list whose every row also says "Not yet produced". A
+                          maker scanning the pills saw four ticks and concluded their label and
+                          their sheet were up to date and in existence. Current and Out of date
+                          are now reserved for artefacts that have actually been produced. */}
+                      {artefact.version === ARTEFACT_NOT_PRODUCED ?
+                      <Pill tone="quiet">Not produced</Pill> :
+
                       <Pill tone={artefact.current ? 'good' : 'warn'}>
-                        {artefact.current ? 'Current' : 'Out of date'}
-                      </Pill>
+                          {artefact.current ? 'Current' : 'Out of date'}
+                        </Pill>
+                      }
                     </li>);
 
                 })}
@@ -421,10 +449,14 @@ function SdsSummary({ sds }: {sds: SdsDocumentModel;}) {
           'Every section complete'}
         </Pill>
       </div>
+      {/* NOT "the supplier sheets on file". No supplier document of this account's is held,
+          there is nowhere to put one, and section 16 of the sheet itself now says so plainly —
+          this sentence was the last surface still contradicting it. */}
       <p className="mt-2 max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
-        {derived.length} of the sixteen sections are derived from the composition and the supplier
-        sheets on file, and carry the same reasoning as the label. The sheet is a draft for review
-        by a competent person; the app produces it and shows its working, but does not sign it.
+        {derived.length} of the sixteen sections are derived from the composition and from
+        Batchlabel&rsquo;s reference data for the materials in it, and carry the same reasoning
+        as the label. The sheet is a draft for review by a competent person; the app produces it
+        and shows its working, but does not sign it.
       </p>
       {needsYou.length > 0 &&
       <ul className="mt-4 space-y-2.5">

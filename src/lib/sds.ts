@@ -337,8 +337,13 @@ export function buildSds(product: Product, derivation: Derivation, market: Marke
     number: 3,
     title: 'Composition and information on ingredients',
     kind: 'derived',
+    // SdsDocument.tsx prints `intro` onto the face of the A4 sheet, so this sentence is
+    // handed to customers and to Trading Standards. It used to say "assembled from the
+    // supplier safety data sheets on file" — an assertion, on a legal document, that this
+    // account holds supplier SDSs it has never uploaded and cannot upload, two sections above
+    // section 16 saying the opposite. Same wording as section 16 now.
     intro:
-    'Hazardous components of the mixture, assembled from the supplier safety data sheets on file. Concentrations are declared as bands.',
+    'Hazardous components of the mixture, assembled from Batchlabel\'s reference data for those materials. No supplier document of yours is held. Concentrations are declared as bands.',
     components: rows
   },
   {

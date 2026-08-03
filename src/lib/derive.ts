@@ -422,6 +422,18 @@ export function derivePhased(spec: PhasedSpec): Derivation {
     items: allergenItems,
     emptyText: 'No declarable allergen reaches the threshold for this application.'
   },
+  /*
+   * NO CPSR AND NO PIF CITATION IN EITHER GROUP BELOW, and that is the correction rather than
+   * an omission. Both used to name a Cosmetic Product Safety Report and a Product Information
+   * File as their source — "12 months, set by the stability data in the product information
+   * file", "Source: Cosmetic product safety report, section on warnings" — while the
+   * obligations list on the same screen read "No product information file has been assembled
+   * for this product" and "No signed cosmetic product safety report is on file". Nothing holds
+   * a CPSR, nothing has measured a durability, and the 12 is a constant in blankSpec. It is
+   * the same citation-of-a-document-nobody-holds that was removed from the declaration of
+   * conformity one function below, and `WhyLine.source` is optional precisely so that a line
+   * with no honest source can carry none.
+   */
   {
     id: 'durability',
     title: 'Period after opening',
@@ -432,9 +444,8 @@ export function derivePhased(spec: PhasedSpec): Derivation {
       text: `Use within ${spec.paoMonths} months of opening.`,
       why: [
       {
-        lead: `A period after opening is shown because the product has a minimum durability of more than 30 months.`,
-        meta: `${spec.paoMonths} months, set by the stability data in the product information file. Shown with the open jar symbol.`,
-        source: 'Cosmetic product safety report, stability and challenge testing'
+        lead: 'A period after opening is carried on the label, shown with the open jar symbol.',
+        meta: `${spec.paoMonths} months, which is the value set on this composition. Nothing has measured it: there is no stability or challenge testing behind this number and no safety report holding one, so it is yours to set and to justify.`
       }]
 
     }]
@@ -448,8 +459,11 @@ export function derivePhased(spec: PhasedSpec): Derivation {
       text,
       why: [
       {
-        lead: 'Standard precaution for a leave-on facial product carried on the label and the carton.',
-        source: 'Cosmetic product safety report, section on warnings'
+        // The application and the product type are read off the composition rather than
+        // asserted. This said "a leave-on facial product" for every cosmetics product,
+        // including rinse-off ones and ones that never go near a face.
+        lead: `Standard precaution carried on the label for a ${spec.application.toLowerCase()} ${spec.productType.toLowerCase()}.`,
+        meta: 'Batchlabel\'s standard wording for this kind of product. It is not drawn from a safety assessment of yours — none is held — and a competent person has to confirm it is the right set for this formula.'
       }]
 
     }))
@@ -555,9 +569,17 @@ export function deriveBom(spec: BomSpec, product?: Product): Derivation {
     const days = daysUntil(component.certificateExpiry);
     const missing = component.rohsStatus === 'Not declared';
     if (days != null && days > 0 && days <= 90) {
+      // WHOSE CERTIFICATE THIS IS, which is the whole correction. The date is a constant in
+      // the shipped component catalogue, identical for every account that picks this part, and
+      // it was being rendered as a countdown against the maker's OWN model — "the declaration
+      // for <their model> stops being supportable on that date unless a current document is on
+      // file" — outstanding compliance work, in their product's name, that they cannot
+      // discharge because there is no document store to put a document in. Same shape as the
+      // invented warnings removed from the documents pipeline stage. The fact is worth
+      // keeping; the ownership was wrong.
       proximity.push({
         code: 'Certificate',
-        message: `${component.name} has evidence expiring in ${days} days, on ${component.certificateExpiry}. The declaration for ${spec.model} stops being supportable on that date unless a current document is on file.`
+        message: `Batchlabel's data for ${component.name} was read from a document valid to ${component.certificateExpiry}, which is ${days} days away. Nothing of yours expires on that date — this is the reference library's paperwork, not evidence held for your account — but it is when our data for this part stops being current.`
       });
     }
     return {
