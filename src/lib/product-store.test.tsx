@@ -321,10 +321,11 @@ describe('re-reading the list', () => {
  * say which — so the store's job is only to publish `no-account` and NOT to fire a read that
  * has nothing to be scoped to.
  *
- * NOTE, and it is written up in docs/PRODUCTION_TODO.md: only the `reload` path publishes this
- * today. The mount effect calls fetchProducts(null), which refuses and comes back as `error`,
- * so a customer whose signup is unfinished gets "We could not read your products" and a Try
- * again button on first paint. Both paths get a test below, asserted as they actually behave.
+ * BOTH PATHS PUBLISH IT, and they did not always. The mount effect used to call
+ * fetchProducts(null), which refuses, and the refusal arrived as `error` — so an unfinished
+ * signup got "We could not read your products" and a Try again button on first paint, which is
+ * the wrong one of three sentences and the one action that cannot help. Entry 1 of
+ * docs/PRODUCTION_TODO.md. Both paths get a test below, and they now agree.
  */
 describe('a session with no account behind it', () => {
   beforeEach(() => {
@@ -366,14 +367,19 @@ describe('a session with no account behind it', () => {
     expect(fetchProducts).not.toHaveBeenCalled();
   });
 
-  it('reads the mount path as error today, not as no-account', async () => {
-    // Characterising the gap named above so that closing it is a visible change rather than a
-    // silent one. When the effect learns the same branch `read` already has, this expectation
-    // becomes 'no-account' and the assertion above it is what proves the fix.
+  it('publishes no-account on the mount path too, without firing a read to find out', async () => {
+    // This expectation used to read `error`, pinning the gap deliberately so that closing it
+    // would be a visible change rather than a silent one. The effect now carries the same
+    // branch `read` has, so both paths answer the same way — which is what makes the copy on
+    // Products.tsx, Studio, the specification screen and the designer reachable at all.
     render(tree());
 
-    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('error'));
-    expect(fetchProducts).toHaveBeenCalledWith(null);
+    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('no-account'));
+    expect(screen.getByTestId('error')).toHaveTextContent('none');
+    // Not merely "did not come back as error": the read with nothing to scope it to is never
+    // fired. fetchProducts(null) refuses, and asking it to refuse is a round trip spent
+    // learning something the entitlement already told us.
+    expect(fetchProducts).not.toHaveBeenCalled();
   });
 });
 

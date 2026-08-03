@@ -179,6 +179,16 @@ export function ProductsProvider({ children }: {children: React.ReactNode;}) {
       setState({ userId, status: 'unavailable', products: [], error: null });
       return;
     }
+    // The same branch `read` has, and for the same reason. Without it this path calls
+    // fetchProducts(null), which correctly refuses, and the refusal arrives as `error` — so an
+    // unfinished signup was told "We could not read your products" with a Try again button, on
+    // first paint, on every screen. Nothing failed and waiting does not finish a signup: that
+    // is the retry-that-cannot-work pattern this codebase has removed three times. `no-account`
+    // is the fact, and the screens read entitlement.status to say which of the three causes.
+    if (!accountId) {
+      setState({ userId, status: 'no-account', products: [], error: null });
+      return;
+    }
     let active = true;
     // No reset to 'loading' on a re-read: a retry revalidates in the background and keeps
     // showing the answer we already have, so pressing "try again" does not blank a screen

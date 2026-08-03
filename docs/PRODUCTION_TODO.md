@@ -7,7 +7,16 @@ in the code it bites. Several streams append here — add, never rewrite.
 
 ## Data layer coverage (stream: coverage of src/lib/products.ts and src/lib/product-store.tsx)
 
-### 1. `no-account` never reaches the screen on first paint — the mount path publishes `error` instead
+### 1. `no-account` never reaches the screen on first paint — the mount path publishes `error` instead — DONE
+
+**DONE** (commit `entry 1`, `fix(1)`): option (a). The mount effect gained the same
+`if (!accountId)` branch `read` already had, publishing `no-account` and firing no read. The
+pinned test `"reads the mount path as error today, not as no-account"` became
+`"publishes no-account on the mount path too, without firing a read to find out"`; the
+load-bearing test above it ("never publishes an empty account…") is unchanged and still passes.
+The `?? []` note below was left as-is: unreachable by PostgREST's contract, no recommendation
+attached to it, and changing it would be a behaviour change with nothing able to exercise it.
+
 
 **The gap.** `ProductsProvider` has two ways to fill the store and they disagree about the case
 where no account resolved. The `read` callback (product-store.tsx:146-154), which `reload()` uses,
