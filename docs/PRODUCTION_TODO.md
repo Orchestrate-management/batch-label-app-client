@@ -296,7 +296,15 @@ replaces the whole app — see entry 5b).
 
 ## Known correctness bugs (stream: src/pages/** and src/lib/entitlement.tsx)
 
-### 9. The `no-account` screens are written and correct, and inert until entry 1 lands
+### 9. The `no-account` screens are written and correct, and inert until entry 1 lands — DONE
+
+**DONE** (same commit as entry 1, `fix(1)`): no change to the screens, which were right. Entry 1's
+branch is the whole of it. Verified rather than rewritten: `Studio.tsx:175`, `Products.tsx:108`,
+`Specification.tsx:105` and `ArtefactDesigner.tsx:95` all branch on `'no-account'`, the store now
+publishes it on the mount path as well as on `reload`, and the shared `ProductsStatus` union binds
+the two ends at typecheck so they cannot drift apart silently. `src/pages/no-account.test.tsx`
+(16 tests) green on the receiving end, `product-store.test.tsx` (24) on the sending end.
+
 
 **The gap.** This stream gave Studio, the specification screen and the artefact designer the
 `no-account` branch that only `Products.tsx` had, and moved the copy into one component so the
