@@ -629,9 +629,37 @@ describe('reading the products list without an account to scope it to', () => {
     db.state.specificationsRead = { data: [], error: null };
   });
 
-  it('refuses to render a list that turns out to span two accounts', async () => {
+  /**
+   * A NULL ID MEANS DO NOT READ.
+   *
+   * This used to read unfiltered and then check whether the rows spanned two accounts. That
+   * guard was blind to the case that actually matters — ONE account, the WRONG one — which
+   * is what a null id returns for somebody who holds a Batchlabel account and a sibling-brand
+   * account. Dropping the predicate does not narrow the query to nothing; it widens it to
+   * everything the caller may see, and RLS then hides only the rows they may not.
+   */
+  it('refuses outright rather than reading unfiltered', async () => {
+    db.state.productsRead = { data: [productRow()], error: null };
+    db.state.specificationsRead = { data: [specRow()], error: null };
+
+    const result = await fetchProducts(null);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      // Nothing failed and nothing is lost — it is the wrong-workspace risk being refused —
+      // and the copy has to say so, or it reads as data loss.
+      expect(result.message).toMatch(/nothing has been lost/i);
+      // Not a retry prompt: a second attempt resolves to the same null id.
+      expect(result.message).not.toMatch(/try again|in a moment/i);
+    }
+  });
+
+  it('issues no query at all, so a single wrong account cannot come back', async () => {
+    // The previous behaviour returned this row. One account, so the span check passed, and it
+    // rendered under whichever brand's deployment asked. The refusal has to happen before the
+    // request, not after it.
     db.state.productsRead = {
-      data: [productRow(), productRow({ id: 'prod-2', account_id: 'acct-2222' })],
+      data: [productRow({ id: 'sibling-1', account_id: 'acct-sibling' })],
       error: null
     };
     db.state.specificationsRead = { data: [specRow()], error: null };
@@ -639,25 +667,7 @@ describe('reading the products list without an account to scope it to', () => {
     const result = await fetchProducts(null);
 
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      // Same shape of answer as `account_ambiguous` on the write side, and for the same
-      // reason: we will not pick, and a second attempt returns the identical two accounts.
-      expect(result.message).toMatch(/more than one account/i);
-      expect(result.message).not.toMatch(/try again|in a moment/i);
-      // Nothing is lost and nothing is broken — it is the wrong-workspace risk we are
-      // refusing, not a failure — and the copy has to say so or it reads as data loss.
-      expect(result.message).toMatch(/nothing has been lost/i);
-    }
-  });
-
-  it('returns a single account\'s rows unscoped, which is every real read today', async () => {
-    db.state.productsRead = { data: [productRow()], error: null };
-    db.state.specificationsRead = { data: [specRow()], error: null };
-
-    const result = await fetchProducts(null);
-
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.products.map((p) => p.id)).toEqual(['prod-1']);
+    expect(db.state.lookupFilters).toEqual([]);
   });
 
   it('does not second-guess a read it scoped itself', async () => {

@@ -10,6 +10,7 @@ import { CATEGORIES } from '../lib/categories';
 import { outstandingObligations } from '../lib/regimes';
 import { specSummary } from '../lib/derive';
 import { formatDate } from '../lib/model';
+import { useEntitlement } from '../lib/entitlement';
 import { useProducts } from '../lib/product-store';
 import { useWorkspace } from '../lib/workspace';
 
@@ -34,6 +35,7 @@ export function Products() {
   // See product-store.tsx. Published only for a suspended membership, which the entitlement
   // read established before this screen rendered — so there is something true to say, and no
   // reason to offer a create the database will refuse.
+  const entitlement = useEntitlement();
   const unavailable = status === 'unavailable';
 
   // Only categories that hold something get a section. A brand new account gets ONE empty
@@ -95,6 +97,29 @@ export function Products() {
               <RefreshCwIcon className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
               Try again
             </Button>
+          </Callout>
+        }
+
+        {status === 'no-account' &&
+        <Callout tone="info" role="status" title="This workspace has no account behind it yet">
+            {/* NOT the empty state, and not an error either. Nothing failed and nothing is
+                missing — we simply have no account to scope a read to, so we are showing
+                nothing rather than guessing. Rendering "No products yet" here would tell
+                somebody who may hold a full workspace that it is empty, which is the one
+                sentence this screen must never get wrong. */}
+            <p className="max-w-prose leading-relaxed">
+              {entitlement.status === 'no_membership' ?
+              'Your account has not finished being set up, so there is nothing to show yet. Finishing signup fixes this — a retry will not.' :
+              entitlement.status === 'unknown' ?
+              'We could not read which account this workspace belongs to just now. This is us, not you, and nothing of yours has been lost.' :
+              'We could not tell which of your accounts this workspace should be showing, so it is showing none rather than the wrong one. Nothing has been lost.'}
+            </p>
+            {entitlement.status === 'unknown' &&
+            <Button size="sm" variant="secondary" className="mt-3" onClick={refresh}>
+                <RefreshCwIcon className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
+                Try again
+              </Button>
+            }
           </Callout>
         }
 

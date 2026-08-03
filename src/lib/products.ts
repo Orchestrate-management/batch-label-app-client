@@ -192,6 +192,23 @@ const GENERIC_WRITE_FAILURE =
  * with no account behind them. So it says the true thing and points at the step that actually
  * fixes it, rather than at a retry that will keep failing until that step is done.
  */
+/**
+ * The read backstop when fetchProducts is handed no account.
+ *
+ * Deliberately NOT NO_ACCOUNT_MESSAGE, which is the write path's and says signup has not
+ * finished. That is true of only one of the three ways a null id arrives here — the others
+ * are an entitlement read that did not come back, and a person holding more than one account
+ * where current_account_id() correctly refuses to guess. Pointing all three at the setup step
+ * would be wrong twice.
+ *
+ * ProductsProvider makes this unreachable in practice by publishing 'no-account' instead of
+ * calling. It exists because the alternative to refusing is reading unfiltered, and an
+ * unfiltered read is how one brand's deployment renders another brand's products.
+ */
+const NO_ACCOUNT_READ_MESSAGE =
+'We could not tell which account this workspace belongs to, so it is showing none rather ' +
+'than the wrong one. Nothing has been lost.';
+
 const NO_ACCOUNT_MESSAGE =
 'There is no account to save this into yet — your signup was not finished, so nothing has been ' +
 'saved. Finish setting up your account and this will work. If you think it is already set up, ' +
@@ -271,11 +288,6 @@ const NOT_CONFIGURED_MESSAGE =
  * It reports nothing about the products themselves — they are all this person's, and none of
  * them is lost — only that we cannot tell which workspace this screen is.
  */
-const AMBIGUOUS_ACCOUNT_READ_MESSAGE =
-'You hold more than one account, and we could not tell which of them this workspace should be ' +
-'showing — so it is showing none of them rather than the wrong one. Nothing has been lost, and ' +
-'trying again will not change it. Get in touch and we will point this workspace at the right ' +
-'account.';
 
 /**
  * The limit message itself is NOT produced here.
@@ -655,28 +667,45 @@ export function toProduct(product: ProductRow, spec: SpecificationRow): Product 
  *
  * Archived rows are excluded, matching the meter's own definition of live.
  */
-export async function fetchProducts(accountId: string | null = null): Promise<ReadResult> {
+export async function fetchProducts(accountId: string | null): Promise<ReadResult> {
   const client = supabase;
   if (!client) return { ok: false, message: NOT_CONFIGURED_MESSAGE };
 
-  let productsQuery = client.
-  from('products').
-  select(PRODUCT_COLUMNS).
-  is('archived_at', null);
-
-  let specificationsQuery = client.
-  from('specifications').
-  select(SPECIFICATION_COLUMNS).
-  is('archived_at', null);
-
-  if (accountId) {
-    productsQuery = productsQuery.eq('account_id', accountId);
-    specificationsQuery = specificationsQuery.eq('account_id', accountId);
+  // A NULL ID MEANS DO NOT READ. It does not mean read without a filter.
+  //
+  // This is item 6 of the account_id contract in the migration header, and dropping the
+  // predicate is the one thing it forbids: the query does not narrow to nothing, it WIDENS
+  // to everything the caller may see. is_member_of then hides the other account's rows only
+  // if there is another account — so for somebody holding a Batchlabel account and a
+  // sibling-brand account, a null id returns the SIBLING's products, spanning exactly one
+  // account, and renders them under Batchlabel's chrome.
+  //
+  // The old guard checked `accounts.size > 1`, which is blind to precisely that case: one
+  // account, wrong account. Widening it to `!== 1` would not help either — it would still
+  // have rendered the wrong single account before the check ran.
+  //
+  // Not reachable in production today, because only 'batchlabel' is seeded in public.brands.
+  // It is latent, the contract already forbids it, and the default parameter is what made it
+  // easy to reach by accident — so the parameter is now required.
+  if (!accountId) {
+    return { ok: false, message: NO_ACCOUNT_READ_MESSAGE };
   }
 
+  // Always filtered. RLS is the boundary; this is the narrowing, and the two are not
+  // substitutes — RLS answers "may I see this row", the filter answers "is this the account
+  // whose workspace I am rendering".
   const [productsResponse, specificationsResponse] = await Promise.all([
-  productsQuery.order('created_at', { ascending: true }),
-  specificationsQuery]
+  client.
+  from('products').
+  select(PRODUCT_COLUMNS).
+  is('archived_at', null).
+  eq('account_id', accountId).
+  order('created_at', { ascending: true }),
+  client.
+  from('specifications').
+  select(SPECIFICATION_COLUMNS).
+  is('archived_at', null).
+  eq('account_id', accountId)]
   );
 
   if (productsResponse.error || specificationsResponse.error) {
@@ -691,13 +720,6 @@ export async function fetchProducts(accountId: string | null = null): Promise<Re
   }
 
   const productRows = (productsResponse.data ?? []) as ProductRow[];
-
-  // Only when we had no id to filter on. With one, the filter already guaranteed this and the
-  // check would be a second copy of the same condition.
-  if (!accountId) {
-    const accounts = new Set(productRows.map((row) => row.account_id).filter(Boolean));
-    if (accounts.size > 1) return { ok: false, message: AMBIGUOUS_ACCOUNT_READ_MESSAGE };
-  }
 
   const specifications = new Map<string, SpecificationRow>();
   for (const row of (specificationsResponse.data ?? []) as SpecificationRow[]) {

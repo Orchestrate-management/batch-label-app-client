@@ -58,7 +58,22 @@ import { fetchProducts } from './products';
  * screens show a skeleton, and none of them claims the account is empty.
  */
 
-export type ProductsStatus = 'loading' | 'ready' | 'error' | 'unavailable';
+export type ProductsStatus =
+  | 'loading'
+  | 'ready'
+  | 'error'
+  /** Suspended. The account exists and holds products; we are declining to show them. */
+  | 'unavailable'
+  /**
+   * No account resolved, so there is nothing to scope a read to.
+   *
+   * Distinct from 'error' on purpose: nothing failed. Three causes reach here — signup never
+   * finished, the entitlement read did not come back, or the person holds more than one
+   * account and current_account_id() correctly refuses to guess. The screens read
+   * entitlement.status to say which, because "we could not read your products" is wrong for
+   * all three and "you have no products" is wrong and alarming for all three.
+   */
+  | 'no-account';
 
 export interface ProductsValue {
   status: ProductsStatus;
@@ -96,9 +111,13 @@ export function ProductsProvider({ children }: {children: React.ReactNode;}) {
   // re-query the whole list on each one.
   const userId = user?.id ?? null;
 
-  // Null is "we do not know which account", not "no filter is needed" — a failed entitlement
-  // read lands here too. fetchProducts falls back to RLS alone in that case, and refuses to
-  // publish a list that turns out to span two accounts.
+  // Null is "we do not know which account", not "no filter is needed".
+  //
+  // fetchProducts used to fall back to RLS alone here and guard by checking the list did not
+  // span two accounts. That guard was blind to the case that matters — ONE account, the
+  // WRONG account — which is what a null id returns for somebody who also holds a
+  // sibling-brand account. It now refuses a null id outright, per item 6 of the account_id
+  // contract, and this provider stops calling it rather than relying on that backstop.
   const accountId = entitlement.loading ? null : entitlement.accountId;
   const accountResolved = !entitlement.loading;
 
@@ -120,13 +139,28 @@ export function ProductsProvider({ children }: {children: React.ReactNode;}) {
       setState({ userId, status: 'unavailable', products: [], error: null });
       return;
     }
+    // No account to read. Three different causes, and they are three different sentences —
+    // the entitlement status is what distinguishes them, so the screens say which rather
+    // than rendering one generic failure over all of them. Reading unfiltered "just to show
+    // something" is exactly what the contract forbids.
+    if (accountResolved && !accountId) {
+      setState({
+        userId,
+        status: 'no-account',
+        products: [],
+        error: null
+      });
+      return;
+    }
+    if (!accountId) return; // still resolving; the effect re-runs when it lands
+
     const result = await fetchProducts(accountId);
     setState(
       result.ok ?
       { userId, status: 'ready', products: result.products, error: null } :
       { userId, status: 'error', products: [], error: result.message }
     );
-  }, [userId, accountId, suspended]);
+  }, [userId, accountId, accountResolved, suspended]);
 
   useEffect(() => {
     if (!userId) {
