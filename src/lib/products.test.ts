@@ -427,6 +427,24 @@ describe('the composition a new product starts from', () => {
     if (fromSheet.kind === 'mixture') expect(fromSheet.fragranceId).toBe('ing-black-fig');
   });
 
+  it('starts a device with no electrical ratings, rather than with plausible ones', () => {
+    // THE ONE VALUE IN blankSpec THAT WOULD HAVE BEEN A LEGAL MARKING. It seeded
+    // 5 V / 2 A / 10 W: the three numbers a rating plate is printed from, invented by us,
+    // and not distinguishable from ones a maker had entered. A wax warmer is a mains
+    // product. The em dash is what `toProduct` maps an absent rating to, so the seed and the
+    // read now agree, and a plate cannot carry a figure nobody stated.
+    const device = blankSpec(categoryById('electronics'), 'Wax warmer');
+    expect(device.kind).toBe('bom');
+    if (device.kind === 'bom') {
+      expect(device.ratings).toEqual({ voltage: '—', current: '—', power: '—' });
+      // Belt and braces, and the assertion that survives a change of placeholder: whatever
+      // it is, it may not parse as a quantity anybody could print.
+      for (const value of Object.values(device.ratings)) {
+        expect(value).not.toMatch(/\d/);
+      }
+    }
+  });
+
   it('starts a cosmetic with its phases and a device with an unassigned model', () => {
     const cosmetic = blankSpec(categoryById('cosmetics'), 'Face oil');
     expect(cosmetic.kind).toBe('phased');

@@ -793,7 +793,21 @@ fragranceId?: string)
     productType,
     model: 'Not yet assigned',
     items: [],
-    ratings: { voltage: '5 V', current: '2 A', power: '10 W' },
+    /**
+     * NOT 5 V / 2 A / 10 W, WHICH IS WHAT THIS SEEDED UNTIL NOW.
+     *
+     * Those three numbers are what a rating plate is printed from, and a rating plate is a
+     * legal marking on a device. A maker who creates a wax warmer, never opens the ratings
+     * fields and produces the plate would have got 5 V / 2 A / 10 W on a mains product —
+     * plausible enough to survive a glance, and invented by us. Nothing on the screen said
+     * they were a placeholder, because they did not look like one.
+     *
+     * The em dash is what `toProduct` already maps an absent rating to (the `str(…, '—')`
+     * fallback in the bom branch), so a spec that has never been filled in now reads the same
+     * whether it came from here or from a stored row — and the line above has always taken
+     * the same view of the model, which is the other field the plate carries.
+     */
+    ratings: { voltage: '—', current: '—', power: '—' },
     netQuantity: 400,
     netUnit: 'g',
     packagingId: 'pkg-device-box'

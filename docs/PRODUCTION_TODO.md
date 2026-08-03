@@ -88,7 +88,24 @@ the next file added has a reason to be listed rather than a reason not to be.
 **Where it bites.** `vitest.config.ts`, `thresholds` block — the comment there points back at this
 entry. Blocker: `src/lib/billing.ts:126` and `:142`.
 
-### 3. A new device starts with plausible-looking electrical ratings
+### 3. A new device starts with plausible-looking electrical ratings — DONE
+
+**DONE** (commit `fix(3)`): option (a). `blankSpec` seeds `{ voltage: '—', current: '—',
+power: '—' }`. (a) over (b) because it makes the seed and the read agree exactly — `toProduct`
+already maps an absent rating to `'—'` via `str(…, '—')` — and because the line above has
+always taken the same view of the model (`'Not yet assigned'`), which is the other field the
+plate carries; an empty string would have relied on a database round trip to become the dash.
+
+`DerivationPanel`/`ArtefactRenderer` needed no matching state: `deriveBom` interpolates the
+three strings straight into the plate line, so it now reads `— ⎓ —, —` instead of `5 V ⎓ 2 A,
+10 W`. Nothing in `pipeline.ts` flags unfilled ratings as outstanding, which is the same
+treatment `model` has always had — a broader change than this entry, and not made here.
+
+The named test now has a sibling above it that asserts the seed directly, plus a
+placeholder-independent assertion that no seeded rating contains a digit. `src/lib/fixtures.ts`
+still carries `5 V DC / 2 A / 10 W`, deliberately: that is a fixture product with real shape
+for the derivation tests, and `fixtures.guard.test.ts` proves nothing that ships imports it.
+
 
 **The gap.** `blankSpec` seeds a bill-of-materials composition with
 `ratings: { voltage: '5 V', current: '2 A', power: '10 W' }` (`products.ts:796`). The same function
