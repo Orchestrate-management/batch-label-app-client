@@ -111,6 +111,27 @@ export function createCheckoutSession(tier: string, interval: BillingInterval): 
 }
 
 /**
+ * Buys the 30p rail-test price, to prove the live payment rail without a £14 charge.
+ *
+ * Sends no tier. `railTest` is a separate field precisely so a tier request can never
+ * resolve to the penny price and the penny can never buy a tier — the pair is not
+ * expressible in either direction.
+ *
+ * THE GATE IS SERVER-SIDE AND IS NOT THIS FUNCTION. www compares the email on the VERIFIED
+ * Supabase token against RAIL_TEST_ALLOWED_EMAILS and answers 403 to everyone else. So it
+ * does not matter what this app renders, or who calls this from a browser console: the
+ * answer is the same. That is what makes it safe for the affordance to be nothing more
+ * than a URL nobody is told about.
+ */
+export function createRailTestSession(): Promise<BillingResult> {
+  return post('/api/create-checkout-session', {
+    railTest: true,
+    success_path: CHECKOUT_SUCCESS_PATH,
+    cancel_path: CHECKOUT_CANCEL_PATH
+  });
+}
+
+/**
  * Opens the Stripe Customer Portal: card, invoices, VAT number, tier switch and cancel.
  *
  * There is no in-app substitute for any of it, and that is the design rather than a gap. One
