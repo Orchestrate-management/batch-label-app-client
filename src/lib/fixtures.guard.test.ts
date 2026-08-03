@@ -69,3 +69,44 @@ describe('the product fixtures', () => {
     expect(IMPORTS_FIXTURES.test("import { supabase } from './supabase';")).toBe(false);
   });
 });
+
+/**
+ * The shipped catalogue must hold reference data only, never account-scoped state.
+ *
+ * The guard above watches imports of fixtures.ts, and INBOX and DOCUMENT_HISTORY lived in
+ * catalog.ts — which ships — so it saw nothing while Materials opened on "3 documents
+ * received, none read yet" for an account that had received none, and while the pipeline
+ * told makers, under their own product name, that a newer sheet was waiting and their
+ * allergen table had changed.
+ *
+ * The distinction the catalogue has to hold: a fragrance oil that exists in the world is
+ * REFERENCE data and belongs here; a document THIS account received is per-account STATE and
+ * belongs in Supabase. Both look like a const array in a bundle. Only one is a lie when it
+ * renders for somebody who never saw it.
+ *
+ * This assertion is narrow by design — it names the two that escaped rather than pretending
+ * to recognise the category. A regex cannot tell reference from state. What it can do is
+ * stop these two coming back, and put the question in front of whoever adds the next one.
+ */
+describe('the shipped materials catalogue', () => {
+  const catalogue = readFileSync(join(SRC, 'lib', 'catalog.ts'), 'utf8');
+
+  it.each(['INBOX', 'DOCUMENT_HISTORY'])(
+    'does not declare %s — that is per-account state, not reference data',
+    (name) => {
+      expect(
+        new RegExp(`export\\s+const\\s+${name}\\b`).test(catalogue),
+        `catalog.ts declares ${name}. It ships to every browser, so anything here renders ` +
+        'identically for every account. A document an account received is that account\'s ' +
+        'state and belongs in Supabase; if there is no table for it yet, the screen says ' +
+        '"not built yet" rather than showing a plausible example.'
+      ).toBe(false);
+    }
+  );
+
+  it('still holds the reference data the app legitimately ships', () => {
+    // Non-vacuity, and the other half of the point: this file is not the problem, its
+    // contents were. A materials catalogue everyone shares is exactly right.
+    expect(/export\s+const\s+MATERIALS\b/.test(catalogue)).toBe(true);
+  });
+});

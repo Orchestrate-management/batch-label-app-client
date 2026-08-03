@@ -1,7 +1,5 @@
 import {
   ComponentMaterial,
-  DocumentRevision,
-  InboxDocument,
   IngredientMaterial,
   Material,
   MaterialClass,
@@ -682,104 +680,8 @@ export function materialById(id: string): Material | undefined {
 
 /* --------------------------------------------------- the document layer */
 
-/**
- * Documents dropped in but not yet reconciled against a material. This is the
- * front door of the product: nothing can be classified until a sheet is read.
- */
-export const INBOX: InboxDocument[] = [
-{
-  id: 'inb-1',
-  fileName: 'Aurelia_BlackFigCassis_SDS_v4.2_EN.pdf',
-  receivedOn: '2026-07-28',
-  appearsToBe: 'Safety data sheet',
-  supplier: 'Aurelia Fragrances',
-  matchedMaterialId: 'ing-black-fig',
-  matchConfidence: 'high',
-  note: 'Newer than the version on file. Section 3 and the allergen table both changed.'
-},
-{
-  id: 'inb-2',
-  fileName: 'scan_20260727_114302.pdf',
-  receivedOn: '2026-07-27',
-  appearsToBe: 'Safety data sheet',
-  supplier: 'Unidentified',
-  matchConfidence: 'none',
-  note: 'A photograph of a printed sheet. The supplier name and product identifier could not be read.'
-},
-{
-  id: 'inb-3',
-  fileName: 'Kestrel-silicone-cable-RoHS.pdf',
-  receivedOn: '2026-07-24',
-  appearsToBe: 'Declaration of conformity',
-  supplier: 'Kestrel Components',
-  matchedMaterialId: 'cmp-cable',
-  matchConfidence: 'low',
-  note: 'Part number on the document does not match the one on file. Confirm before it is accepted.'
-}];
 
 
-/**
- * Every sheet ever received for a material, and what each revision moved. A
- * revised sheet is the most common cause of a wrong label, so the app has to
- * be able to say exactly what it did.
- */
-export const DOCUMENT_HISTORY: Record<string, DocumentRevision[]> = {
-  'ing-black-fig': [
-  {
-    version: '4.2',
-    date: '2026-07-15',
-    received: '2026-07-28',
-    summary:
-    'Skin sensitisation specific concentration limit lowered from 0.6 percent to 0.4 percent. Linalool raised from 4.9 percent to 5.4 percent.',
-    moved: [
-    'Not yet accepted. Accepting it will re-run the classification for Black Fig and Cassis.']
-
-  },
-  {
-    version: '4.1',
-    date: '2025-11-02',
-    received: '2025-11-06',
-    summary: 'Aquatic chronic classification added. Allergen table unchanged.',
-    moved: ['Added H412 to Black Fig and Cassis, and P273 with it.']
-  },
-  {
-    version: '3.8',
-    date: '2024-06-18',
-    received: '2024-06-20',
-    summary: 'First sheet received for this material.',
-    moved: []
-  }],
-
-  'ing-smoked-vetiver': [
-  {
-    version: '2.4',
-    date: '2026-02-11',
-    received: '2026-02-14',
-    summary: 'Coumarin content revised from 1.8 percent to 2.1 percent.',
-    moved: ['No change to any output. Coumarin was already declared on the EUH208 line.']
-  },
-  {
-    version: '2.1',
-    date: '2024-09-30',
-    received: '2024-10-03',
-    summary: 'First sheet received for this material.',
-    moved: []
-  }],
-
-  'ing-alcohol': [
-  {
-    version: '6.0',
-    date: '2025-04-22',
-    received: '2025-04-25',
-    summary: 'Flash point restated as 12 °C closed cup. No classification change.',
-    moved: ['Updated section 9 of every sheet that carries this carrier.']
-  }]
-
-};
-
-export function documentHistory(materialId: string): DocumentRevision[] {
-  return DOCUMENT_HISTORY[materialId] ?? [];
-}
 
 export function ingredientById(id: string): IngredientMaterial | undefined {
   return INGREDIENTS.find((i) => i.id === id);

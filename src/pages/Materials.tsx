@@ -3,7 +3,6 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeftIcon,
   CheckIcon,
-  FileTextIcon,
   PencilIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -11,6 +10,7 @@ import {
 'lucide-react';
 import { NewProductDialog } from '../components/NewProductDialog';
 import { toast } from 'sonner';
+import type { DocumentRevision } from '../lib/model';
 import { PageHeader } from '../components/AppShell';
 import {
   Button,
@@ -23,12 +23,10 @@ import {
 '../components/ui/Primitives';
 import {
   COMPONENTS,
-  INBOX,
   INGREDIENTS,
   MATERIALS,
   MATERIAL_CLASSES,
   PACKAGING,
-  documentHistory,
   materialById } from
 '../lib/catalog';
 import {
@@ -86,7 +84,7 @@ export function Materials() {
         } />
       
 
-      <DocumentInbox onOpen={(id) => navigate(`/materials/ingredient/${id}`)} />
+      <DocumentInbox />
 
       <div className="space-y-4 px-6 py-8 lg:px-10">
         <nav
@@ -188,79 +186,30 @@ function ConformityStore() {
 }
 
 /**
- * The front door. Documents dropped in but not yet reconciled against a
- * material, each stating what it appears to be and how sure the match is.
+ * The document inbox, which does not exist.
+ *
+ * This rendered "3 documents received, none read yet" — with supplier names, dates and a
+ * Review button — from a constant shipped in the bundle. Every account saw the same three,
+ * including an account that had received nothing and could not receive anything, because
+ * there is no document store and no way to send one.
+ *
+ * Replaced rather than hidden. A maker who reads "documents received" and finds none has
+ * lost nothing; a maker who reads it and believes it has been told their supplier sent
+ * something they now need to act on.
  */
-function DocumentInbox({ onOpen }: {onOpen: (materialId: string) => void;}) {
-  if (INBOX.length === 0) return null;
-
+function DocumentInbox() {
   return (
-    <section
-      aria-labelledby="inbox-heading"
-      className="border-b border-paper-line bg-paper-panel/40 px-6 py-6 lg:px-10">
-      
-      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-3">
-        <SectionTitle>
-          <span id="inbox-heading">Inbox</span>
-        </SectionTitle>
-        <p className="text-2xs text-ink-tertiary">
-          <span className="tabular">{INBOX.length}</span> documents received, none read yet
+    <section aria-labelledby="inbox-heading" className="mb-8">
+      <SectionTitle className="mb-3">
+        <span id="inbox-heading">Document inbox</span>
+      </SectionTitle>
+      <Callout tone="info" title="Not built yet">
+        <p className="max-w-prose leading-relaxed">
+          There is nowhere to send a supplier document yet, and nothing of yours is stored.
+          Keep your safety data sheets where you keep them now. We would rather say so than
+          show you an inbox with somebody else&rsquo;s documents in it.
         </p>
-      </div>
-
-      <ul className="grid gap-3 lg:grid-cols-3">
-        {INBOX.map((document) => {
-          const material = document.matchedMaterialId ?
-          materialById(document.matchedMaterialId) :
-          undefined;
-          return (
-            <li key={document.id}>
-              <Card className="flex h-full flex-col px-5 py-4">
-                <div className="flex items-start justify-between gap-3">
-                  <FileTextIcon
-                    className="mt-0.5 h-4 w-4 flex-none text-ink-tertiary"
-                    strokeWidth={1.25}
-                    aria-hidden="true" />
-                  
-                  <p className="min-w-0 flex-1 break-all text-[0.8125rem] font-medium text-ink">
-                    {document.fileName}
-                  </p>
-                </div>
-                <p className="mt-2 text-2xs text-ink-tertiary">
-                  {document.appearsToBe} · {document.supplier} · received{' '}
-                  {formatDate(document.receivedOn)}
-                </p>
-                <p className="mt-2 max-w-prose flex-1 text-[0.8125rem] leading-relaxed text-ink-secondary">
-                  {document.note}
-                </p>
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                  <Pill tone={document.matchConfidence === 'high' ? 'good' : 'warn'}>
-                    {document.matchConfidence === 'high' && material ?
-                    `Matches ${material.name}` :
-                    document.matchConfidence === 'low' && material ?
-                    `Possibly ${material.name}` :
-                    'No match found'}
-                  </Pill>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() =>
-                    document.matchedMaterialId ?
-                    onOpen(document.matchedMaterialId) :
-                    toast('Nothing to match against', {
-                      description:
-                      'The supplier and product identifier could not be read. Choose the material by hand.'
-                    })
-                    }>
-                    
-                    Review
-                  </Button>
-                </div>
-              </Card>
-            </li>);
-
-        })}
-      </ul>
+      </Callout>
     </section>);
 
 }
@@ -497,7 +446,10 @@ function MaterialDetail({ material }: {material: Material;}) {
  * the most common cause of a wrong label, so this has to be answerable.
  */
 function DocumentHistory({ material }: {material: Material;}) {
-  const revisions = documentHistory(material.id);
+  // No revision history exists: nothing records one, and the list this used to read was
+  // a shipped constant. What IS true is the single sheet on file, which the material
+  // itself carries — so say only that.
+  const revisions: DocumentRevision[] = [];
 
   return (
     <Card className="px-5 py-5">

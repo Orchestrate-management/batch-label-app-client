@@ -1,4 +1,4 @@
-import { INBOX, ingredientById, materialById } from './catalog';
+import { ingredientById, materialById } from './catalog';
 import { Derivation } from './derive';
 import { Market, Product } from './model';
 import { outstandingObligations } from './regimes';
@@ -50,24 +50,20 @@ market: Market)
   const materials = ids.map((id) => materialById(id)).filter(Boolean);
 
   /* ------------------------------------------------------------ documents */
-  const revised = materials.filter(
-    (material) => material && material.document.latestVersion
-  );
-  const waiting = INBOX.filter(
-    (item) => item.matchedMaterialId && ids.includes(item.matchedMaterialId)
-  );
-  const documentIssues: StageIssue[] = [
-  ...revised.map((material) => ({
-    label: `${material!.name}, newer sheet published`,
-    detail: `Version ${material!.document.latestVersion} was published on ${material!.document.latestDate}. The classification still uses ${material!.document.version}.`,
-    to: `/materials/${material!.class}/${material!.id}`
-  })),
-  ...waiting.map((item) => ({
-    label: `${item.fileName} waiting in the inbox`,
-    detail: item.note,
-    to: '/materials/ingredient'
-  }))];
-
+  //
+  // NO DOCUMENT ISSUES ARE RAISED, because nothing watches supplier documents yet.
+  //
+  // This used to produce two, and both were invented. One matched a seeded inbox against the
+  // maker's own specification and told them a newer sheet was waiting and their allergen
+  // table had changed. The other read `latestVersion` off the shipped materials catalogue and
+  // told them "version 4.3 was published, the classification still uses 4.2". Neither had
+  // checked anything: both were constants shipped in the bundle, and they rendered under the
+  // customer's own product name as outstanding compliance work.
+  //
+  // Telling a maker their live classification may be wrong is the most consequential sentence
+  // this product can produce. It has to come from having looked. When the watchers in the
+  // spec are built, this is where their findings belong.
+  const documentIssues: StageIssue[] = [];
 
   /* ---------------------------------------------------------- composition */
   const compositionIssues: StageIssue[] = [];
@@ -168,7 +164,10 @@ market: Market)
     id: 'documents',
     label: 'Documents',
     settled: documentIssues.length === 0,
-    summary: `${materials.length} materials, every sheet current`,
+    // Not "every sheet current": nothing checks whether a supplier has reissued, so that
+    // was a reassurance the product had not earned. Count what we know — the materials on
+    // the composition — and claim nothing about their currency.
+    summary: `${materials.length} ${materials.length === 1 ? 'material' : 'materials'} on this composition`,
     issues: documentIssues
   },
   {
