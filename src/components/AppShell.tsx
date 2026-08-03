@@ -215,7 +215,7 @@ function AccountMenu() {
           type="button"
           role="menuitem"
           className={itemClass}
-          onClick={() => navigate('/settings/billing')}>
+          onClick={() => navigate('/billing')}>
           
             <CreditCardIcon className="h-4 w-4" strokeWidth={1.25} aria-hidden="true" />
             Billing

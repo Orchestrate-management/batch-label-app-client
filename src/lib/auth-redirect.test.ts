@@ -8,7 +8,7 @@ import {
   readBounceRecord,
   writeBounceRecord } from
 './auth-redirect';
-import { PRICING_URL, loginUrl, marketingUrl } from './marketing';
+import { loginUrl, marketingUrl } from './marketing';
 
 /**
  * The rule that stops an infinite redirect.
@@ -120,6 +120,5 @@ describe('where we send people', () => {
   it('builds marketing links without doubling the slash', () => {
     expect(marketingUrl('/pricing')).toBe('https://www.batchlabel.xyz/pricing');
     expect(marketingUrl('pricing')).toBe('https://www.batchlabel.xyz/pricing');
-    expect(PRICING_URL).toBe('https://www.batchlabel.xyz/pricing');
   });
 });

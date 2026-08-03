@@ -30,6 +30,12 @@ export default defineConfig({
         'src/lib/auth-redirect.ts',
         'src/lib/membership.ts',
         'src/lib/marketing.ts',
+        // The billing rail. Prices, the entitlement read and the two calls that move money
+        // are the units where being wrong costs a customer real money, so they are held to
+        // the same bar as the session adapter rather than left with the view layer.
+        'src/lib/plans.ts',
+        'src/lib/billing.ts',
+        'src/lib/activation.ts',
       ],
       thresholds: {
         lines: 70,

@@ -11,6 +11,8 @@ import { Specification } from './pages/Specification';
 import { ArtefactDesigner } from './pages/ArtefactDesigner';
 import { Records } from './pages/Records';
 import { Settings } from './pages/Settings';
+import { Billing } from './pages/Billing';
+import { BillingReturn } from './pages/BillingReturn';
 
 /**
  * Nothing in this app is public.
@@ -53,6 +55,14 @@ function AppRoutes() {
             <Route path="/records" element={<Records />} />
             <Route path="/records/:recordCode" element={<Records />} />
             <Route path="/compliance" element={<Navigate to="/" replace />} />
+            {/* Both paths are load-bearing rather than chosen: the marketing repo's checkout
+                endpoint defaults its success and cancel URLs to `${APP_URL}/billing/success`
+                and `${APP_URL}/billing`, and the portal returns to `/billing`. Renaming
+                either of these strands a customer on a 404 immediately after paying. */}
+            <Route path="/billing" element={<Billing />} />
+            <Route path="/billing/success" element={<BillingReturn />} />
+            {/* Billing used to be a Settings tab. Old bookmarks and links land here. */}
+            <Route path="/settings/billing" element={<Navigate to="/billing" replace />} />
             <Route path="/settings" element={<Navigate to="/settings/identity" replace />} />
             <Route path="/settings/:tab" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />

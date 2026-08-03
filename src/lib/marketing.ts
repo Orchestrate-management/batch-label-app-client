@@ -1,14 +1,22 @@
 /**
  * Links back to the marketing site.
  *
- * The split: www.batchlabel.xyz owns accounts, payments and plan changes.
- * app.batchlabel.xyz (this repo) owns the product. Anything that creates or
- * changes an entitlement happens on www, because that is where Stripe lives and
- * where the webhook that writes `brand_memberships` runs. This app never invents
- * a payment flow of its own — it links.
+ * THE SPLIT MOVED, and this header is the place it is easiest to be out of date about.
+ * www.batchlabel.xyz is marketing plus auth: the public pricing page, signup, login,
+ * password reset. app.batchlabel.xyz (this repo) owns the product AND all account
+ * management, including buying a plan — see src/pages/Billing.tsx.
  *
- * Override the origin per deployment with VITE_MARKETING_URL (a preview of the
- * marketing site, or a local dev instance).
+ * What is still on www is the SERVER side of billing, and it stays there for one reason:
+ * the Stripe secret key, the Supabase service-role key and the plan contract live on that
+ * deployment and none of them may ever be in a browser bundle. So the app calls
+ * `/api/plans`, `/api/create-checkout-session` and `/api/create-portal-session` on the
+ * origin below, cross-origin and with the caller's access token, and Stripe returns the
+ * customer to a path in THIS app.
+ *
+ * Override the origin per deployment with VITE_MARKETING_URL (a preview of the marketing
+ * site, or a local dev instance). Note that a preview origin also has to be added to the
+ * marketing repo's CORS allow-list, or every billing call from it is blocked in the browser
+ * with nothing in the server logs.
  */
 
 const DEFAULT_MARKETING_URL = 'https://www.batchlabel.xyz';
@@ -36,11 +44,25 @@ export function loginUrl(next: string): string {
   return `${marketingUrl('/log-in')}?next=${encodeURIComponent(next)}`;
 }
 
-/** Plans and prices. Where someone on the free plan goes to start paying. */
-export const PRICING_URL = marketingUrl('/pricing');
-
-/** The signed-in account area on www: card, invoices, cancel, Stripe portal. */
-export const ACCOUNT_URL = marketingUrl('/dashboard/account');
+/**
+ * THERE IS DELIBERATELY NO PRICING_URL AND NO ACCOUNT_URL HERE ANY MORE.
+ *
+ * Both existed because this app had no billing of its own and sent people to www to buy a
+ * plan or to reach the Stripe portal. Purchases and the portal both happen on /billing now,
+ * and sending a signed-in customer to another origin to buy the thing they are looking at
+ * loses people for no reason — the Checkout session has to carry their Supabase user id
+ * anyway, which means it has to be created from a screen that knows who they are.
+ *
+ * www still has a public pricing page. It is for people who are not signed in, which by
+ * definition is nobody in this app.
+ */
 
 /** The marketing front door. Where sign-out returns to. */
 export const HOME_URL = MARKETING_URL;
+
+/**
+ * Where a person goes when software cannot help them — a suspended account, an account that
+ * never finished setting up. Published on the marketing site's footer, so it is a real
+ * address rather than one invented here.
+ */
+export const SUPPORT_EMAIL = 'hello@batchlabel.co.uk';

@@ -1,9 +1,8 @@
 import { useState } from 'react';
 import { NavLink, useParams } from 'react-router-dom';
-import { CheckIcon, ExternalLinkIcon, PhoneIcon, PlusIcon } from 'lucide-react';
+import { PhoneIcon, PlusIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '../components/AppShell';
-import { PlanNotice } from '../components/PlanNotice';
 import {
   Button,
   Callout,
@@ -17,21 +16,23 @@ import {
 import {
   ADDRESSES,
   ARTEFACT_LABELS,
-  BILLING,
   BUSINESS,
   CATEGORIES,
   COMPETENT_PERSON,
-  PLANS,
   STOCK,
   TEAM } from
 '../lib/products';
 import { TeamMember } from '../lib/model';
-import { useEntitlement } from '../lib/entitlement';
-import { entitlementMessage, planLabel } from '../lib/membership';
-import { ACCOUNT_URL, PRICING_URL } from '../lib/marketing';
 import { regimeById } from '../lib/regimes';
 import { useProducts, useWorkspace } from '../lib/workspace';
 
+/**
+ * BILLING IS NOT A TAB HERE ANY MORE. It is a page of its own at /billing, because it is now
+ * where a purchase happens rather than a read-only summary with links to somewhere else, and
+ * because Stripe returns a customer to /billing/success — a checkout return landing inside a
+ * settings tab would be a strange place to be told a payment worked. /settings/billing
+ * redirects there, so an old bookmark still arrives in the right place.
+ */
 const TABS = [
 {
   id: 'identity',
@@ -46,13 +47,6 @@ const TABS = [
   title: 'Team and review',
   description:
   'Who can work in this workspace, and who signs off a safety data sheet before it is issued.'
-},
-{
-  id: 'billing',
-  label: 'Billing',
-  title: 'Plan and billing',
-  description:
-  'Priced by the number of products you hold. Reading supplier documents is never metered.'
 },
 {
   id: 'preferences',
@@ -99,7 +93,6 @@ export function Settings() {
       <div className="space-y-8 px-6 py-8 lg:px-10">
         {active.id === 'identity' && <IdentityTab />}
         {active.id === 'team' && <TeamTab />}
-        {active.id === 'billing' && <BillingTab />}
         {active.id === 'preferences' && <PreferencesTab />}
       </div>
     </main>);
@@ -211,8 +204,11 @@ function IdentityTab() {
           Printed in section 15 of every safety data sheet.
         </p>
         <Card className="grid gap-5 px-5 py-5 md:grid-cols-2">
-          <Field label="VAT number">
-            <Input className="tabular" defaultValue={BILLING.vatNumber} onChange={() => setDirty(true)} />
+          <Field
+            label="VAT number"
+            hint="Printed in section 15. The VAT number Stripe uses for the reverse charge is separate, and lives in the billing portal.">
+
+            <Input className="tabular" defaultValue={BUSINESS.vatNumber} onChange={() => setDirty(true)} />
           </Field>
           <Field
             label="Emergency telephone"
@@ -332,146 +328,6 @@ function TeamTab() {
         }} />
 
       }
-    </>);
-
-}
-
-/* --------------------------------------------------------------- billing */
-
-/**
- * The one screen in this app that reads a real server-side fact.
- *
- * Everything shown here comes from the maker's brand_memberships row, which is
- * written only by the marketing site's Stripe webhook under the service role.
- * This client cannot write it — RLS grants SELECT on your own row and no INSERT
- * or UPDATE to anyone — so there is nothing here that changes a plan, only
- * things that link to where a plan can be changed.
- *
- * The card on file, the invoice history and the plan switcher that used to live
- * here were stubs. They have gone rather than been left looking real next to a
- * genuine plan status: a fake "Visa ending 4417" beside a true "past due" is
- * worse than no payment section at all. Both now link to www, where the actual
- * Stripe customer portal is.
- */
-function BillingTab() {
-  const products = useProducts();
-  const entitlement = useEntitlement();
-
-  // The stub plans still describe what each tier includes, so we use them for
-  // the product allowance when the plan we were given matches one. An unknown
-  // plan key (a new tier added in Stripe before this app knows about it) shows
-  // usage without a ceiling rather than inventing one.
-  const knownPlan = PLANS.find((option) => option.id === entitlement.plan) ?? null;
-  const used = products.length;
-  const pct = knownPlan ? Math.min(100, Math.round(used / knownPlan.productLimit * 100)) : 0;
-
-  const statusTone =
-  entitlement.status === 'active' ?
-  'good' :
-  entitlement.status === 'free' || entitlement.status === 'no_membership' ?
-  'neutral' :
-  'warn';
-
-  return (
-    <>
-      <section aria-labelledby="plan-heading">
-        <SectionTitle className="mb-3">
-          <span id="plan-heading">Plan</span>
-        </SectionTitle>
-        <Card className="px-5 py-5">
-          {entitlement.loading ?
-          <p className="text-sm text-ink-secondary">Checking your plan…</p> :
-
-          <>
-              <div className="flex flex-wrap items-baseline justify-between gap-3">
-                <p className="font-display text-base font-medium text-ink">
-                  {planLabel(entitlement)}
-                </p>
-                <Pill tone={statusTone}>
-                  {entitlement.status === 'active' &&
-                <CheckIcon className="h-3 w-3" strokeWidth={1.5} aria-hidden="true" />
-                }
-                  {entitlement.planStatus ?? entitlement.status.replace(/_/g, ' ')}
-                </Pill>
-              </div>
-              <p className="mt-2 max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
-                {entitlementMessage(entitlement)}
-              </p>
-              {entitlement.businessName &&
-            <p className="mt-3 text-2xs text-ink-tertiary">
-                  Billed as {entitlement.businessName}
-                </p>
-            }
-            </>
-          }
-        </Card>
-        <PlanNotice className="mt-4" feature="Exporting a finished artefact" />
-      </section>
-
-      <section aria-labelledby="usage-heading">
-        <SectionTitle className="mb-3">
-          <span id="usage-heading">Usage</span>
-        </SectionTitle>
-        <Card className="px-5 py-5">
-          <p className="text-sm text-ink">
-            <span className="tabular font-medium">{used}</span>
-            {knownPlan ?
-            <>
-                {' of '}
-                <span className="tabular">{knownPlan.productLimit}</span> products on{' '}
-                {knownPlan.name}
-              </> :
-
-            <> products</>
-            }
-          </p>
-          {knownPlan &&
-          <div
-            className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-paper-line"
-            role="progressbar"
-            aria-valuenow={used}
-            aria-valuemin={0}
-            aria-valuemax={knownPlan.productLimit}
-            aria-label="Products used">
-
-              <div className="h-full rounded-full bg-teal" style={{ width: `${pct}%` }} />
-            </div>
-          }
-          <p className="mt-3 max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
-            Reading supplier documents is never metered, on any plan. At the limit you can keep
-            working on existing products but cannot create a new one until you move up a plan.
-          </p>
-        </Card>
-      </section>
-
-      <section aria-labelledby="manage-heading">
-        <SectionTitle className="mb-3">
-          <span id="manage-heading">Payment and invoices</span>
-        </SectionTitle>
-        <Card className="px-5 py-5">
-          <p className="max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
-            Your card, your invoices, your VAT details and cancelling all live on batchlabel.xyz,
-            in the same place you set up the account. Changing your plan there updates this app
-            the moment the payment goes through — there is nothing to do here afterwards.
-          </p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <a
-              href={ACCOUNT_URL}
-              className="inline-flex h-9 items-center gap-2 rounded-control bg-teal px-3 text-[0.8125rem] font-medium text-white transition-colors hover:bg-teal-hover">
-
-              Manage billing
-              <ExternalLinkIcon className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
-            </a>
-            <a
-              href={PRICING_URL}
-              className="inline-flex h-9 items-center gap-2 rounded-control border border-paper-line bg-paper px-3 text-[0.8125rem] font-medium text-ink transition-colors hover:bg-paper-panel">
-
-              Compare plans
-              <ExternalLinkIcon className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
-            </a>
-          </div>
-        </Card>
-      </section>
     </>);
 
 }
