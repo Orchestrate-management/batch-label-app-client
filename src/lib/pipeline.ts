@@ -1,7 +1,6 @@
 import { INBOX, ingredientById, materialById } from './catalog';
 import { Derivation } from './derive';
 import { Market, Product } from './model';
-import { driftFor } from './products';
 import { outstandingObligations } from './regimes';
 import { buildSds } from './sds';
 
@@ -127,8 +126,11 @@ market: Market)
   }));
 
   /* ---------------------------------------------------------------- outputs */
+  // Nothing stores artefacts, so nothing a real account holds is ever out of date: an output
+  // that has never been produced cannot have drifted from the composition. The branch stays
+  // because a fixture product in the test suite does carry stale artefacts, and because the
+  // day artefacts are stored this is where "out of date" comes back.
   const stale = product.artefacts.filter((artefact) => !artefact.current);
-  const drift = driftFor(product);
   const sds = product.artefacts.some((artefact) => artefact.type === 'sds') ?
   buildSds(product, derivation, market) :
   null;
@@ -139,7 +141,7 @@ market: Market)
   [
   {
     label: `${stale.length} output${stale.length === 1 ? '' : 's'} out of date`,
-    detail: drift?.sentence ?? 'The composition changed after these were produced.',
+    detail: 'The composition changed after these were produced.',
     to: `/products/${product.id}`
   }] :
 

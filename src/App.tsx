@@ -4,6 +4,7 @@ import { AppShell } from './components/AppShell';
 import { AuthProvider, RequireAuth } from './lib/auth';
 import { EntitlementProvider } from './lib/entitlement';
 import { MetaTrackingProvider } from './lib/meta-consent';
+import { ProductsProvider } from './lib/product-store';
 import { WorkspaceProvider } from './lib/workspace';
 import { Studio } from './pages/Studio';
 import { Materials } from './pages/Materials';
@@ -27,6 +28,13 @@ import { BillingReturn } from './pages/BillingReturn';
  * one account-level consent flag for a specific signed-in maker, and there is
  * nobody to read it for until there is a session. It renders nothing and gates
  * everything Meta-related — see lib/meta-consent.tsx.
+ *
+ * ProductsProvider is inside all of it, and inside the entitlement, because it
+ * reads one account's products — row level security answers it from the session
+ * and from nothing this app sends, so there is nothing to ask before there is a
+ * session either. It is above the router so that the list survives navigation:
+ * every screen shares one read, and a maker moving between Studio and a product
+ * does not re-query on each hop.
  */
 export function App() {
   return (
@@ -34,7 +42,9 @@ export function App() {
       <RequireAuth>
         <MetaTrackingProvider>
           <EntitlementProvider>
-            <AppRoutes />
+            <ProductsProvider>
+              <AppRoutes />
+            </ProductsProvider>
           </EntitlementProvider>
         </MetaTrackingProvider>
       </RequireAuth>

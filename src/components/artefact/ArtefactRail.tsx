@@ -3,7 +3,6 @@ import { ChevronUpIcon, RulerIcon } from 'lucide-react';
 import { ArtefactInstance, Market, Product } from '../../lib/model';
 import { Derivation, clpMinimumDimensions } from '../../lib/derive';
 import { packagingById } from '../../lib/catalog';
-import { driftFor } from '../../lib/products';
 import { Pill } from '../ui/Primitives';
 import { ArtefactRenderer, defaultArtefactOptions } from './ArtefactRenderer';
 
@@ -57,7 +56,6 @@ export function ArtefactRail(props: RailProps) {
   if (!artefact) return null;
 
   const isSds = artefact.type === 'sds';
-  const drift = driftFor(product);
 
   const tabs =
   <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Outputs">
@@ -124,9 +122,10 @@ export function ArtefactRail(props: RailProps) {
               page.
             </p>
           }
-          {!artefact.current && drift &&
+          {!artefact.current &&
           <p className="mt-3 rounded-control border border-clay/30 bg-clay-tint px-3 py-2 text-2xs leading-relaxed text-clay-dark">
-              {drift.sentence}
+              The composition changed after this version was produced, so what is on the shelf no
+              longer matches what is on screen.
             </p>
           }
         </div>

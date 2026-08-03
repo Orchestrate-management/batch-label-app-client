@@ -1,11 +1,7 @@
-import { useState } from 'react';
 import { NavLink, useParams } from 'react-router-dom';
-import { PhoneIcon, PlusIcon } from 'lucide-react';
-import { toast } from 'sonner';
 import { PageHeader } from '../components/AppShell';
 import { AccountTab } from '../components/settings/AccountTab';
 import {
-  Button,
   Callout,
   Card,
   Field,
@@ -14,18 +10,13 @@ import {
   SectionTitle,
   Select } from
 '../components/ui/Primitives';
-import {
-  ADDRESSES,
-  ARTEFACT_LABELS,
-  BUSINESS,
-  CATEGORIES,
-  COMPETENT_PERSON,
-  STOCK,
-  TEAM } from
-'../lib/products';
-import { TeamMember } from '../lib/model';
+import { ARTEFACT_LABELS, CATEGORIES, STOCK } from '../lib/categories';
+import { ADDRESSES, BUSINESS, COMPETENT_PERSON } from '../lib/identity';
+import { useAuth } from '../lib/auth';
+import { useEntitlement } from '../lib/entitlement';
 import { regimeById } from '../lib/regimes';
-import { useProducts, useWorkspace } from '../lib/workspace';
+import { useProducts } from '../lib/product-store';
+import { useWorkspace } from '../lib/workspace';
 
 /**
  * BILLING IS NOT A TAB HERE ANY MORE. It is a page of its own at /billing, because it is now
@@ -40,14 +31,14 @@ const TABS = [
   label: 'Identity',
   title: 'Identity',
   description:
-  'Everything here is printed. It appears on every label and in sections 1 and 15 of every safety data sheet, so changing it moves your outputs.'
+  'Everything here is printed. It appears on every label and in sections 1 and 15 of every safety data sheet. It is not stored yet, so what you see below is exactly what is being printed.'
 },
 {
   id: 'team',
   label: 'Team',
   title: 'Team and review',
   description:
-  'Who can work in this workspace, and who signs off a safety data sheet before it is issued.'
+  'Who can work in this workspace, and who signs off a safety data sheet before it is issued. One account, one person, for now.'
 },
 {
   id: 'account',
@@ -114,21 +105,46 @@ export function Settings() {
 
 /* -------------------------------------------------------------- identity */
 
+/**
+ * The printed identity — WHICH IS NOT STORED ANYWHERE, AND NOW SAYS SO.
+ *
+ * Every field on this tab used to be an editable input, prefilled with the details of Hearth
+ * and Hollow Ltd, above a "Save identity" button that raised a toast reading "Identity saved.
+ * 14 outputs now carry the previous details and need versioning." Nothing was saved and
+ * nothing was versioned. A maker who corrected their telephone number here — a number CLP
+ * requires on the label, which is why the hint below says an email address will not do —
+ * would have been told it was saved, and would have gone on believing their label carried it.
+ *
+ * There is no table for any of it. The account data schema creates accounts, account_members,
+ * specifications and products; `accounts` has a `data` jsonb column that is the obvious home
+ * for this, but the browser is granted SELECT on accounts and nothing else, because a client
+ * that could write to accounts could rename or re-brand a workspace. So the fields are shown,
+ * disabled, carrying the placeholders that are actually being printed — and the page says
+ * plainly that this is not editable yet, rather than collecting an edit it will throw away.
+ */
 function IdentityTab() {
-  const products = useProducts();
-  const [dirty, setDirty] = useState(false);
-
+  const { status, products } = useProducts();
   const affected = products.reduce((sum, product) => sum + product.artefacts.length, 0);
 
   return (
     <>
-      {dirty &&
-      <Callout tone="warn" title="This will move your outputs">
-          Identity is printed, not configured. Saving invalidates the{' '}
-          <span className="tabular">{affected}</span> outputs currently carrying the old details,
-          and each will need versioning before the next run.
-        </Callout>
-      }
+      <Callout tone="warn" title="Not editable yet">
+        <p className="max-w-prose leading-relaxed">
+          Your printed identity is not stored yet, so nothing on this tab can be saved. The
+          placeholders below are exactly what is being drawn onto your label previews and into
+          sections 1 and 15 of your safety data sheet — that is what an unfilled supplier block
+          looks like, rather than a setting somebody has entered.
+        </p>
+        {status === 'ready' && products.length > 0 &&
+        <p className="mt-2 max-w-prose leading-relaxed">
+            It affects <span className="tabular">{affected}</span>{' '}
+            {affected === 1 ? 'output' : 'outputs'} across your{' '}
+            <span className="tabular">{products.length}</span>{' '}
+            {products.length === 1 ? 'product' : 'products'}. Identity is printed rather than
+            configured, so when it becomes editable, changing it will move all of them.
+          </p>
+        }
+      </Callout>
 
       <section aria-labelledby="business-heading">
         <SectionTitle className="mb-1">
@@ -139,46 +155,30 @@ function IdentityTab() {
         </p>
         <Card className="grid gap-5 px-5 py-5 md:grid-cols-2">
           <Field label="Registered name" hint="Used on invoices and in section 1">
-            <Input defaultValue={BUSINESS.name} onChange={() => setDirty(true)} />
+            <Input disabled value={BUSINESS.name} readOnly />
           </Field>
           <Field label="Trading name" hint="The name printed on labels">
-            <Input defaultValue={BUSINESS.tradingName} onChange={() => setDirty(true)} />
+            <Input disabled value={BUSINESS.tradingName} readOnly />
           </Field>
           <Field
             label="Telephone number"
             hint="CLP requires a telephone number for the supplier. An email address does not satisfy it, so this is printed.">
-            
-            <div className="relative">
-              <PhoneIcon
-                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-tertiary"
-                strokeWidth={1.25}
-                aria-hidden="true" />
-              
-              <Input
-                className="tabular pl-9"
-                defaultValue={BUSINESS.phone}
-                onChange={() => setDirty(true)} />
-              
-            </div>
+
+            <Input className="tabular" disabled value={BUSINESS.phone} readOnly />
           </Field>
           <Field label="Email" hint="For your records. Never printed on a label.">
-            <Input defaultValue={BUSINESS.email} onChange={() => setDirty(true)} />
+            <Input disabled value={BUSINESS.email} readOnly />
           </Field>
         </Card>
       </section>
 
       <section aria-labelledby="addresses-heading">
-        <div className="mb-1 flex items-center justify-between">
-          <SectionTitle>
-            <span id="addresses-heading">Address blocks by market</span>
-          </SectionTitle>
-          <Button size="sm" variant="secondary" onClick={() => toast('Address block added')}>
-            <PlusIcon className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
-            Add address block
-          </Button>
-        </div>
+        <SectionTitle className="mb-1">
+          <span id="addresses-heading">Address blocks by market</span>
+        </SectionTitle>
         <p className="mb-3 max-w-prose text-2xs leading-relaxed text-ink-tertiary">
-          Chosen automatically by the market a product is sold into.
+          Chosen automatically by the market a product is sold into. Which block is used is
+          real; what is in it is not stored yet.
         </p>
         <div className="grid gap-4 md:grid-cols-2">
           {ADDRESSES.map((address) =>
@@ -190,7 +190,7 @@ function IdentityTab() {
                 </div>
                 {address.isDefault && <Pill tone="good">Default</Pill>}
               </div>
-              <address className="mt-3 not-italic text-sm leading-relaxed text-ink-secondary">
+              <address className="mt-3 not-italic text-sm leading-relaxed text-ink-tertiary">
                 {address.lines.map((line) =>
               <span key={line} className="block">
                     {line}
@@ -219,45 +219,48 @@ function IdentityTab() {
         <Card className="grid gap-5 px-5 py-5 md:grid-cols-2">
           <Field
             label="VAT number"
-            hint="Printed in section 15. The VAT number Stripe uses for the reverse charge is separate, and lives in the billing portal.">
+            hint="Printed in section 15. The VAT number Stripe uses for the reverse charge is separate, is real, and lives in the billing portal.">
 
-            <Input className="tabular" defaultValue={BUSINESS.vatNumber} onChange={() => setDirty(true)} />
+            <Input className="tabular" disabled value={BUSINESS.vatNumber} readOnly />
           </Field>
           <Field
             label="Emergency telephone"
             hint="Leave as the national service unless you hold a dedicated poisons line.">
-            
-            <Select defaultValue="national" onChange={() => setDirty(true)}>
+
+            <Select disabled defaultValue="national">
               <option value="national">National poisons service</option>
               <option value="own">A number we operate</option>
             </Select>
           </Field>
         </Card>
       </section>
-
-      <div className="flex items-center gap-3">
-        <Button
-          variant="primary"
-          disabled={!dirty}
-          onClick={() => {
-            toast('Identity saved', {
-              description: `${affected} outputs now carry the previous details and need versioning.`
-            });
-            setDirty(false);
-          }}>
-          
-          Save identity
-        </Button>
-        {!dirty && <p className="text-2xs text-ink-tertiary">Nothing changed.</p>}
-      </div>
     </>);
 
 }
 
 /* ------------------------------------------------------------------ team */
 
+/**
+ * Who is in this workspace — WHICH IS EXACTLY ONE PERSON, AND THE SCHEMA MEANS IT.
+ *
+ * This tab used to list Nadia Osei, Tom Rivers and Priya Shah with roles and "last active"
+ * times, an Invite button that raised "Invitation sent", and a Remove button behind a
+ * confirmation dialog that removed nobody. None of the three existed, no invitation was sent,
+ * and a maker who "removed" somebody was told they no longer had access to a workspace they
+ * had never had access to.
+ *
+ * The account data schema states the position outright: account_members is READ ONLY to the
+ * browser, "One row today: the owner. Invites are deferred." That is not an oversight to work
+ * around — a client that could insert an account_members row could hand itself, or somebody
+ * else, another account's data. So this tab shows the one real member, from the session, and
+ * says what is coming without pretending any of it is here.
+ *
+ * The shape is deliberate all the same: the tables key on account_id rather than user_id
+ * precisely so that seats become an invite flow and a count rather than a migration.
+ */
 function TeamTab() {
-  const [pendingRemoval, setPendingRemoval] = useState<TeamMember | null>(null);
+  const { user } = useAuth();
+  const entitlement = useEntitlement();
 
   return (
     <>
@@ -269,78 +272,41 @@ function TeamTab() {
           Every safety data sheet is produced as a draft. This is who reviews and signs it.
         </p>
         <Card className="px-5 py-5">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium text-ink">{COMPETENT_PERSON.name}</p>
-              <p className="mt-0.5 text-2xs text-ink-tertiary">
-                {COMPETENT_PERSON.organisation} · {COMPETENT_PERSON.email}
-              </p>
-            </div>
-            <Pill tone={COMPETENT_PERSON.awaiting ? 'warn' : 'good'}>
-              {COMPETENT_PERSON.awaiting ?
-              `${COMPETENT_PERSON.awaiting} sheets awaiting review` :
-              'Nothing awaiting review'}
-            </Pill>
-          </div>
-          <p className="mt-4 max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
-            {COMPETENT_PERSON.reviewed} sheets signed to date. The app assembles the document and
-            shows its working; it never signs on their behalf.
+          <p className="text-sm font-medium text-ink-tertiary">{COMPETENT_PERSON.name}</p>
+          <p className="mt-3 max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
+            Naming a reviewer is not built yet, so no sheet has been reviewed or signed. The app
+            assembles the document and shows its working; it never signs on anybody's behalf,
+            and it will not tell you a sheet has been reviewed when it has not.
           </p>
-          <div className="mt-4">
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => toast('Reviewer change requested')}>
-              
-              Change reviewer
-            </Button>
-          </div>
         </Card>
       </section>
 
       <section aria-labelledby="team-heading">
-        <div className="mb-3 flex items-center justify-between">
-          <SectionTitle>
-            <span id="team-heading">Members</span>
-          </SectionTitle>
-          <Button size="sm" variant="secondary" onClick={() => toast('Invitation sent')}>
-            <PlusIcon className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
-            Invite
-          </Button>
-        </div>
+        <SectionTitle className="mb-1">
+          <span id="team-heading">Members</span>
+        </SectionTitle>
+        <p className="mb-3 max-w-prose text-2xs leading-relaxed text-ink-tertiary">
+          One account, one person, for now.
+        </p>
         <Card className="divide-y divide-paper-line">
-          {TEAM.map((member) =>
-          <div key={member.email} className="flex flex-wrap items-center gap-4 px-5 py-4">
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-ink">{member.name}</p>
-                <p className="text-2xs text-ink-tertiary">{member.email}</p>
-              </div>
-              <Pill tone="neutral">{member.role}</Pill>
-              <span className="text-2xs text-ink-tertiary">Active {member.lastActive}</span>
-              {member.role !== 'Owner' &&
-            <Button size="sm" variant="quiet" onClick={() => setPendingRemoval(member)}>
-                  Remove
-                </Button>
-            }
+          <div className="flex flex-wrap items-center gap-4 px-5 py-4">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-ink">
+                {entitlement.businessName ?? 'This account'}
+              </p>
+              <p className="text-2xs text-ink-tertiary">{user?.email ?? 'Signed in'}</p>
             </div>
-          )}
+            <Pill tone="neutral">Owner</Pill>
+          </div>
         </Card>
+        <Callout className="mt-4" title="Inviting people is not built yet">
+          <p className="max-w-prose leading-relaxed">
+            Your account is already the thing your products belong to rather than your login,
+            which is the part that had to be right first — so adding a colleague later is an
+            invitation and a seat count, not a rebuild. There is nothing to switch on today.
+          </p>
+        </Callout>
       </section>
-
-      {pendingRemoval &&
-      <ConfirmDialog
-        title={`Remove ${pendingRemoval.name}`}
-        body={`${pendingRemoval.name} will lose access to materials, compositions and outputs. Production records they created stay in the register.`}
-        confirmLabel="Remove"
-        onCancel={() => setPendingRemoval(null)}
-        onConfirm={() => {
-          toast('Team member removed', {
-            description: `${pendingRemoval.name} no longer has access.`
-          });
-          setPendingRemoval(null);
-        }} />
-
-      }
     </>);
 
 }
@@ -436,43 +402,5 @@ function PreferencesTab() {
         </Card>
       </section>
     </>);
-
-}
-
-/* ---------------------------------------------------------------- shared */
-
-function ConfirmDialog({
-  title,
-  body,
-  confirmLabel,
-  onCancel,
-  onConfirm
-
-
-
-
-
-
-}: {title: string;body: string;confirmLabel: string;onCancel: () => void;onConfirm: () => void;}) {
-  return (
-    <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-ink/20 px-6"
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}>
-      
-      <Card className="w-full max-w-md px-6 py-6">
-        <h2 className="font-display text-lg font-medium text-ink">{title}</h2>
-        <p className="mt-2 text-sm leading-relaxed text-ink-secondary">{body}</p>
-        <div className="mt-6 flex justify-end gap-2">
-          <Button variant="quiet" onClick={onCancel}>
-            Cancel
-          </Button>
-          <Button variant="danger" onClick={onConfirm}>
-            {confirmLabel}
-          </Button>
-        </div>
-      </Card>
-    </div>);
 
 }

@@ -1,11 +1,16 @@
-import React, { createContext, useContext, useEffect, useState, useSyncExternalStore } from 'react';
-import { CategoryId, Product } from './model';
-import { CATEGORIES, allProducts, categoryById, subscribeProducts } from './products';
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { CategoryId } from './model';
+import { CATEGORIES, categoryById } from './categories';
 
-/** The live product list, including anything created in this session. */
-export function useProducts(): Product[] {
-  return useSyncExternalStore(subscribeProducts, allProducts, allProducts);
-}
+/**
+ * `useProducts` has moved to lib/product-store.tsx.
+ *
+ * It used to live here, over a module-level array that could be read synchronously and never
+ * failed. Products come from Supabase now, so the list has a loading state and an error state
+ * and both have to be rendered distinctly — which is a provider, not a re-export. What is
+ * left here is what was always workspace state: which categories are switched on, and which
+ * surface hue the screen in view is using. Neither is stored anywhere yet.
+ */
 
 type WorkspaceValue = {
   enabledCategories: CategoryId[];

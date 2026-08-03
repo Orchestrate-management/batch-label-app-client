@@ -1,556 +1,83 @@
+import { supabase } from './supabase';
+import { ARTEFACT_LABELS, CategoryPack, categoryById, categoryForKind } from './categories';
 import {
-  ArtefactStock,
-  ArtefactType,
-  Attention,
+  ArtefactInstance,
+  BomSpec,
   CategoryId,
-  ConformityDocument,
+  Market,
+  MixtureSpec,
+  PhasedSpec,
   Product,
-  ProductionRecord,
   RegimeId,
-  Spec,
-  SupplierAddress,
-  TeamMember } from
+  Spec } from
 './model';
 
-/* --------------------------------------------------------- category packs */
+/**
+ * Products and specifications, read from and written to Supabase.
+ *
+ * WHAT THIS FILE USED TO BE. `let runtime: Product[] = PRODUCTS`, a module-level array seeded
+ * with six invented products, mutated by createProduct and read through useSyncExternalStore.
+ * It reset on reload, and every account saw the same six. The founder's sentence — "when a
+ * user signs in for the first time, they are in a virgin account with no products… if they
+ * add a product or any other detail then that actually is created" — is a description of
+ * exactly the two things that array got wrong.
+ *
+ * THE CONTRACT IT WRITES AGAINST is the header of
+ * supabase/migrations/20260803120000_account_data_schema.sql. Read that; it is the interface.
+ * The three things it decides that this file cannot un-decide:
+ *
+ *   1. EVERYTHING KEYS ON account_id, NEVER user_id. There is not a `user_id` anywhere in
+ *      this module and there must never be one. Team support is deferred, not cancelled;
+ *      today one member per account means the two columns would hold the same value, and
+ *      that is precisely why the right one has to be written now rather than backfilled onto
+ *      live customer data later.
+ *
+ *   2. THIS FILE NEVER SENDS AN account_id. Not once, not even one it read back from the
+ *      entitlement. `specifications.account_id` and `products.account_id` both DEFAULT to
+ *      `public.current_account_id()`, and the schema says why in as many words: "The app can
+ *      therefore insert a product without holding an account id at all, and the id it did not
+ *      supply cannot be somebody else's." An insert that omits the column is an insert that
+ *      cannot file a row against the wrong workspace, by construction rather than by care.
+ *      `current_account_id()` returns NULL for a user with no membership or with two, which
+ *      lands on the NOT NULL constraint and surfaces here as `no_account` — an error at the
+ *      insert, which is the correct outcome, rather than a row quietly filed somewhere.
+ *
+ *   3. TWO TABLES, NOT ONE. A specification is the composition (the recipe: fragrance, base,
+ *      dye, load — the four inputs every expensive derivation reads); a product is the SKU
+ *      (that composition in one pack size and packaging). The UFI belongs to the composition
+ *      and there is deliberately no ufi column on products. Only products are metered.
+ *
+ * WHAT IS NOT PERSISTED, AND IS NOT PRETENDED TO BE. Artefacts and production records have no
+ * tables — the migration says so outright — so `artefacts` below is DERIVED from the category
+ * pack on every read, and every artefact a real account holds reads "Not yet produced" with
+ * no printed date, because none has been produced. Nothing here invents a version number or a
+ * print date, and there is no drift, because drift is a difference from a printed artefact
+ * and nothing has been printed.
+ */
 
-export type CategoryPack = {
-  id: CategoryId;
-  name: string;
-  short: string;
-  blurb: string;
-  specKind: 'mixture' | 'phased' | 'bom';
-  productTypes: string[];
-  regimes: RegimeId[];
-  artefacts: ArtefactType[];
-  recordIdentity: 'batch' | 'serial-range';
-  surface: 'warm' | 'neutral';
-  strings: {
-    specTitle: string;
-    specHelp: string;
-    derivationTitle: string;
-    derivationHelp: string;
-    quantityNoun: string;
-    recordNoun: string;
-    lotNoun: string;
-  };
-};
-
-export const CATEGORIES: CategoryPack[] = [
-{
-  id: 'home-fragrance',
-  name: 'Home fragrance',
-  short: 'Fragrance',
-  blurb: 'Container candles, wax melts, reed diffusers and room sprays.',
-  specKind: 'mixture',
-  productTypes: ['Container candle', 'Wax melt', 'Reed diffuser', 'Room spray'],
-  regimes: ['clp', 'en15494', 'gpsr'],
-  artefacts: ['unit-label', 'listing'],
-  recordIdentity: 'batch',
-  surface: 'warm',
-  strings: {
-    specTitle: 'Recipe',
-    specHelp:
-    'Change the recipe on the left. The classification recalculates on every change, and the artefact on the right redraws at actual size.',
-    derivationTitle: 'Classification',
-    derivationHelp:
-    'Calculated from the recipe. Every element expands to show the component, its concentration and the threshold that was crossed.',
-    quantityNoun: 'Net quantity',
-    recordNoun: 'Batch',
-    lotNoun: 'Fragrance oil lot'
-  }
-},
-{
-  id: 'cosmetics',
-  name: 'Cosmetics',
-  short: 'Cosmetics',
-  blurb: 'Face oils, balms and body creams, formulated by phase.',
-  specKind: 'phased',
-  productTypes: ['Face oil', 'Balm', 'Body cream'],
-  regimes: ['cpr', 'gpsr'],
-  artefacts: ['unit-label', 'carton', 'listing'],
-  recordIdentity: 'batch',
-  surface: 'warm',
-  strings: {
-    specTitle: 'Formula',
-    specHelp:
-    'Build the formula by phase. Percentages must total 100. The ingredient list and the allergen declaration derive from what you enter.',
-    derivationTitle: 'Label derivation',
-    derivationHelp:
-    'Derived from the formula. Every element expands to show the ingredient, its percentage and the rule that placed it there.',
-    quantityNoun: 'Nominal content',
-    recordNoun: 'Batch',
-    lotNoun: 'Ingredient lot'
-  }
-},
-{
-  id: 'electronics',
-  name: 'Electronics',
-  short: 'Devices',
-  blurb: 'Mains and USB powered devices, evidenced by a conformity file.',
-  specKind: 'bom',
-  productTypes: ['Wax warmer', 'Diffuser, ultrasonic', 'Lamp'],
-  regimes: ['ce', 'rohs', 'weee', 'gpsr'],
-  artefacts: ['rating-plate', 'carton', 'leaflet', 'listing'],
-  recordIdentity: 'serial-range',
-  surface: 'neutral',
-  strings: {
-    specTitle: 'Bill of materials',
-    specHelp:
-    'A device has no formulation. The specification is its bill of materials, and the evidence is a conformity file rather than a calculation.',
-    derivationTitle: 'Conformity file',
-    derivationHelp:
-    'Assembled from component declarations and test reports. Every item expands to show the document, its date and what it covers.',
-    quantityNoun: 'Unit weight',
-    recordNoun: 'Production run',
-    lotNoun: 'Component lot'
-  }
-}];
-
-
-export function categoryById(id: CategoryId): CategoryPack {
-  return CATEGORIES.find((c) => c.id === id) ?? CATEGORIES[0];
-}
-
-export const ARTEFACT_LABELS: Record<ArtefactType, string> = {
-  'unit-label': 'Unit label',
-  carton: 'Carton',
-  leaflet: 'Leaflet',
-  listing: 'Online listing',
-  'rating-plate': 'Rating plate',
-  sds: 'Safety data sheet'
-};
-
-/** The label surfaces, as distinct from the safety data sheet. */
-export function isLabelSurface(type: ArtefactType): boolean {
-  return type !== 'sds';
-}
-
-/* -------------------------------------------------------------- products */
+/* ------------------------------------------------------------------ types */
 
 /**
- * No product carries a UFI, and none marks `clp-ufi` or a poison centre
- * notification as done. Batchlabel generates no UFI, and a notification dossier
- * is keyed on one, so seeding either would be the app asserting compliance work
- * that neither it nor the maker has any way of doing here. `obligationSatisfied`
- * enforces the UFI half whatever this file says; the rest is kept honest here.
+ * Why a write did not happen, in terms a screen can render.
+ *
+ * Errors are values rather than exceptions, for the same reason billing.ts gives: every one
+ * of these is an ordinary state of a form, and a screen that has to try/catch to find out
+ * whether the customer is at their plan limit will sooner or later render a stack trace.
  */
-const BASE_PRODUCTS: Product[] = [
-{
-  id: 'p-black-fig',
-  name: 'Black Fig and Cassis',
-  sku: 'CC-BFC-220',
-  categoryId: 'home-fragrance',
-  markets: ['GB', 'EU'],
-  regimes: ['clp', 'en15494', 'gpsr'],
-  identifiers: {},
-  spec: {
-    kind: 'mixture',
-    productType: 'Container candle',
-    baseId: 'ing-crw45',
-    fragranceId: 'ing-black-fig',
-    load: 8,
-    dyeId: 'ing-no-dye',
-    additive: 'None',
-    netQuantity: 220,
-    netUnit: 'g',
-    packagingId: 'pkg-tumbler-250'
-  },
-  artefacts: [
-  {
-    type: 'unit-label',
-    label: 'Unit label',
-    widthMm: 52,
-    heightMm: 74,
-    version: 'v4',
-    printedOn: '2026-05-12',
-    current: false,
-    driftNote:
-    'Fragrance load raised from 7 percent to 8 percent on 22 July. Label v4 was printed at 7 percent.'
-  },
-  {
-    type: 'listing',
-    label: 'Online listing',
-    widthMm: 96,
-    heightMm: 60,
-    version: 'v2',
-    printedOn: '2026-05-12',
-    current: false,
-    driftNote: 'The listing still shows the classification calculated at 7 percent.'
-  }],
+export type WriteFailure =
+'sku_limit' |
+'duplicate_sku' |
+'no_account' |
+'not_configured' |
+'failed';
 
-  obligations: {
-    'clp-classification': true,
-    'clp-artefact-current': false,
-    'clp-ufi': false,
-    'clp-pcn-eu': false,
-    'clp-pcn-gb': false,
-    'en15494-safety-text': true,
-    'gpsr-traceability': true,
-    'gpsr-eu-responsible-person': false,
-    'gpsr-online-disclosure': false
-  }
-},
-{
-  id: 'p-smoked-vetiver',
-  name: 'Smoked Vetiver',
-  sku: 'RD-SMV-100',
-  categoryId: 'home-fragrance',
-  markets: ['GB'],
-  regimes: ['clp', 'gpsr'],
-  identifiers: {},
-  spec: {
-    kind: 'mixture',
-    productType: 'Reed diffuser',
-    baseId: 'ing-dpg',
-    fragranceId: 'ing-smoked-vetiver',
-    load: 22,
-    dyeId: 'ing-no-dye',
-    additive: 'None',
-    netQuantity: 100,
-    netUnit: 'ml',
-    packagingId: 'pkg-diffuser-100'
-  },
-  artefacts: [
-  {
-    type: 'unit-label',
-    label: 'Unit label',
-    widthMm: 52,
-    heightMm: 74,
-    version: 'v2',
-    printedOn: '2026-06-30',
-    current: true
-  },
-  {
-    type: 'listing',
-    label: 'Online listing',
-    widthMm: 96,
-    heightMm: 60,
-    version: 'v2',
-    printedOn: '2026-06-30',
-    current: true
-  }],
+export type WriteResult<T> =
+{ok: true;value: T;} |
+{ok: false;reason: WriteFailure;message: string;};
 
-  obligations: {
-    'clp-classification': true,
-    'clp-artefact-current': true,
-    'clp-ufi': false,
-    'clp-pcn-gb': false,
-    'gpsr-traceability': true,
-    'gpsr-online-disclosure': true
-  }
-},
-{
-  id: 'p-bergamot-sea-salt',
-  name: 'Bergamot and Sea Salt',
-  sku: 'RS-BSS-100',
-  categoryId: 'home-fragrance',
-  markets: ['GB', 'EU'],
-  regimes: ['clp', 'gpsr'],
-  identifiers: {},
-  spec: {
-    kind: 'mixture',
-    productType: 'Room spray',
-    baseId: 'ing-alcohol',
-    fragranceId: 'ing-bergamot-sea-salt',
-    load: 12,
-    dyeId: 'ing-no-dye',
-    additive: 'Solubiliser, 1 percent',
-    netQuantity: 100,
-    netUnit: 'ml',
-    packagingId: 'pkg-spray-100'
-  },
-  artefacts: [
-  {
-    type: 'unit-label',
-    label: 'Unit label',
-    widthMm: 52,
-    heightMm: 74,
-    version: 'v3',
-    printedOn: '2026-07-02',
-    current: true
-  },
-  {
-    type: 'listing',
-    label: 'Online listing',
-    widthMm: 96,
-    heightMm: 60,
-    version: 'v1',
-    printedOn: '2026-07-02',
-    current: true
-  }],
-
-  obligations: {
-    'clp-classification': true,
-    'clp-artefact-current': true,
-    'clp-ufi': false,
-    'clp-pcn-eu': false,
-    'clp-pcn-gb': false,
-    'gpsr-traceability': true,
-    'gpsr-eu-responsible-person': true,
-    'gpsr-online-disclosure': false
-  }
-},
-{
-  id: 'p-wild-damson',
-  name: 'Wild Damson and Bay',
-  sku: 'WM-WDB-070',
-  categoryId: 'home-fragrance',
-  markets: ['GB'],
-  regimes: ['clp', 'en15494', 'gpsr'],
-  identifiers: {},
-  spec: {
-    kind: 'mixture',
-    productType: 'Wax melt',
-    baseId: 'ing-soy-c3',
-    fragranceId: 'ing-wild-damson',
-    load: 6.5,
-    dyeId: 'ing-dye-terracotta',
-    additive: 'None',
-    netQuantity: 70,
-    netUnit: 'g',
-    packagingId: 'pkg-clamshell'
-  },
-  artefacts: [
-  {
-    type: 'unit-label',
-    label: 'Unit label',
-    widthMm: 52,
-    heightMm: 74,
-    version: 'v1',
-    printedOn: '2026-04-18',
-    current: true
-  },
-  {
-    type: 'listing',
-    label: 'Online listing',
-    widthMm: 96,
-    heightMm: 60,
-    version: 'v1',
-    printedOn: '2026-04-18',
-    current: true
-  }],
-
-  obligations: {
-    'clp-classification': true,
-    'clp-artefact-current': true,
-    'clp-ufi': false,
-    'clp-pcn-gb': false,
-    'en15494-safety-text': true,
-    'gpsr-traceability': true,
-    'gpsr-online-disclosure': true
-  }
-},
-{
-  id: 'p-rosehip-face-oil',
-  name: 'Rosehip and Meadowfoam Face Oil',
-  sku: 'CO-RMF-030',
-  categoryId: 'cosmetics',
-  markets: ['GB', 'EU'],
-  regimes: ['cpr', 'gpsr'],
-  identifiers: {},
-  spec: {
-    kind: 'phased',
-    productType: 'Face oil',
-    application: 'Leave-on',
-    paoMonths: 12,
-    netQuantity: 30,
-    netUnit: 'ml',
-    packagingId: 'pkg-dropper-30',
-    phases: [
-    {
-      name: 'Oil phase',
-      items: [
-      { materialId: 'ing-rosehip', pct: 45 },
-      { materialId: 'ing-meadowfoam', pct: 34.6 },
-      { materialId: 'ing-jojoba', pct: 18.4 }]
-
-    },
-    {
-      name: 'Cool down',
-      items: [
-      { materialId: 'ing-tocopherol', pct: 1.2 },
-      { materialId: 'ing-black-fig', pct: 0.8 }]
-
-    }]
-
-  },
-  artefacts: [
-  {
-    type: 'unit-label',
-    label: 'Unit label',
-    widthMm: 44,
-    heightMm: 62,
-    version: 'v2',
-    printedOn: '2026-07-06',
-    current: true
-  },
-  {
-    type: 'carton',
-    label: 'Carton',
-    widthMm: 88,
-    heightMm: 58,
-    version: 'v1',
-    printedOn: '2026-06-14',
-    current: false,
-    driftNote:
-    'Jojoba raised from 17.9 percent to 18.4 percent on 12 July, which changed the ingredient order. Carton v1 was printed before that change.'
-  },
-  {
-    type: 'listing',
-    label: 'Online listing',
-    widthMm: 96,
-    heightMm: 60,
-    version: 'v2',
-    printedOn: '2026-07-06',
-    current: true
-  }],
-
-  obligations: {
-    'cpr-pif': true,
-    'cpr-safety-assessment': true,
-    'cpr-cpnp': false,
-    'cpr-responsible-person': true,
-    'cpr-pao': true,
-    'cpr-claims': false,
-    'cpr-gmp': true,
-    'gpsr-traceability': true,
-    'gpsr-eu-responsible-person': true,
-    'gpsr-online-disclosure': true
-  }
-},
-{
-  id: 'p-warmer',
-  name: 'Aurelia Warmer WW-100',
-  sku: 'EL-WW-100',
-  categoryId: 'electronics',
-  markets: ['GB', 'EU'],
-  regimes: ['ce', 'rohs', 'weee', 'gpsr'],
-  identifiers: {
-    model: 'WW-100',
-    modelYear: '2026',
-    weeeRegistration: 'WEE/AB1234CD'
-  },
-  spec: {
-    kind: 'bom',
-    productType: 'Wax warmer',
-    model: 'WW-100',
-    ratings: { voltage: '5 V DC', current: '2 A', power: '10 W' },
-    netQuantity: 420,
-    netUnit: 'g',
-    packagingId: 'pkg-device-box',
-    items: [
-    { materialId: 'cmp-power-board', quantity: 1, position: 'Base assembly' },
-    { materialId: 'cmp-heater', quantity: 1, position: 'Heat plate' },
-    { materialId: 'cmp-cable', quantity: 1, position: 'Supply lead' },
-    { materialId: 'cmp-housing', quantity: 1, position: 'Enclosure' },
-    { materialId: 'cmp-led', quantity: 1, position: 'Indicator' }]
-
-  },
-  artefacts: [
-  {
-    type: 'rating-plate',
-    label: 'Rating plate',
-    widthMm: 40,
-    heightMm: 25,
-    version: 'v1',
-    printedOn: '2026-06-08',
-    current: true
-  },
-  {
-    type: 'carton',
-    label: 'Carton',
-    widthMm: 100,
-    heightMm: 70,
-    version: 'v1',
-    printedOn: '2026-06-08',
-    current: true
-  },
-  {
-    type: 'leaflet',
-    label: 'Leaflet',
-    widthMm: 105,
-    heightMm: 148,
-    version: 'v1',
-    printedOn: '2026-06-08',
-    current: true
-  },
-  {
-    type: 'listing',
-    label: 'Online listing',
-    widthMm: 96,
-    heightMm: 60,
-    version: 'v1',
-    printedOn: '2026-06-08',
-    current: true
-  }],
-
-  obligations: {
-    'ce-doc-signed': false,
-    'ce-standards': true,
-    'ce-test-reports': false,
-    'rohs-component-declarations': false,
-    'rohs-en63000': true,
-    'weee-registration': true,
-    'weee-marking': true,
-    'gpsr-traceability': true,
-    'gpsr-eu-responsible-person': true,
-    'gpsr-online-disclosure': false
-  }
-}];
-
-
-/**
- * The safety data sheet is the second output of the same derivation, so every
- * product that is a mixture carries one alongside its label surfaces. A device
- * is an article rather than a mixture and has no sheet to issue.
- */
-function withSafetyDataSheet(product: Product): Product {
-  if (product.spec.kind === 'bom') return product;
-  if (product.artefacts.some((artefact) => artefact.type === 'sds')) return product;
-  const staleLabel = product.artefacts.find((artefact) => !artefact.current);
-  return {
-    ...product,
-    artefacts: [
-    ...product.artefacts,
-    {
-      type: 'sds',
-      label: 'Safety data sheet',
-      widthMm: 210,
-      heightMm: 297,
-      version: staleLabel ? 'v3' : 'v2',
-      printedOn: staleLabel ? '2026-05-12' : '2026-06-30',
-      current: !staleLabel,
-      driftNote: staleLabel ? staleLabel.driftNote : undefined
-    }]
-
-  };
-}
-
-export const PRODUCTS: Product[] = BASE_PRODUCTS.map(withSafetyDataSheet);
-
-/* ------------------------------------------------- the live product list */
-
-/**
- * Products can be created at runtime, so screens read the live list rather
- * than the seed constant. A product is the one thing a user creates; outputs
- * are always derived and can never be made by hand.
- */
-let runtime: Product[] = PRODUCTS;
-const listeners = new Set<() => void>();
-
-export function allProducts(): Product[] {
-  return runtime;
-}
-
-export function subscribeProducts(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
-
-export function productById(id: string): Product | undefined {
-  return runtime.find((p) => p.id === id);
-}
+export type ReadResult =
+{ok: true;products: Product[];} |
+{ok: false;message: string;};
 
 export type NewProductInput = {
   name: string;
@@ -561,12 +88,398 @@ export type NewProductInput = {
   fragranceId?: string;
 };
 
-function blankSpec(category: CategoryPack, productType: string, fragranceId?: string): Spec {
+/* --------------------------------------------------------- error mapping */
+
+/**
+ * The stable token the SKU trigger raises, and the ONLY thing this app matches on.
+ *
+ * The trigger sets `hint = 'sku_limit_reached'` and says, in a comment beside it, "Match the
+ * hint, never the sentence: the sentence is customer-facing copy and will be rewritten." So
+ * the sentence is never read here — the app writes its own, from the allowance the billing
+ * work already resolves, and a rewording of the database message can never silently turn a
+ * limit into a generic failure.
+ */
+const SKU_LIMIT_HINT = 'sku_limit_reached';
+
+/** Postgres unique violation: the account already holds a live product with this SKU code. */
+const UNIQUE_VIOLATION = '23505';
+/** Postgres not-null violation. On account_id it means current_account_id() returned NULL. */
+const NOT_NULL_VIOLATION = '23502';
+
+const GENERIC_WRITE_FAILURE =
+'We could not save that just now. Nothing has changed — please try again in a moment.';
+
+const NO_ACCOUNT_MESSAGE =
+'Your account is still being set up, so there is nowhere to save this yet. This usually takes ' +
+'a moment. If it keeps saying this, get in touch and we will finish setting it up.';
+
+const DUPLICATE_SKU_MESSAGE =
+'You already have a product with that code. Product codes have to be unique, so give this one ' +
+'a different code.';
+
+const NOT_CONFIGURED_MESSAGE =
+'This app is not connected to its database, so nothing can be saved. This is us, not you.';
+
+/**
+ * The limit message itself is NOT produced here.
+ *
+ * `sku_limit` carries no sentence of its own because the honest one names the allowance, and
+ * the allowance is the billing work's to state — see components/SkuLimitNotice.tsx, which
+ * reads it from the entitlement the database resolved. A message invented here would be a
+ * second copy of a number that has one source.
+ */
+const SKU_LIMIT_MESSAGE = 'This account is already holding as many products as its plan allows.';
+
+type Postgrestish = {code?: string | null;hint?: string | null;message?: string | null;};
+
+/** Classifies a PostgREST error into something a form can say out loud. */
+export function classifyWriteError(error: Postgrestish | null): {
+  reason: WriteFailure;
+  message: string;
+} {
+  const hint = error?.hint ?? '';
+  const code = error?.code ?? '';
+
+  if (hint === SKU_LIMIT_HINT) return { reason: 'sku_limit', message: SKU_LIMIT_MESSAGE };
+  if (code === UNIQUE_VIOLATION) return { reason: 'duplicate_sku', message: DUPLICATE_SKU_MESSAGE };
+  if (code === NOT_NULL_VIOLATION) return { reason: 'no_account', message: NO_ACCOUNT_MESSAGE };
+  return { reason: 'failed', message: GENERIC_WRITE_FAILURE };
+}
+
+/* ------------------------------------------------------------ row shapes */
+
+type Json = Record<string, unknown>;
+
+export type SpecificationRow = {
+  id: string;
+  name: string | null;
+  category_id: string | null;
+  kind: string | null;
+  product_type: string | null;
+  fragrance_id: string | null;
+  base_id: string | null;
+  dye_id: string | null;
+  load: number | string | null;
+  additive: string | null;
+  markets: string[] | null;
+  regimes: string[] | null;
+  ufi: string | null;
+  data: Json | null;
+};
+
+export type ProductRow = {
+  id: string;
+  specification_id: string;
+  name: string | null;
+  sku: string | null;
+  net_quantity: number | string | null;
+  net_unit: string | null;
+  packaging_id: string | null;
+  identifiers: Json | null;
+  obligations: Json | null;
+  data: Json | null;
+  created_at: string | null;
+};
+
+const SPECIFICATION_COLUMNS =
+'id, name, category_id, kind, product_type, fragrance_id, base_id, dye_id, load, additive, markets, regimes, ufi, data';
+
+const PRODUCT_COLUMNS =
+'id, specification_id, name, sku, net_quantity, net_unit, packaging_id, identifiers, obligations, data, created_at';
+
+/* -------------------------------------------------------------- coercion */
+
+/**
+ * Every reader below is tolerant, for the same reason membership.ts is: a column this app has
+ * never heard of, or one whose type changed, must degrade to a sensible default rather than
+ * throw inside a render. A screen that crashes on one malformed row loses the customer every
+ * other row as well.
+ */
+
+function num(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  // PostgREST serialises `numeric` as a JSON number, but a client or a proxy that stringifies
+  // it must not turn a 220 g candle into NaN on a label.
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function str(value: unknown, fallback = ''): string {
+  return typeof value === 'string' && value.trim() !== '' ? value : fallback;
+}
+
+function unit(value: unknown, fallback: 'g' | 'ml'): 'g' | 'ml' {
+  return value === 'g' || value === 'ml' ? value : fallback;
+}
+
+const KNOWN_MARKETS: Market[] = ['GB', 'EU'];
+const KNOWN_REGIMES: RegimeId[] = ['clp', 'en15494', 'cpr', 'ce', 'rohs', 'weee', 'gpsr'];
+
+function markets(value: unknown): Market[] {
+  const list = Array.isArray(value) ?
+  value.filter((entry): entry is Market => KNOWN_MARKETS.includes(entry as Market)) :
+  [];
+  // The column is NOT NULL DEFAULT '{GB}', so an empty array here means a row written by
+  // something else. A product sold nowhere renders no address block at all, which reads as a
+  // rendering bug rather than as data; GB is the schema's own default.
+  return list.length ? list : ['GB'];
+}
+
+function regimes(value: unknown, category: CategoryPack): RegimeId[] {
+  const list = Array.isArray(value) ?
+  value.filter((entry): entry is RegimeId => KNOWN_REGIMES.includes(entry as RegimeId)) :
+  [];
+  // Falling back to the category's regimes rather than to none: which rules apply is a fact
+  // about what the product IS, and an empty list would tell a maker no regime applies to a
+  // candle. The stored value wins whenever there is one.
+  return list.length ? list : category.regimes;
+}
+
+function obligations(value: unknown): Record<string, boolean> {
+  if (!value || typeof value !== 'object') return {};
+  const out: Record<string, boolean> = {};
+  for (const [key, entry] of Object.entries(value as Json)) {
+    if (typeof entry === 'boolean') out[key] = entry;
+  }
+  return out;
+}
+
+function categoryFor(row: SpecificationRow): CategoryPack {
+  const stored = str(row.category_id);
+  const known = ['home-fragrance', 'cosmetics', 'electronics'].includes(stored);
+  if (known) return categoryById(stored as CategoryId);
+  // `kind` and `category_id` are separate columns, so a row can carry a category this build
+  // does not know while still saying which shape its composition has. Resolving through the
+  // kind keeps such a row renderable instead of silently becoming home fragrance.
+  const kind = row.kind === 'phased' || row.kind === 'bom' ? row.kind : 'mixture';
+  return categoryForKind(kind);
+}
+
+/* ------------------------------------------------------------- artefacts */
+
+/**
+ * The outputs a product has, derived from its category on every read.
+ *
+ * NOT STORED, AND NOT INVENTED. There is no artefacts table, so there is no version history
+ * and no print date to report. Every artefact therefore says "Not yet produced" with no date,
+ * and every one is `current` — a surface that has never been printed cannot be out of date
+ * relative to the composition, and telling a maker their label is stale when they have never
+ * had one is a false statement about their compliance, not a harmless placeholder.
+ */
+export function artefactsFor(category: CategoryPack, kind: Spec['kind']): ArtefactInstance[] {
+  const surfaces: ArtefactInstance[] = category.artefacts.map((type) => ({
+    type,
+    label: ARTEFACT_LABELS[type],
+    widthMm: type === 'listing' ? 96 : type === 'carton' ? 88 : type === 'rating-plate' ? 40 : 52,
+    heightMm: type === 'listing' ? 60 : type === 'carton' ? 58 : type === 'rating-plate' ? 25 : 74,
+    version: 'Not yet produced',
+    printedOn: '—',
+    current: true
+  }));
+
+  // The safety data sheet is the second output of the same derivation, so every product that
+  // is a mixture carries one alongside its label surfaces. A device is an article rather than
+  // a mixture and has no sheet to issue.
+  if (kind === 'bom') return surfaces;
+  return [
+  ...surfaces,
+  {
+    type: 'sds',
+    label: ARTEFACT_LABELS.sds,
+    widthMm: 210,
+    heightMm: 297,
+    version: 'Not yet produced',
+    printedOn: '—',
+    current: true
+  }];
+
+}
+
+/* --------------------------------------------------------------- mapping */
+
+/** The composition, assembled from the specification row and the product's pack fields. */
+function toSpec(spec: SpecificationRow, product: ProductRow, category: CategoryPack): Spec {
+  const data = (spec.data ?? {}) as Json;
+  const productType = str(spec.product_type, category.productTypes[0]);
+  const pack = {
+    netQuantity: num(product.net_quantity, 0),
+    netUnit: unit(product.net_unit, 'ml'),
+    packagingId: str(product.packaging_id)
+  };
+
+  if (spec.kind === 'phased') {
+    const phases = Array.isArray(data.phases) ?
+    (data.phases as PhasedSpec['phases']).map((phase) => ({
+      name: str(phase?.name, 'Phase'),
+      items: Array.isArray(phase?.items) ?
+      phase.items.map((item) => ({
+        materialId: str(item?.materialId),
+        pct: num(item?.pct, 0)
+      })) :
+      []
+    })) :
+    [];
+    const phased: PhasedSpec = {
+      kind: 'phased',
+      productType,
+      phases,
+      application: data.application === 'Rinse-off' ? 'Rinse-off' : 'Leave-on',
+      paoMonths: num(data.paoMonths, 12),
+      ...pack
+    };
+    return phased;
+  }
+
+  if (spec.kind === 'bom') {
+    const ratings = (data.ratings ?? {}) as Json;
+    const bom: BomSpec = {
+      kind: 'bom',
+      productType,
+      model: str(data.model, 'Not yet assigned'),
+      items: Array.isArray(data.items) ?
+      (data.items as BomSpec['items']).map((item) => ({
+        materialId: str(item?.materialId),
+        quantity: num(item?.quantity, 1),
+        position: str(item?.position, 'Unplaced')
+      })) :
+      [],
+      ratings: {
+        voltage: str(ratings.voltage, '—'),
+        current: str(ratings.current, '—'),
+        power: str(ratings.power, '—')
+      },
+      ...pack
+    };
+    return bom;
+  }
+
+  const mixture: MixtureSpec = {
+    kind: 'mixture',
+    productType,
+    baseId: str(spec.base_id),
+    fragranceId: str(spec.fragrance_id),
+    load: num(spec.load, 0),
+    dyeId: str(spec.dye_id, 'ing-no-dye'),
+    additive: str(spec.additive, 'None'),
+    ...pack
+  };
+  return mixture;
+}
+
+/** One product row plus its specification row, as the screens expect a Product. */
+export function toProduct(product: ProductRow, spec: SpecificationRow): Product {
+  const category = categoryFor(spec);
+  const composition = toSpec(spec, product, category);
+  const identifiers = (product.identifiers ?? {}) as Json;
+
+  return {
+    id: product.id,
+    specificationId: spec.id,
+    name: str(product.name, 'Untitled product'),
+    sku: str(product.sku),
+    categoryId: category.id,
+    markets: markets(spec.markets),
+    regimes: regimes(spec.regimes, category),
+    spec: composition,
+    artefacts: artefactsFor(category, composition.kind),
+    identifiers: {
+      // The UFI is read from the SPECIFICATION, which is where CLP Annex VIII puts it and
+      // where the schema put the column: one composition, one UFI, however many pack sizes.
+      // Nothing in Batchlabel generates one, so in practice this is always absent — and
+      // `obligationSatisfied` refuses to mark the UFI obligation done whatever is stored.
+      ufi: str(spec.ufi) || undefined,
+      model: str(identifiers.model) || undefined,
+      weeeRegistration: str(identifiers.weee_registration ?? identifiers.weeeRegistration) || undefined,
+      modelYear: str(identifiers.model_year ?? identifiers.modelYear) || undefined
+    },
+    obligations: obligations(product.obligations)
+  };
+}
+
+/* ------------------------------------------------------------------ read */
+
+/**
+ * Every live product in the caller's account.
+ *
+ * TWO QUERIES, NOT AN EMBEDDED SELECT. PostgREST can embed a related resource, but the
+ * foreign key from products to specifications is COMPOSITE — `(specification_id, account_id)`
+ * references `(id, account_id)`, which is what makes it impossible to file a product against
+ * another account's composition — and relying on embedding over a composite key would put a
+ * hard dependency on a detail of PostgREST's relationship detection in the one query the
+ * whole app depends on. Two round trips at a maker's volume is nothing; a products screen
+ * that returns "could not read" because of a join heuristic is everything.
+ *
+ * Neither query filters on an account. RLS does it: every policy on both tables is
+ * `is_member_of(account_id)`, so a select returns the caller's rows and there is no client
+ * side filter that could be wrong. Archived rows are excluded here, matching the meter's own
+ * definition of live.
+ */
+export async function fetchProducts(): Promise<ReadResult> {
+  const client = supabase;
+  if (!client) return { ok: false, message: NOT_CONFIGURED_MESSAGE };
+
+  const [productsResponse, specificationsResponse] = await Promise.all([
+  client.
+  from('products').
+  select(PRODUCT_COLUMNS).
+  is('archived_at', null).
+  order('created_at', { ascending: true }),
+  client.
+  from('specifications').
+  select(SPECIFICATION_COLUMNS).
+  is('archived_at', null)]
+  );
+
+  if (productsResponse.error || specificationsResponse.error) {
+    // Deliberately not the Postgres message. A read failure is us, and the screen says so
+    // and offers a retry — what it must never do is render as "you have no products", which
+    // is indistinguishable from a new account and reads as data loss.
+    return {
+      ok: false,
+      message:
+      'We could not read your products just now. This is us, not you — nothing has been lost.'
+    };
+  }
+
+  const specifications = new Map<string, SpecificationRow>();
+  for (const row of (specificationsResponse.data ?? []) as SpecificationRow[]) {
+    specifications.set(row.id, row);
+  }
+
+  const products: Product[] = [];
+  for (const row of (productsResponse.data ?? []) as ProductRow[]) {
+    const spec = specifications.get(row.specification_id);
+    // A product whose specification did not come back is a product we cannot describe: no
+    // composition, so no classification, no label and no sheet. Dropping it silently would
+    // be wrong, but so would rendering a blank row, and the composite foreign key means the
+    // only way to reach this is a specification archived out from under a live product.
+    if (spec) products.push(toProduct(row, spec));
+  }
+
+  return { ok: true, products };
+}
+
+/* ----------------------------------------------------------------- write */
+
+/** The composition a brand new product starts from: enough to be legal to store, no more. */
+export function blankSpec(
+category: CategoryPack,
+productType: string,
+fragranceId?: string)
+: Spec {
   if (category.specKind === 'mixture') {
     return {
       kind: 'mixture',
       productType,
-      baseId: productType === 'Reed diffuser' ? 'ing-dpg' : productType === 'Room spray' ? 'ing-alcohol' : 'ing-crw45',
+      baseId:
+      productType === 'Reed diffuser' ?
+      'ing-dpg' :
+      productType === 'Room spray' ?
+      'ing-alcohol' :
+      'ing-crw45',
       fragranceId: fragranceId ?? '',
       load: 0,
       dyeId: 'ing-no-dye',
@@ -610,472 +523,141 @@ function blankSpec(category: CategoryPack, productType: string, fragranceId?: st
   };
 }
 
-/** Creates a product at the very start of its pipeline and returns it. */
-export function createProduct(input: NewProductInput): Product {
-  const category = categoryById(input.categoryId);
-  const id = `p-${input.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${runtime.length}`;
+/** The shape-varying half of a composition, which is what `specifications.data` is for. */
+function specData(spec: Spec): Json {
+  if (spec.kind === 'phased') {
+    return { phases: spec.phases, application: spec.application, paoMonths: spec.paoMonths };
+  }
+  if (spec.kind === 'bom') {
+    return { model: spec.model, items: spec.items, ratings: spec.ratings };
+  }
+  return {};
+}
 
-  const product: Product = {
-    id,
-    name: input.name,
-    sku: input.sku,
-    categoryId: input.categoryId,
+/** The typed half. The four classification inputs get columns; everything else does not. */
+function specColumns(spec: Spec) {
+  return {
+    product_type: spec.productType,
+    fragrance_id: spec.kind === 'mixture' ? spec.fragranceId || null : null,
+    base_id: spec.kind === 'mixture' ? spec.baseId || null : null,
+    dye_id: spec.kind === 'mixture' ? spec.dyeId || null : null,
+    load: spec.kind === 'mixture' ? spec.load : null,
+    data: specData(spec)
+  };
+}
+
+/** The pack. This is the entire difference between two products of one specification. */
+function packColumns(spec: Spec) {
+  return {
+    net_quantity: spec.netQuantity > 0 ? spec.netQuantity : null,
+    net_unit: spec.netUnit,
+    packaging_id: spec.packagingId || null
+  };
+}
+
+/**
+ * Creates a product, and its composition, in the caller's account.
+ *
+ * TWO INSERTS, IN THIS ORDER, AND WHAT HAPPENS WHEN THE SECOND FAILS. A product cannot be
+ * inserted before its specification, because it carries the foreign key. So a refused product
+ * — most often the SKU meter refusing one over the plan allowance — leaves a specification
+ * behind. The browser is granted no DELETE on specifications (deleting one cascades to its
+ * products, which is not something a mis-click may do), so the row is ARCHIVED instead:
+ * archived_at is the schema's own intended path, it is a grant this client has, and an
+ * archived specification is invisible to every read in this file. If even that fails the row
+ * is simply left; it is invisible either way, it meters nothing — only products are metered —
+ * and one orphaned composition row is a far better outcome than a maker who cannot try again.
+ *
+ * Neither insert sends an account_id. See the note at the top of this file.
+ */
+export async function createProduct(input: NewProductInput): Promise<WriteResult<Product>> {
+  const client = supabase;
+  if (!client) return { ok: false, reason: 'not_configured', message: NOT_CONFIGURED_MESSAGE };
+
+  const category = categoryById(input.categoryId);
+  const spec = blankSpec(category, input.productType, input.fragranceId);
+  const name = input.name.trim();
+  const sku = input.sku.trim();
+
+  const { data: specRow, error: specError } = await client.
+  from('specifications').
+  insert({
+    name,
+    category_id: category.id,
+    kind: category.specKind,
     markets: ['GB'],
     regimes: category.regimes,
-    identifiers: {},
-    spec: blankSpec(category, input.productType, input.fragranceId),
-    artefacts: category.artefacts.map((type) => ({
-      type,
-      label: ARTEFACT_LABELS[type],
-      widthMm: type === 'listing' ? 96 : type === 'carton' ? 88 : type === 'rating-plate' ? 40 : 52,
-      heightMm: type === 'listing' ? 60 : type === 'carton' ? 58 : type === 'rating-plate' ? 25 : 74,
-      version: 'Not yet produced',
-      printedOn: '—',
-      current: true
-    })),
-    obligations: {}
-  };
+    ...specColumns(spec)
+  }).
+  select(SPECIFICATION_COLUMNS).
+  single();
 
-  const withSheet = withSafetyDataSheet(product);
-  runtime = [...runtime, withSheet];
-  listeners.forEach((listener) => listener());
-  return withSheet;
-}
+  if (specError || !specRow) return { ok: false, ...classifyWriteError(specError) };
 
-/* ----------------------------------------------------------------- drift */
+  const { data: productRow, error: productError } = await client.
+  from('products').
+  insert({
+    specification_id: (specRow as SpecificationRow).id,
+    name,
+    sku: sku || null,
+    ...packColumns(spec)
+  }).
+  select(PRODUCT_COLUMNS).
+  single();
 
-/**
- * One canonical statement per drift event: what changed, which outputs it
- * moved, and what they now say. Every screen reuses this verbatim, so no two
- * places paraphrase the same fact.
- */
-export type Drift = {
-  changed: string;
-  moved: string;
-  nowSays: string;
-  sentence: string;
-};
-
-const DRIFT: Record<string, Omit<Drift, 'sentence'>> = {
-  'p-black-fig': {
-    changed: 'The fragrance load was raised from 7 percent to 8 percent on 22 July.',
-    moved: 'The unit label, the online listing and the safety data sheet were all printed at 7 percent.',
-    nowSays:
-    'At 8 percent the mixture crosses the supplier specific limit of 0.4 percent for skin sensitisation, so H317 is now required.'
-  },
-  'p-rosehip-face-oil': {
-    changed:
-    'Meadowfoam seed oil was raised from 11.2 percent to 12.4 percent on 19 July, moving it above rosehip oil.',
-    moved: 'The carton and the safety data sheet were both assembled from the previous order.',
-    nowSays:
-    'Meadowfoam now precedes rosehip in the ingredient list, and section 3 of the sheet reorders with it.'
+  if (productError || !productRow) {
+    await client.
+    from('specifications').
+    update({ archived_at: new Date().toISOString() }).
+    eq('id', (specRow as SpecificationRow).id);
+    return { ok: false, ...classifyWriteError(productError) };
   }
-};
 
-export function driftFor(product: Product): Drift | null {
-  const entry = DRIFT[product.id];
-  if (!entry) return null;
-  return { ...entry, sentence: `${entry.changed} ${entry.moved} ${entry.nowSays}` };
+  return {
+    ok: true,
+    value: toProduct(productRow as ProductRow, specRow as SpecificationRow)
+  };
 }
-
-/* --------------------------------------------------------------- records */
-
-export const RECORDS: ProductionRecord[] = [
-{
-  code: 'BFC-2607-014',
-  productId: 'p-black-fig',
-  date: '2026-07-26',
-  units: 48,
-  identity: { kind: 'batch', code: 'BFC-2607-014' },
-  lots: [
-  { materialId: 'ing-black-fig', lot: 'AUR-24118-B' },
-  { materialId: 'ing-crw45', lot: 'KER-CRW-2609' }],
-
-  specVersion: 'r7',
-  artefactVersions: [
-  { type: 'unit-label', version: 'v4' },
-  { type: 'listing', version: 'v2' }],
-
-  madeBy: 'Nadia',
-  notes: 'Cure 14 days before dispatch.'
-},
-{
-  code: 'BSS-2407-009',
-  productId: 'p-bergamot-sea-salt',
-  date: '2026-07-24',
-  units: 60,
-  identity: { kind: 'batch', code: 'BSS-2407-009' },
-  lots: [
-  { materialId: 'ing-bergamot-sea-salt', lot: 'CWP-8802-17' },
-  { materialId: 'ing-alcohol', lot: 'MER-PA96-114' }],
-
-  specVersion: 'r3',
-  artefactVersions: [
-  { type: 'unit-label', version: 'v3' },
-  { type: 'listing', version: 'v1' }],
-
-  madeBy: 'Nadia'
-},
-{
-  code: 'SMV-2107-021',
-  productId: 'p-smoked-vetiver',
-  date: '2026-07-21',
-  units: 36,
-  identity: { kind: 'batch', code: 'SMV-2107-021' },
-  lots: [
-  { materialId: 'ing-smoked-vetiver', lot: 'HAL-2210-04' },
-  { materialId: 'ing-dpg', lot: 'HAL-DPG-771' }],
-
-  specVersion: 'r2',
-  artefactVersions: [
-  { type: 'unit-label', version: 'v2' },
-  { type: 'listing', version: 'v2' }],
-
-  madeBy: 'Tom'
-},
-{
-  code: 'WW100-2007-002',
-  productId: 'p-warmer',
-  date: '2026-07-20',
-  units: 400,
-  identity: { kind: 'serial-range', code: 'WW100-26', from: 'WW100-26-0001', to: 'WW100-26-0400' },
-  lots: [
-  { materialId: 'cmp-power-board', lot: 'LE-PB52-2622' },
-  { materialId: 'cmp-heater', lot: 'LE-PTC10-2618' },
-  { materialId: 'cmp-cable', lot: 'HC-SC12-2611' },
-  { materialId: 'cmp-housing', lot: 'WM-CH20-2609' }],
-
-  specVersion: 'b2',
-  artefactVersions: [
-  { type: 'rating-plate', version: 'v1' },
-  { type: 'carton', version: 'v1' },
-  { type: 'leaflet', version: 'v1' }],
-
-  madeBy: 'Tom',
-  notes: 'Assembled and flash tested in house, 400 units, no failures.'
-},
-{
-  code: 'RMF-2907-004',
-  productId: 'p-rosehip-face-oil',
-  date: '2026-07-29',
-  units: 90,
-  identity: { kind: 'batch', code: 'RMF-2907-004' },
-  lots: [
-  { materialId: 'ing-rosehip', lot: 'VER-RH01-2607' },
-  { materialId: 'ing-meadowfoam', lot: 'VER-MF02-2605' },
-  { materialId: 'ing-jojoba', lot: 'VER-JJ04-2603' },
-  { materialId: 'ing-black-fig', lot: 'AUR-24118-B' }],
-
-  specVersion: 'f4',
-  artefactVersions: [
-  { type: 'unit-label', version: 'v2' },
-  { type: 'carton', version: 'v1' },
-  { type: 'listing', version: 'v2' }],
-
-  madeBy: 'Priya',
-  notes: 'Filled under nitrogen. Held 48 hours before labelling.'
-},
-{
-  code: 'WDB-1807-006',
-  productId: 'p-wild-damson',
-  date: '2026-07-18',
-  units: 120,
-  identity: { kind: 'batch', code: 'WDB-1807-006' },
-  lots: [
-  { materialId: 'ing-wild-damson', lot: 'NJF-1330-09' },
-  { materialId: 'ing-soy-c3', lot: 'ECO-C3-2604' }],
-
-  specVersion: 'r1',
-  artefactVersions: [
-  { type: 'unit-label', version: 'v1' },
-  { type: 'listing', version: 'v1' }],
-
-  madeBy: 'Tom'
-},
-{
-  code: 'BFC-1407-013',
-  productId: 'p-black-fig',
-  date: '2026-07-14',
-  units: 42,
-  identity: { kind: 'batch', code: 'BFC-1407-013' },
-  lots: [
-  { materialId: 'ing-black-fig', lot: 'AUR-24118-B' },
-  { materialId: 'ing-crw45', lot: 'KER-CRW-2609' }],
-
-  specVersion: 'r6',
-  artefactVersions: [
-  { type: 'unit-label', version: 'v4' },
-  { type: 'listing', version: 'v2' }],
-
-  madeBy: 'Nadia'
-},
-{
-  code: 'BSS-0907-008',
-  productId: 'p-bergamot-sea-salt',
-  date: '2026-07-09',
-  units: 54,
-  identity: { kind: 'batch', code: 'BSS-0907-008' },
-  lots: [
-  { materialId: 'ing-bergamot-sea-salt', lot: 'CWP-8802-16' },
-  { materialId: 'ing-alcohol', lot: 'MER-PA96-112' }],
-
-  specVersion: 'r3',
-  artefactVersions: [
-  { type: 'unit-label', version: 'v3' },
-  { type: 'listing', version: 'v1' }],
-
-  madeBy: 'Nadia'
-},
-{
-  code: 'WW100-0207-001',
-  productId: 'p-warmer',
-  date: '2026-07-02',
-  units: 150,
-  identity: { kind: 'serial-range', code: 'WW100-26', from: 'WW100-26-0401', to: 'WW100-26-0550' },
-  lots: [
-  { materialId: 'cmp-power-board', lot: 'LE-PB52-2618' },
-  { materialId: 'cmp-heater', lot: 'LE-PTC10-2612' },
-  { materialId: 'cmp-cable', lot: 'HC-SC12-2606' },
-  { materialId: 'cmp-housing', lot: 'WM-CH20-2604' }],
-
-  specVersion: 'b1',
-  artefactVersions: [
-  { type: 'rating-plate', version: 'v1' },
-  { type: 'carton', version: 'v1' },
-  { type: 'leaflet', version: 'v1' }],
-
-  madeBy: 'Tom'
-},
-{
-  code: 'SMV-0207-020',
-  productId: 'p-smoked-vetiver',
-  date: '2026-07-02',
-  units: 30,
-  identity: { kind: 'batch', code: 'SMV-0207-020' },
-  lots: [
-  { materialId: 'ing-smoked-vetiver', lot: 'HAL-2210-03' },
-  { materialId: 'ing-dpg', lot: 'HAL-DPG-768' }],
-
-  specVersion: 'r2',
-  artefactVersions: [
-  { type: 'unit-label', version: 'v2' },
-  { type: 'listing', version: 'v2' }],
-
-  madeBy: 'Tom'
-}];
-
-
-export function recordByCode(code: string): ProductionRecord | undefined {
-  return RECORDS.find((r) => r.code === code);
-}
-
-/* ------------------------------------------------------------- attention */
-
-export const ATTENTION: Attention[] = [
-{
-  id: 'att-1',
-  productId: 'p-black-fig',
-  categoryId: 'home-fragrance',
-  regimeId: 'clp',
-  severity: 'blocking',
-  label: 'Classification changed since last print',
-  detail:
-  'Fragrance load raised to 8 percent on 22 July. Label v4 was printed at 7 percent and no longer matches the specification.',
-  to: '/products/p-black-fig'
-},
-{
-  id: 'att-2',
-  productId: 'p-warmer',
-  materialId: 'cmp-cable',
-  categoryId: 'electronics',
-  regimeId: 'rohs',
-  severity: 'blocking',
-  label: 'Component without a declaration',
-  detail:
-  'Silicone USB-C cable, 1.2 m has no declaration of conformity on file. The declaration for WW-100 cannot be signed until it is.',
-  to: '/materials/component/cmp-cable'
-},
-{
-  id: 'att-3',
-  productId: 'p-warmer',
-  materialId: 'cmp-heater',
-  categoryId: 'electronics',
-  regimeId: 'ce',
-  severity: 'review',
-  label: 'Test report expires in 62 days',
-  detail:
-  'The PTC heating element report from Linfield Electronics expires on 30 September 2026. Book a retest or request a current report.',
-  to: '/materials/component/cmp-heater'
-},
-{
-  id: 'att-4',
-  productId: 'p-rosehip-face-oil',
-  categoryId: 'cosmetics',
-  regimeId: 'cpr',
-  severity: 'blocking',
-  label: 'Ingredient order changed since the carton was printed',
-  detail:
-  'Jojoba raised to 18.4 percent on 12 July. The INCI order on carton v1 no longer matches the formula.',
-  to: '/products/p-rosehip-face-oil'
-},
-{
-  id: 'att-5',
-  materialId: 'ing-black-fig',
-  productId: 'p-black-fig',
-  categoryId: 'home-fragrance',
-  regimeId: 'clp',
-  severity: 'review',
-  label: 'Revised safety data sheet',
-  detail:
-  'Aurelia Fragrances published version 4.3 of the Black Fig and Cassis data sheet on 2 June. Version 4.2 is on file.',
-  to: '/materials/ingredient/ing-black-fig'
-},
-{
-  id: 'att-6',
-  materialId: 'ing-jojoba',
-  productId: 'p-rosehip-face-oil',
-  categoryId: 'cosmetics',
-  regimeId: 'cpr',
-  severity: 'review',
-  label: 'Revised INCI certificate',
-  detail:
-  'Verdant Botanicals published version 1.2 of the jojoba certificate on 22 June. Version 1.1 is on file.',
-  to: '/materials/ingredient/ing-jojoba'
-}];
-
-
-/* ------------------------------------------------------------- workspace */
-
-export const BUSINESS = {
-  name: 'Hearth and Hollow Ltd',
-  tradingName: 'Hearth & Hollow',
-  phone: '+44 1273 555 018',
-  email: 'hello@hearthandhollow.co.uk',
-  website: 'hearthandhollow.co.uk',
-  /**
-   * A REGULATORY reference, not a billing field, which is why it sits with the rest of the
-   * printed identity: it appears in section 15 of every safety data sheet. The VAT number
-   * Stripe needs for the reverse charge is a different value collected in Checkout and
-   * editable in the billing portal, and the two must not be conflated — one is printed on a
-   * document, the other decides what a customer is charged.
-   */
-  vatNumber: 'GB 418 2296 05'
-};
 
 /**
- * The sheet is issued as a draft pending competent review, so the account has
- * to record who that reviewer is. This is the one billing-adjacent field that
- * is load-bearing for the product's promise.
- */
-export const COMPETENT_PERSON = {
-  kind: 'external' as 'internal' | 'external',
-  name: 'Dr Ruth Kelder',
-  organisation: 'Kelder Compliance BV',
-  email: 'r.kelder@keldercompliance.nl',
-  reviewed: 4,
-  awaiting: 2
-};
-
-/* --------------------------------------------------------------- billing */
-
-/**
- * THERE IS NO BILLING FIXTURE HERE ANY MORE, and this note is what stops one coming back.
+ * Saves an edited composition: the specification's own fields, and the pack fields that live
+ * on the product.
  *
- * This file used to hold a PLANS array — Maker £24 for 3 products, Studio £58 for 10, House
- * £140 for 40 — plus a card on file, an invoice history and a renewal date. Every number in
- * it was invented, none of them existed in Stripe, and all of them were rendered to
- * signed-in customers on the Settings billing tab. Three tiers at three prices nobody could
- * be charged, next to a real plan status read from the database.
+ * Two updates, because the edit spans the two tables the split created — the recipe is the
+ * specification's, the net quantity and the packaging are the SKU's. Both are scoped by RLS
+ * rather than by an account filter written here, and neither may reach a row this caller does
+ * not own: `using` decides which rows may be updated and `with check` decides what they may
+ * become, so there is no way to move a row into somebody else's account either.
  *
- * Prices, allowances and tier names now come from GET /api/plans on the marketing origin,
- * which is generated from the plan contract that also creates the Stripe prices; the card,
- * the invoices and the VAT number come from the Stripe billing portal. See src/lib/plans.ts
- * and src/pages/Billing.tsx. Nothing about money belongs in a fixture file, because a fixture
- * price is indistinguishable from a real one on screen and wrong the moment either changes.
+ * NO SKU METER RUNS HERE, and that is a property of the schema rather than of this call. The
+ * enforcement trigger fires on INSERT and on un-archiving, and on nothing else, precisely so
+ * that editing, re-deriving and exporting an existing SKU can never be blocked by a limit —
+ * a maker over their allowance after a downgrade must still be able to correct a label for
+ * stock already on a shelf.
  */
+export async function saveComposition(
+product: Product,
+spec: Spec)
+: Promise<WriteResult<void>> {
+  const client = supabase;
+  if (!client) return { ok: false, reason: 'not_configured', message: NOT_CONFIGURED_MESSAGE };
+  if (!product.specificationId) {
+    return { ok: false, reason: 'failed', message: GENERIC_WRITE_FAILURE };
+  }
 
-export const ADDRESSES: SupplierAddress[] = [
-{
-  id: 'addr-gb',
-  market: 'GB',
-  label: 'Great Britain',
-  role: 'Supplier and manufacturer',
-  lines: ['Hearth and Hollow Ltd', 'Unit 4, Bellhurst Yard', 'Lewes BN7 2QA', 'United Kingdom'],
-  isDefault: true
-},
-{
-  id: 'addr-eu',
-  market: 'EU',
-  label: 'European Union and Northern Ireland',
-  role: 'Responsible person and economic operator',
-  lines: [
-  'Kelder Compliance BV',
-  'Responsible person for Hearth and Hollow Ltd',
-  'Havenstraat 12, 3016 CN Rotterdam',
-  'Netherlands']
+  const { error: specError } = await client.
+  from('specifications').
+  update(specColumns(spec)).
+  eq('id', product.specificationId);
 
-}];
+  if (specError) return { ok: false, ...classifyWriteError(specError) };
 
+  const { error: productError } = await client.
+  from('products').
+  update(packColumns(spec)).
+  eq('id', product.id);
 
-export function addressForMarket(market: 'GB' | 'EU'): SupplierAddress {
-  return ADDRESSES.find((a) => a.market === market) ?? ADDRESSES[0];
+  if (productError) return { ok: false, ...classifyWriteError(productError) };
+
+  return { ok: true, value: undefined };
 }
-
-export const STOCK: ArtefactStock[] = [
-{ id: 'ls-1', name: 'Base label 52 × 74', artefactType: 'unit-label', widthMm: 52, heightMm: 74, perSheet: 10, sheet: 'A4' },
-{ id: 'ls-2', name: 'Avery L7169, 99.1 × 67.7', artefactType: 'unit-label', widthMm: 99.1, heightMm: 67.7, perSheet: 8, sheet: 'A4' },
-{ id: 'ls-3', name: 'Dropper bottle wrap 44 × 62', artefactType: 'unit-label', widthMm: 44, heightMm: 62, perSheet: 12, sheet: 'A4' },
-{ id: 'ls-4', name: 'Carton panel 88 × 58', artefactType: 'carton', widthMm: 88, heightMm: 58, perSheet: 8, sheet: 'A4' },
-{ id: 'ls-5', name: 'Device carton panel 100 × 70', artefactType: 'carton', widthMm: 100, heightMm: 70, perSheet: 6, sheet: 'A4' },
-{ id: 'ls-6', name: 'Rating plate 40 × 25', artefactType: 'rating-plate', widthMm: 40, heightMm: 25, perSheet: 24, sheet: 'A4' },
-{ id: 'ls-7', name: 'Leaflet A6, 105 × 148', artefactType: 'leaflet', widthMm: 105, heightMm: 148, perSheet: 4, sheet: 'A4' },
-{ id: 'ls-8', name: 'Listing block 96 × 60', artefactType: 'listing', widthMm: 96, heightMm: 60, perSheet: 1, sheet: 'Screen' }];
-
-
-export const TEAM: TeamMember[] = [
-{ name: 'Nadia Osei', email: 'nadia@hearthandhollow.co.uk', role: 'Owner', lastActive: 'Today' },
-{ name: 'Tom Rivers', email: 'tom@hearthandhollow.co.uk', role: 'Maker', lastActive: 'Yesterday' },
-{ name: 'Priya Shah', email: 'priya@kelder-compliance.eu', role: 'Read only', lastActive: '12 July' }];
-
-
-export const CONFORMITY_DOCUMENTS: ConformityDocument[] = [
-{
-  id: 'doc-1',
-  title: 'Declaration of conformity, WW-100',
-  reference: 'HH-DOC-WW100-01',
-  issued: '2026-06-08',
-  owner: 'Draft, unsigned',
-  productId: 'p-warmer'
-},
-{
-  id: 'doc-2',
-  title: 'EN IEC 63000 technical compilation, WW-100',
-  reference: 'HH-TF-WW100-RoHS',
-  issued: '2026-06-08',
-  owner: 'Nadia Osei',
-  productId: 'p-warmer'
-},
-{
-  id: 'doc-3',
-  title: 'Cosmetic product safety report, Rosehip and Meadowfoam Face Oil',
-  reference: 'CPSR-RMF-2026',
-  issued: '2026-05-30',
-  owner: 'Dr Elin Marsh, chartered chemist',
-  productId: 'p-rosehip-face-oil'
-},
-{
-  id: 'doc-4',
-  title: 'Product information file, Rosehip and Meadowfoam Face Oil',
-  reference: 'PIF-RMF-2026',
-  issued: '2026-06-02',
-  owner: 'Kelder Compliance BV',
-  productId: 'p-rosehip-face-oil'
-},
-{
-  id: 'doc-5',
-  title: 'WEEE producer registration',
-  reference: 'WEE/AB1234CD',
-  issued: '2026-01-05',
-  expires: '2027-01-04',
-  owner: 'Hearth and Hollow Ltd'
-}];

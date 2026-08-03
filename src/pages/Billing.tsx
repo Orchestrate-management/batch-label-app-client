@@ -27,7 +27,7 @@ import {
   type PlanCatalogue,
   type PublicPlan } from
 '../lib/plans';
-import { useProducts } from '../lib/workspace';
+import { useProducts } from '../lib/product-store';
 
 /**
  * Plan and billing. This is where a purchase happens.
@@ -55,7 +55,11 @@ import { useProducts } from '../lib/workspace';
  */
 export function Billing() {
   const entitlement = useEntitlement();
-  const products = useProducts();
+  // The SKU count is a READ that can fail, now that products live in the database. `null`
+  // means "we do not know" and is rendered as such — never as zero, which on a billing page
+  // sits next to an allowance and reads as "you have used none of your plan".
+  const { status: productsStatus, products } = useProducts();
+  const skuCount = productsStatus === 'ready' ? products.length : null;
   const catalogue = usePlanCatalogue();
 
   // Annual is the default and monthly is the secondary option, which is the founder
@@ -127,7 +131,7 @@ export function Billing() {
         <CurrentPlan
           held={held}
           currency={catalogue.data?.currency ?? null}
-          skuCount={products.length}
+          skuCount={skuCount}
           portalPending={pending === 'portal'}
           busy={pending !== null}
           onManage={() => run('portal', createPortalSession)} />
@@ -271,7 +275,7 @@ function CurrentPlan({
 
 
 
-}: {held: PublicPlan | null;currency: string | null;skuCount: number;portalPending: boolean;busy: boolean;onManage: () => void;}) {
+}: {held: PublicPlan | null;currency: string | null;skuCount: number | null;portalPending: boolean;busy: boolean;onManage: () => void;}) {
   const entitlement = useEntitlement();
 
   const tone =
@@ -290,7 +294,8 @@ function CurrentPlan({
   // in this repo — a comped or grandfathered account has an allowance that no tier's card
   // describes, and it is the row that is true for them.
   const limit = entitlement.skuUnlimited ? null : entitlement.skuLimit;
-  const pct = limit && limit > 0 ? Math.min(100, Math.round(skuCount / limit * 100)) : 0;
+  const pct =
+  limit && limit > 0 && skuCount !== null ? Math.min(100, Math.round(skuCount / limit * 100)) : 0;
 
   return (
     <section aria-labelledby="current-heading" className="space-y-4">
@@ -347,8 +352,10 @@ function CurrentPlan({
         {/* "We could not read your allowance" is only true once a read has finished. While
             one is in flight it would be an admission of a failure that has not happened. */}
         <p className="text-sm text-ink">
-          <span className="tabular font-medium">{skuCount}</span>
-          {entitlement.loading ?
+          <span className="tabular font-medium">{skuCount ?? '—'}</span>
+          {skuCount === null ?
+          <> SKUs. We could not count your products just now.</> :
+          entitlement.loading ?
           <> SKUs. Checking what your plan allows…</> :
           entitlement.skuUnlimited ?
           <> SKUs. This plan has no SKU ceiling.</> :
@@ -361,7 +368,7 @@ function CurrentPlan({
           <> SKUs. We could not read your allowance.</>
           }
         </p>
-        {!entitlement.loading && limit !== null && limit > 0 &&
+        {!entitlement.loading && skuCount !== null && limit !== null && limit > 0 &&
         <div
           className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-paper-line"
           role="progressbar"
@@ -373,12 +380,17 @@ function CurrentPlan({
             <div className="h-full rounded-full bg-teal" style={{ width: `${pct}%` }} />
           </div>
         }
-        {/* Says what a SKU IS and nothing about what happens at the limit. The allowance is
-            recorded and displayed; it is not enforced anywhere yet, and a sentence promising
-            either that it blocks you or that it does not would be a promise about software
-            that has not been written. */}
+        {/* This used to say what a SKU IS and deliberately nothing about what happens at
+            the limit, because nothing enforced it. Something does now: a trigger on
+            public.products counts live rows for the ACCOUNT and refuses one too many. So the
+            copy states the rule — and states the other half of it, which matters more to
+            somebody who has just downgraded: the meter fires on creating a product and on
+            nothing else, so everything already here stays editable and printable at any
+            tier, forever. */}
         <p className="mt-3 max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
-          A SKU is one thing you sell: one fragrance in one pack size.
+          A SKU is one thing you sell: one fragrance in one pack size. At your allowance you
+          cannot add a new one until you are under it or on a larger plan — everything you
+          already have stays editable and printable whatever happens to your plan.
         </p>
       </Card>
 

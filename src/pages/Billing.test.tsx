@@ -32,8 +32,20 @@ vi.mock('../lib/meta-pixel', () => ({
   metaInitiateCheckout: (...args: unknown[]) => mocks.metaInitiateCheckout(...args)
 }));
 
-vi.mock('../lib/workspace', () => ({
-  useProducts: () => new Array(12).fill(null)
+/**
+ * Twelve products, read successfully. The store reports a STATUS as well as a list now,
+ * because products come from the database and the read can fail — and this page renders the
+ * count beside an allowance, where a zero from a failed read would read as "you have used
+ * none of your plan".
+ */
+vi.mock('../lib/product-store', () => ({
+  useProducts: () => ({
+    status: 'ready',
+    products: new Array(12).fill(null),
+    error: null,
+    refresh: () => {},
+    reload: async () => {}
+  })
 }));
 
 vi.mock('../lib/billing', () => ({

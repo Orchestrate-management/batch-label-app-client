@@ -201,6 +201,16 @@ export type ArtefactInstance = {
 
 export type Product = {
   id: string;
+  /**
+   * The composition this SKU is a pack of — `specifications.id`.
+   *
+   * Optional because a fixture product has no database row behind it, and because the app
+   * must be able to render a product it cannot write back. Every product read from Supabase
+   * carries one, and a composition edit is refused rather than guessed without it: a
+   * specification id is the only thing that says WHICH recipe to update, and a wrong guess
+   * would rewrite a different product's classification.
+   */
+  specificationId?: string;
   name: string;
   sku: string;
   categoryId: CategoryId;

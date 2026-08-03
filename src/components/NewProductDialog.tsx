@@ -1,17 +1,34 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { toast } from 'sonner';
-import { Button, Card, Field, Input, Select } from './ui/Primitives';
-import { CATEGORIES, categoryById, createProduct } from '../lib/products';
+import { Button, Card, Field, FormError, Input, Select } from './ui/Primitives';
+import { SkuLimitNotice } from './SkuLimitNotice';
+import { CATEGORIES, categoryById } from '../lib/categories';
+import { createProduct, type WriteFailure } from '../lib/products';
+import { useProducts } from '../lib/product-store';
 import { regimeById } from '../lib/regimes';
 import { CategoryId } from '../lib/model';
 import { ingredientById } from '../lib/catalog';
 import { useWorkspace } from '../lib/workspace';
 
 /**
- * Three fields, because everything else belongs in the pipeline. Category is
+ * Four fields, because everything else belongs in the pipeline. Category is
  * the only irreversible choice: it fixes the shape of the composition, the
  * regimes that attach and the outputs that follow.
+ *
+ * IT NOW ACTUALLY CREATES SOMETHING. This dialog used to push onto an in-memory array and
+ * raise a toast saying "Product created", which was true until the tab was reloaded. It
+ * writes two rows — a specification and the product that is one pack of it — and does not
+ * close, does not navigate and does not congratulate anybody until the database has said yes.
+ *
+ * IT SENDS NO ACCOUNT ID. Both tables default `account_id` to `current_account_id()`, so the
+ * account this lands in is decided from the session by the database and cannot be influenced
+ * by anything typed into this form. See lib/products.ts.
+ *
+ * THE PRODUCT CODE IS EDITABLE, which it was not before. It used to be generated from the
+ * name and the clock — `BLA-4821` — and shown as an un-editable hint, so a maker was given a
+ * code they never chose and could not change. It is also the one field that can be REFUSED:
+ * codes are unique per account across live products, so a duplicate has to be fixable in the
+ * form that caused it.
  */
 export function NewProductDialog({
   onClose,
@@ -22,38 +39,52 @@ export function NewProductDialog({
 }: {onClose: () => void;fragranceId?: string;}) {
   const navigate = useNavigate();
   const { enabledCategories } = useWorkspace();
+  const { reload } = useProducts();
   const categories = CATEGORIES.filter((category) => enabledCategories.includes(category.id));
   const startingMaterial = fragranceId ? ingredientById(fragranceId) : undefined;
 
   const [name, setName] = useState('');
+  const [sku, setSku] = useState('');
   const [categoryId, setCategoryId] = useState<CategoryId>(categories[0]?.id ?? 'home-fragrance');
   const category = categoryById(categoryId);
   const [productType, setProductType] = useState(category.productTypes[0]);
+
+  const [saving, setSaving] = useState(false);
+  const [failure, setFailure] = useState<{reason: WriteFailure;message: string;} | null>(null);
 
   const changeCategory = (next: CategoryId) => {
     setCategoryId(next);
     setProductType(categoryById(next).productTypes[0]);
   };
 
-  const sku = name ?
-  `${name.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() || 'NEW'}-${String(Date.now()).slice(-4)}` :
-  '';
-
-  const submit = (event: React.FormEvent) => {
+  const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!name.trim()) return;
-    const product = createProduct({
+    if (!name.trim() || saving) return;
+    setSaving(true);
+    setFailure(null);
+
+    const result = await createProduct({
       name: name.trim(),
-      sku,
+      sku: sku.trim(),
       categoryId,
       productType,
       fragranceId: category.specKind === 'mixture' ? fragranceId : undefined
     });
-    toast('Product created', {
-      description: `${product.name} is at the start of its pipeline. Add materials to begin.`
-    });
+
+    if (!result.ok) {
+      // The dialog stays open, holding everything typed into it. A form that closes on
+      // failure makes the maker type it all again to find out whether it works the second
+      // time, and a limit message shown over a screen with no form on it explains nothing.
+      setSaving(false);
+      setFailure({ reason: result.reason, message: result.message });
+      return;
+    }
+
+    // Land the list before leaving, so the product screen finds the product it is about to
+    // render rather than racing a background refresh into a "no such product" state.
+    await reload();
     onClose();
-    navigate(`/products/${product.id}`);
+    navigate(`/products/${result.value.id}`);
   };
 
   return (
@@ -62,8 +93,8 @@ export function NewProductDialog({
       role="dialog"
       aria-modal="true"
       aria-label="New product">
-      
-      <Card className="w-full max-w-lg px-6 py-6">
+
+      <Card className="max-h-[90vh] w-full max-w-lg overflow-y-auto px-6 py-6">
         <h2 className="font-display text-lg font-medium text-ink">New product</h2>
         <p className="mt-1 max-w-prose text-sm leading-relaxed text-ink-secondary">
           {startingMaterial ?
@@ -71,24 +102,41 @@ export function NewProductDialog({
           'Just enough to begin. The composition, market and outputs are filled in as you work through the pipeline.'}
         </p>
 
+        {/* Before anything is typed, so nobody fills a form in to be told at the end that
+            their plan is full. Silent when the allowance is unknown — see SkuLimitNotice. */}
+        <SkuLimitNotice className="mt-4" />
+
         <form onSubmit={submit} className="mt-5 space-y-4">
-          <Field label="Name" hint={sku ? `Product code ${sku}` : 'Used on the label and in every record'}>
+          <Field label="Name" hint="Used on the label and in every record">
             <Input
               autoFocus
               value={name}
               placeholder="Black Fig and Cassis"
               onChange={(event) => setName(event.target.value)} />
-            
+
+          </Field>
+
+          <Field
+            label="Product code"
+            hint="Yours to choose, and unique across the products you sell. You can leave it empty and add it later.">
+
+            <Input
+              className="tabular"
+              value={sku}
+              placeholder="CC-BFC-220"
+              aria-invalid={failure?.reason === 'duplicate_sku' || undefined}
+              onChange={(event) => setSku(event.target.value)} />
+
           </Field>
 
           <Field
             label="Category"
             hint="Fixes the shape of the composition and the regimes that apply. It cannot be changed later.">
-            
+
             <Select
               value={categoryId}
               onChange={(event) => changeCategory(event.target.value as CategoryId)}>
-              
+
               {categories.map((option) =>
               <option key={option.id} value={option.id}>
                   {option.name}
@@ -113,12 +161,20 @@ export function NewProductDialog({
             produce {category.artefacts.length + (category.specKind === 'bom' ? 0 : 1)} outputs.
           </p>
 
+          {/* The meter refused it. The allowance, not the Postgres sentence: the trigger's own
+              comment says to match its hint and never its message. */}
+          {failure?.reason === 'sku_limit' && <SkuLimitNotice refused />}
+
+          {failure && failure.reason !== 'sku_limit' &&
+          <FormError>{failure.message}</FormError>
+          }
+
           <div className="flex justify-end gap-2 pt-1">
-            <Button type="button" variant="quiet" onClick={onClose}>
+            <Button type="button" variant="quiet" onClick={onClose} disabled={saving}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" disabled={!name.trim()}>
-              Create product
+            <Button type="submit" variant="primary" disabled={!name.trim() || saving}>
+              {saving ? 'Creating…' : 'Create product'}
             </Button>
           </div>
         </form>

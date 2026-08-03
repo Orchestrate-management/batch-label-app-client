@@ -13,7 +13,6 @@ import {
 import { Logo } from './Logo';
 import { useAuth } from '../lib/auth';
 import { useEntitlement } from '../lib/entitlement';
-import { BUSINESS } from '../lib/products';
 
 type NavItem = {
   to: string;
@@ -168,15 +167,18 @@ function AccountMenu() {
   const ref = useRef<HTMLDivElement>(null);
 
   // The business name on the membership is what the maker typed when they signed
-  // up on www, so it is the true one. The stub is only a placeholder for the beat
-  // before the read resolves, or if it was never filled in.
-  const businessName = entitlement.businessName ?? BUSINESS.tradingName;
+  // up on www, so it is the true one. The fallback is deliberately generic rather
+  // than a plausible business name: this strip is the first thing on screen, and a
+  // name here that belongs to somebody else is the fixture that reads most like a
+  // setting. It covers the beat before the read resolves, and the case where the
+  // field was never filled in.
+  const businessName = entitlement.businessName ?? 'Your business';
   const email = user?.email ?? null;
   const initials = businessName.
   split(/\s+/).
   filter(Boolean).
   slice(0, 2).
-  map((part) => part[0]).
+  map((part: string) => part[0]).
   join('').
   toUpperCase();
 

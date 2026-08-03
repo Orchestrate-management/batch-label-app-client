@@ -1,4 +1,4 @@
-import { BUSINESS, addressForMarket } from './products';
+import { BUSINESS, addressForMarket } from './identity';
 import { ingredientById } from './catalog';
 import { Derivation, WhyLine } from './derive';
 import { IngredientMaterial, Market, MixtureSpec, PhasedSpec, Product, round } from './model';

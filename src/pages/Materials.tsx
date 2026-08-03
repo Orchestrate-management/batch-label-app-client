@@ -40,7 +40,7 @@ import {
   PackagingMaterial,
   formatDate } from
 '../lib/model';
-import { CONFORMITY_DOCUMENTS } from '../lib/products';
+
 
 
 const DOCUMENT_FOR_CLASS: Record<MaterialClass, DocumentKind> = {
@@ -156,6 +156,17 @@ export function Materials() {
 /**
  * Evidence for the components above, so it belongs beside them rather than in
  * settings. A declaration is material data, not configuration.
+ *
+ * NOTHING IS STORED HERE YET. This table used to list five documents belonging to a business
+ * that does not exist — a declaration of conformity for a wax warmer, a cosmetic product
+ * safety report, a WEEE producer registration with a registration number on it. A WEEE
+ * registration number is printed on a device label and is a claim to a regulator; a signed
+ * declaration of conformity is the document that makes a product legal to sell. Showing
+ * either as "held" when the account holds neither is the most expensive kind of wrong this
+ * application can be.
+ *
+ * There is no documents table in the account data schema, so the honest version of this
+ * section is the sentence below. The fixtures are in lib/fixtures.ts, for the tests.
  */
 function ConformityStore() {
   return (
@@ -165,42 +176,13 @@ function ConformityStore() {
         The evidence behind the components above. A declaration cannot be signed while any
         component it covers is unsupported.
       </p>
-      <Card className="overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-left text-sm">
-            <thead>
-              <tr className="border-b border-paper-line bg-paper-panel/60 text-2xs uppercase tracking-[0.1em] text-ink-tertiary">
-                <th scope="col" className="px-5 py-3 font-medium">Document</th>
-                <th scope="col" className="px-5 py-3 font-medium">Reference</th>
-                <th scope="col" className="px-5 py-3 font-medium">Issued</th>
-                <th scope="col" className="px-5 py-3 font-medium">Expires</th>
-                <th scope="col" className="px-5 py-3 font-medium">Held by</th>
-              </tr>
-            </thead>
-            <tbody>
-              {CONFORMITY_DOCUMENTS.map((document) =>
-              <tr key={document.id} className="border-b border-paper-line last:border-0">
-                  <td className="px-5 py-3.5 text-ink">{document.title}</td>
-                  <td className="tabular px-5 py-3.5 text-ink-secondary">{document.reference}</td>
-                  <td className="tabular px-5 py-3.5 text-ink-secondary">
-                    {formatDate(document.issued)}
-                  </td>
-                  <td className="tabular px-5 py-3.5 text-ink-secondary">
-                    {document.expires ? formatDate(document.expires) : '—'}
-                  </td>
-                  <td className="px-5 py-3.5">
-                    {document.owner === 'Draft, unsigned' ?
-                  <Pill tone="warn">Draft, unsigned</Pill> :
-
-                  <span className="text-ink-secondary">{document.owner}</span>
-                  }
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      <Callout tone="info" title="Not built yet">
+        <p className="max-w-prose leading-relaxed">
+          You cannot upload or hold a declaration of conformity, a test report or a producer
+          registration here yet, and nothing of yours is stored. Keep them where you keep them
+          now. We would rather say so than list documents you do not have.
+        </p>
+      </Callout>
     </div>);
 
 }
@@ -475,9 +457,13 @@ function MaterialDetail({ material }: {material: Material;}) {
               <Button
               size="sm"
               variant="secondary"
+              /* Reading a supplier document is not built. This used to say "Import started"
+                 and describe fields waiting to be confirmed; nothing started and no fields
+                 were extracted, so a maker who pressed it believed a newer sheet was on its
+                 way onto their classification. */
               onClick={() =>
-              toast('Import started', {
-                description: `Confirm the extracted fields to replace version ${material.document.version}.`
+              toast('Reading a document is not built yet', {
+                description: `Version ${material.document.latestVersion} has not been imported, and version ${material.document.version} is still what your classification uses.`
               })
               }>
               
@@ -964,9 +950,13 @@ function ImportFlow({
             <Button
             variant="primary"
             disabled={confirmed < confirmable}
+            /* Materials are a shipped catalogue: there is no table behind this screen and no
+               row is written. It used to say "Material saved. X added to ingredients", which
+               was a claim that a supplier's hazard data was on file — the data every
+               classification on the next screen is calculated from. */
             onClick={() => {
-              toast('Material saved', {
-                description: `${fields[0]?.value} added to ${materialClass === 'ingredient' ? 'ingredients' : materialClass === 'packaging' ? 'packaging' : 'components'}.`
+              toast('Saving a material is not built yet', {
+                description: `Nothing has been added to your ${materialClass === 'ingredient' ? 'ingredients' : materialClass === 'packaging' ? 'packaging' : 'components'}, and no classification will change.`
               });
               onClose();
             }}>

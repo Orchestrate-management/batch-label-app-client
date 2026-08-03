@@ -5,15 +5,27 @@ import {
   CheckIcon,
   DownloadIcon,
   GripVerticalIcon,
+  PackageIcon,
+  RefreshCwIcon,
   TriangleAlertIcon } from
 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '../components/AppShell';
 import { PlanNotice } from '../components/PlanNotice';
-import { Button, Card, Field, Pill, SectionTitle, Select } from '../components/ui/Primitives';
+import {
+  Button,
+  Callout,
+  Card,
+  EmptyState,
+  Field,
+  Pill,
+  SectionTitle,
+  Select,
+  Skeleton } from
+'../components/ui/Primitives';
 import { useEntitlement } from '../lib/entitlement';
 import { ArtefactRenderer } from '../components/artefact/ArtefactRenderer';
-import { ArtefactType, Market } from '../lib/model';
+import { ArtefactType, Market, Product } from '../lib/model';
 import {
   MIN_FONT_PT,
   MIN_LINE_SPACING,
@@ -22,19 +34,72 @@ import {
   geometryRules } from
 '../lib/derive';
 import { packagingById } from '../lib/catalog';
-import {
-  ARTEFACT_LABELS,
-  PRODUCTS,
-  STOCK,
-  addressForMarket,
-  categoryById,
-  productById } from
-'../lib/products';
+import { ARTEFACT_LABELS, STOCK, categoryById } from '../lib/categories';
+import { addressForMarket } from '../lib/identity';
+import { useProduct } from '../lib/product-store';
 import { blocksFor, regimeById } from '../lib/regimes';
 import { useCategorySurface } from '../lib/workspace';
 
+/**
+ * Resolves the product first, for the same reason the specification screen does.
+ *
+ * `productById(productId) ?? PRODUCTS[0]` used to mean that a designer opened on an unknown
+ * id laid out a fixture candle's label — at actual size, with its name and its classification
+ * on it, on a screen whose whole purpose is to show a maker what they are about to print.
+ */
 export function ArtefactDesigner() {
-  const { productId, artefactType } = useParams();
+  const { productId } = useParams();
+  const navigate = useNavigate();
+  const { status, product, error, refresh } = useProduct(productId);
+
+  if (status === 'loading') {
+    return (
+      <main className="flex-1 px-6 py-8 lg:px-10" aria-busy="true" aria-label="Loading product">
+        <Skeleton className="h-4 w-40 bg-paper-line/70" />
+        <Skeleton className="mt-4 h-8 w-72 bg-paper-line/70" />
+        <Skeleton className="mt-6 h-64 w-full bg-paper-line/70" />
+      </main>);
+
+  }
+
+  if (status === 'error') {
+    return (
+      <main className="flex-1 px-6 py-8 lg:px-10">
+        <Callout tone="warn" role="alert" title="We could not read this product">
+          <p className="max-w-prose leading-relaxed">
+            {error} Nothing has been changed, and nothing here has been laid out from a guess.
+          </p>
+          <Button size="sm" variant="secondary" className="mt-3" onClick={refresh}>
+            <RefreshCwIcon className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
+            Try again
+          </Button>
+        </Callout>
+      </main>);
+
+  }
+
+  if (!product) {
+    return (
+      <main className="flex-1 px-6 py-8 lg:px-10">
+        <EmptyState
+          icon={<PackageIcon className="h-5 w-5" strokeWidth={1.25} aria-hidden="true" />}
+          title="No such product"
+          body="There is nothing in your products with this address, so there is no surface to lay out."
+          action={
+          <Button variant="secondary" onClick={() => navigate('/products')}>
+              Back to your products
+            </Button>
+          } />
+
+      </main>);
+
+  }
+
+  return <ArtefactDesignerView product={product} />;
+}
+
+function ArtefactDesignerView({ product }: {product: Product;}) {
+  const { artefactType } = useParams();
   const navigate = useNavigate();
 
   /**
@@ -56,7 +121,6 @@ export function ArtefactDesigner() {
 
   // The designer always knows what it is designing: both the product and the
   // surface come from the route, never from a picker inside the screen.
-  const product = productById(productId ?? '') ?? PRODUCTS[0];
   useCategorySurface(product.categoryId);
   const category = categoryById(product.categoryId);
 
@@ -100,7 +164,10 @@ export function ArtefactDesigner() {
   // at the legibility floor. The same check covers any optional block, not only branding.
   const optionalCrowds = brandingShown && fontPt <= MIN_FONT_PT && area < 4500;
 
-  const identityCode = category.recordIdentity === 'batch' ? 'BFC-2607-014' : 'WW100-26-0001';
+  // A placeholder, and it reads as one on the canvas. It was a fixture batch code — the
+  // number a recall is run against — printed at actual size onto a maker's proof. Production
+  // records have no table yet, so there is no real code to print here.
+  const identityCode = category.recordIdentity === 'batch' ? '[Batch code]' : '[Serial number]';
 
   return (
     <main className="flex-1 pb-24 xl:pb-0">
