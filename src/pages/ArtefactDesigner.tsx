@@ -10,6 +10,7 @@ import {
 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '../components/AppShell';
+import { NoAccountNotice } from '../components/NoAccountNotice';
 import { PlanNotice } from '../components/PlanNotice';
 import {
   Button,
@@ -84,6 +85,17 @@ export function ArtefactDesigner() {
     return (
       <main className="flex-1 px-6 py-8 lg:px-10">
         <PlanNotice states={['suspended']} />
+      </main>);
+
+  }
+
+  // And before it too. No account resolved means no read was made, so "there is nothing in
+  // your products with this address" states the outcome of a read that never happened — on
+  // the screen a maker opens to check what they are about to print.
+  if (status === 'no-account') {
+    return (
+      <main className="flex-1 px-6 py-8 lg:px-10">
+        <NoAccountNotice />
       </main>);
 
   }

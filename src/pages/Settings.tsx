@@ -138,10 +138,21 @@ function IdentityTab() {
    *
    * Null is unknown, and unknown is said by leaving the number out rather than by printing a
    * plausible one.
+   *
+   * AND ZERO IS TREATED AS UNKNOWN HERE, WHICH IS NOT TRUE OF ZERO EVERYWHERE. The paragraph
+   * this feeds only renders when the list on screen is non-empty, so a count of nought is not
+   * a fact about the account — it is this sentence contradicting the screen it is printed on,
+   * and "it affects every output on all 0 products this account holds" is a sentence nobody
+   * can act on. It was reachable for the whole of a maker's first session: the count is read
+   * once when the provider mounts, so it stayed at the value it had before they created
+   * anything. The dialog now asks for a re-read on every create (see NewProductDialog), and
+   * this is the backstop for the frame between the write and the answer — and for any other
+   * way the two sources come apart. The number is never invented; the clause simply falls back
+   * to the wording that names no number at all.
    */
   const skuCount = entitlement.skuCount;
   const scope =
-  skuCount === null ?
+  skuCount === null || skuCount === 0 ?
   'It affects every output on every product this account holds.' :
   `It affects every output on all ${skuCount} ${skuCount === 1 ? 'product' : 'products'} this account holds.`;
 

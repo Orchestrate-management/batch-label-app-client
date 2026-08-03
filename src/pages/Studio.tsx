@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowRightIcon, PackageIcon, PlusIcon, RefreshCwIcon } from 'lucide-react';
 import { PageHeader } from '../components/AppShell';
 import { NewProductDialog } from '../components/NewProductDialog';
+import { NoAccountNotice } from '../components/NoAccountNotice';
 import { PlanNotice } from '../components/PlanNotice';
 import { SkuLimitNotice } from '../components/SkuLimitNotice';
 import {
@@ -80,8 +81,18 @@ export function Studio() {
    *
    * Null is unknown and is simply not said. The clause below disappears rather than
    * substituting a number, which is the whole rule the view's `sku_count` was built around.
+   *
+   * ZERO IS TREATED THE SAME WAY, in this clause only. The clause renders beside a work queue
+   * built from products that are on the screen, so nought is not a fact about the account here
+   * — it is this header contradicting the list underneath it. "0 products · 3 things
+   * outstanding across 1 product" was the first line a maker read after creating their first
+   * product, every time, because the count is read once when the provider mounts and nothing
+   * asked for it again after a write. The create now does (see NewProductDialog); this is the
+   * backstop for the frame in between, and it drops the clause rather than inventing a
+   * number.
    */
   const skuCount = entitlement.skuCount;
+  const countWorthStating = skuCount !== null && skuCount > 0;
 
   return (
     <main className="flex-1 pb-24 xl:pb-0">
@@ -102,7 +113,7 @@ export function Studio() {
         <Skeleton className="h-4 w-72 bg-paper-line/70" /> :
         ready && products.length > 0 ?
         <p className="text-[0.8125rem] text-ink-secondary">
-              {skuCount !== null &&
+              {countWorthStating &&
           <>
                   <span className="tabular">{skuCount}</span>{' '}
                   {skuCount === 1 ? 'product' : 'products'}
@@ -153,6 +164,15 @@ export function Studio() {
           )}
           </div>
         }
+
+        {/* THE ONE STATE THIS SCREEN USED TO RENDER AS NOTHING AT ALL. `ready` is false, so
+            neither the queue nor the empty state drew; nothing matched 'error' or 'loading';
+            and route `/` — the first screen after sign-in — came up as a greeting, a create
+            button and blank space below them. The person most likely to be looking at it is
+            a Google signup who never finished at /finish-setup: signed in, no account, and
+            nothing anywhere telling them that is what happened. Same sentences the products
+            screen shows, because it is the same fact. */}
+        {status === 'no-account' && <NoAccountNotice />}
 
         {ready && products.length === 0 &&
         <EmptyState

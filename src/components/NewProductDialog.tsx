@@ -100,6 +100,32 @@ export function NewProductDialog({
       return;
     }
 
+    /**
+     * THE ACCOUNT'S SKU COUNT JUST CHANGED, AND ONLY THE DATABASE KNOWS THE NEW ONE.
+     *
+     * `entitlements.sku_count` was read once when the provider mounted and, until this line,
+     * was re-read by exactly one caller in the whole app — the return from Stripe Checkout.
+     * So a maker who created their first product was then told "0 products · 3 things
+     * outstanding across 1 product" on Studio and "every output on all 0 products this
+     * account holds" on Settings, both from a count taken before the row existed. Billing's
+     * meter and its progress bar were a create behind for the rest of the session too.
+     *
+     * The fix is deliberately not "count the list instead". That is the fallback Billing
+     * removed on purpose: `fetchProducts` drops a product whose specification did not come
+     * back, so the client's length and the meter's count can differ by exactly the amount
+     * that makes a screen say "2 of 3" while the next insert is refused for holding 3.
+     *
+     * IT IS FIRED HERE AND NOT INSIDE `reload`. The store's reload is also what a saved
+     * composition calls, and a composition changes no count — refreshing the entitlement
+     * there would be a round trip per save for a number that cannot have moved. A create is
+     * the only write in this app that moves it.
+     *
+     * Not awaited, and before the list read rather than after it: the two are independent
+     * reads, this one blocks nothing on screen, and the provider revalidates in the
+     * background without blanking anything (see lib/entitlement.tsx).
+     */
+    entitlement.refresh();
+
     // Land the list before leaving, so the product screen finds the product it is about to
     // render rather than racing a background refresh into a "no such product" state.
     await reload();
