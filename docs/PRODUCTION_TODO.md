@@ -441,7 +441,25 @@ say so when they disagree — more honest, and a sentence nobody can act on.
 **Where it bites.** `countWorthStating` in `Studio` (`src/pages/Studio.tsx`) and `scope` in
 `IdentityTab` (`src/pages/Settings.tsx`); both carry the reasoning in a comment above them.
 
-### 13. Settings and Materials never mention that the workspace has no account
+### 13. Settings and Materials never mention that the workspace has no account — LEFT, per its own recommendation
+
+**NOT DONE, deliberately.** The entry recommends "(b) is the right shape and (c) is the right
+size for today", and re-reading the code agrees: neither screen states anything false. Settings
+suppresses the one clause that depends on the store (`IdentityTab`, the `scope` sentence, which
+only renders inside `status === 'ready' && products.length > 0`), and Materials is shipped
+reference data that is identical for every account and says so in its own header. The gap is
+silence, not a lie, so it is not the standing rule being broken. (b) is a global piece of shell
+chrome and needs decisions about dismissability and about the billing pages that are more
+product than this warrants.
+
+**One thing changed since this entry was written, and whoever does (b) should know it.** Entry
+10 now hides "Make something with this" on a material detail page for `no_membership` as well
+as for `suspended`. Materials still says nothing, so a maker with an unfinished signup sees a
+control simply not be there. That was already true for suspension — this widens it by one
+state rather than introducing it — and it is an argument for (b) rather than a reason to do (a)
+here: putting `NoAccountNotice` on Materials alone would explain a missing button on the one
+screen while Settings, Billing and Records stayed silent.
+
 
 **The gap.** Entry 9 covers the screens that read the products store. Settings does read it, and
 correctly suppresses the one sentence that depends on it, so it states nothing false — but it also
@@ -461,7 +479,23 @@ and what it does on the billing pages, which is more product than the gap warran
 **Where it bites.** `src/pages/Settings.tsx:126` (reads the store), `src/pages/Materials.tsx`
 (does not), `src/components/AppShell.tsx` if (b).
 
-### 14. Two Preferences controls look like settings and save nothing
+### 14. Two Preferences controls look like settings and save nothing — DONE
+
+**DONE** (commit `fix(14)`): option (a). Both `<Select>`s are `disabled`, each carries a hint
+saying why in the identity tab's register ("Not stored yet. Nothing produces an export for this
+to be the default of." / "Not stored yet. A product's market is chosen on its specification
+screen, per product."), the card gained a line separating the half that is real (the stock
+presets — `ArtefactDesigner` genuinely reads `STOCK`) from the half that is not, and
+`TABS[3].description` lost "and what the export defaults to", which named a control the screen
+does not have.
+
+Pinned in a new `src/pages/preferences-tab.test.tsx` (5 tests), because both ways of getting
+this wrong again are one-line changes that read as improvements: removing `disabled` reads as
+tidying, and wiring these into `WorkspaceProvider` beside the category toggles reads as
+finishing the job while being worse — the widget would remember and still change nothing. The
+last test asserts the category checkboxes are still enabled, so the fix cannot be "applied" to
+the half of the tab that works.
+
 
 **The gap.** The Preferences tab's **Default export** and **Default market** are uncontrolled
 `<Select defaultValue=...>` with no `onChange` and nowhere to write to. Changing either does
