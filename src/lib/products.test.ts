@@ -26,7 +26,11 @@ const db = vi.hoisted(() => {
     // second one failing AFTER the first has committed.
     specUpdate: { data: null as unknown, error: null as unknown },
     productUpdate: { data: null as unknown, error: null as unknown },
-    updated: [] as string[]
+    updated: [] as string[],
+    // What each UPDATE actually sent. Some of these columns are printed on a label, so the
+    // difference between null and a falsy value is the difference between a field left blank
+    // and a false declaration.
+    updatePayloads: [] as Array<[string, Record<string, unknown>]>
   };
 
   const query = (result: () => {data: unknown;error: unknown;}, onEq?: (column: string, value: unknown) => void) => {
@@ -87,6 +91,7 @@ const db = vi.hoisted(() => {
               return Promise.resolve({ data: null, error: null });
             }
             state.updated.push(table);
+            state.updatePayloads.push([table, payload]);
             const result = () =>
             table === 'specifications' ? state.specUpdate : state.productUpdate;
             // `.select()` after `.eq()` is what makes an UPDATE return the rows it touched.
@@ -109,14 +114,17 @@ const db = vi.hoisted(() => {
 vi.mock('./supabase', () => ({ supabase: db.supabase, isSupabaseConfigured: true }));
 
 import {
+  blankSpec,
   classifyWriteError,
   createProduct,
   fetchProducts,
   saveComposition,
   toProduct,
+  type NewProductInput,
   type ProductRow,
   type SpecificationRow } from
 './products';
+import { categoryById } from './categories';
 
 /**
  * The two things in lib/products.ts that can be tested without a database, and both of them
@@ -247,6 +255,193 @@ describe('reading a product row', () => {
       specRow()
     );
     expect(product.obligations).toEqual({ 'clp-classification': true });
+  });
+
+  /**
+   * The two composition shapes that are NOT a mixture, read back out of `specifications.data`.
+   *
+   * A mixture keeps its four inputs in typed columns, so a mis-read shows up as a wrong number.
+   * These two live in a JSON blob, so a mis-read shows up as a phase list or a bill of materials
+   * that is silently EMPTY — and an empty phase list derives a cosmetic with no ingredients on
+   * its label, which is a compliance statement about a product nobody has checked. Round-tripping
+   * them is the only thing standing between a schema change and that.
+   */
+  it('reads a phased composition back out of the data blob', () => {
+    const product = toProduct(
+      productRow({ net_quantity: 30, net_unit: 'ml', packaging_id: 'pkg-dropper-30' }),
+      specRow({
+        category_id: 'cosmetics',
+        kind: 'phased',
+        product_type: 'Face oil',
+        data: {
+          phases: [
+          { name: 'Oil phase', items: [{ materialId: 'ing-jojoba', pct: 80 }] },
+          { name: 'Cool down', items: [{ materialId: 'ing-vit-e', pct: 1 }] }],
+
+          application: 'Rinse-off',
+          paoMonths: 6
+        }
+      })
+    );
+
+    expect(product.spec.kind).toBe('phased');
+    if (product.spec.kind === 'phased') {
+      expect(product.spec.phases).toHaveLength(2);
+      expect(product.spec.phases[0].name).toBe('Oil phase');
+      expect(product.spec.phases[0].items).toEqual([{ materialId: 'ing-jojoba', pct: 80 }]);
+      expect(product.spec.application).toBe('Rinse-off');
+      expect(product.spec.paoMonths).toBe(6);
+    }
+    // The pack is still the product's, on this shape as much as on a mixture.
+    expect(product.spec.netQuantity).toBe(30);
+  });
+
+  it('does not throw on a phased row whose blob is the wrong shape', () => {
+    const product = toProduct(
+      productRow(),
+      specRow({
+        category_id: 'cosmetics',
+        kind: 'phased',
+        // A phase with no name and a non-array item list, and an application this build has
+        // never heard of. All three have to degrade, because one malformed row must not cost
+        // the maker every other row on the screen.
+        data: { phases: [{ items: 'not a list' }], application: 'Sprayed on', paoMonths: 'six' }
+      })
+    );
+
+    expect(product.spec.kind).toBe('phased');
+    if (product.spec.kind === 'phased') {
+      expect(product.spec.phases[0].name).toBe('Phase');
+      expect(product.spec.phases[0].items).toEqual([]);
+      // Leave-on is the safer of the two to assume: it is the longer exposure, and it is what
+      // the blank composition starts as.
+      expect(product.spec.application).toBe('Leave-on');
+      expect(product.spec.paoMonths).toBe(12);
+    }
+  });
+
+  it('reads a bill of materials back out of the data blob', () => {
+    const product = toProduct(
+      productRow({ net_quantity: 400, net_unit: 'g', packaging_id: 'pkg-device-box' }),
+      specRow({
+        category_id: 'electronics',
+        kind: 'bom',
+        product_type: 'Wax warmer',
+        data: {
+          model: 'WW-100',
+          items: [{ materialId: 'cmp-element', quantity: 2, position: 'Base' }],
+          ratings: { voltage: '230 V', current: '0.2 A', power: '46 W' }
+        }
+      })
+    );
+
+    expect(product.spec.kind).toBe('bom');
+    if (product.spec.kind === 'bom') {
+      expect(product.spec.model).toBe('WW-100');
+      expect(product.spec.items).toEqual([
+      { materialId: 'cmp-element', quantity: 2, position: 'Base' }]
+      );
+      // The rating plate is printed from these three, so a dropped one is a device shipped
+      // with a blank plate rather than a wrong one.
+      expect(product.spec.ratings).toEqual({ voltage: '230 V', current: '0.2 A', power: '46 W' });
+    }
+  });
+
+  it('does not invent a model number or a rating for a device row that has none', () => {
+    const product = toProduct(
+      productRow(),
+      specRow({ category_id: 'electronics', kind: 'bom', data: {} })
+    );
+
+    expect(product.spec.kind).toBe('bom');
+    if (product.spec.kind === 'bom') {
+      // "Not yet assigned" and an em dash, never a plausible-looking model or voltage: a
+      // rating plate is a legal statement about a device, and a placeholder that reads like
+      // data is how one gets printed.
+      expect(product.spec.model).toBe('Not yet assigned');
+      expect(product.spec.items).toEqual([]);
+      expect(product.spec.ratings).toEqual({ voltage: '—', current: '—', power: '—' });
+    }
+  });
+
+  it('gives a device no safety data sheet, and a mixture one', () => {
+    // An article is not a mixture, so there is no sheet to issue. Listing one against a wax
+    // warmer would tell a maker they owe a document that does not exist for that product.
+    const device = toProduct(productRow(), specRow({ category_id: 'electronics', kind: 'bom' }));
+    expect(device.artefacts.some((artefact) => artefact.type === 'sds')).toBe(false);
+
+    const candle = toProduct(productRow(), specRow());
+    expect(candle.artefacts.some((artefact) => artefact.type === 'sds')).toBe(true);
+  });
+});
+
+/**
+ * The composition a new product starts from.
+ *
+ * Every value here ends up on a label or in a derivation, and the ones that vary by product
+ * type are the ones a refactor flattens without noticing: a room spray filled into a candle
+ * tumbler, or a wax melt whose net quantity prints in millilitres. `netUnit` in particular is
+ * a legal field — the average-quantity rules are about a declared weight or volume, and
+ * declaring the wrong one is not a cosmetic bug.
+ */
+describe('the composition a new product starts from', () => {
+  const homeFragrance = categoryById('home-fragrance');
+
+  it('fills a candle and a melt by weight, and a diffuser and a spray by volume', () => {
+    expect(blankSpec(homeFragrance, 'Container candle').netUnit).toBe('g');
+    expect(blankSpec(homeFragrance, 'Wax melt').netUnit).toBe('g');
+    expect(blankSpec(homeFragrance, 'Reed diffuser').netUnit).toBe('ml');
+    expect(blankSpec(homeFragrance, 'Room spray').netUnit).toBe('ml');
+  });
+
+  it('starts each home fragrance type in its own base and its own packaging', () => {
+    const diffuser = blankSpec(homeFragrance, 'Reed diffuser');
+    const spray = blankSpec(homeFragrance, 'Room spray');
+    const melt = blankSpec(homeFragrance, 'Wax melt');
+    const candle = blankSpec(homeFragrance, 'Container candle');
+
+    // A diffuser base in a candle, or wax in a spray bottle, is a product that cannot be
+    // made — and the maker would be the one to find out.
+    if (diffuser.kind === 'mixture') expect(diffuser.baseId).toBe('ing-dpg');
+    if (spray.kind === 'mixture') expect(spray.baseId).toBe('ing-alcohol');
+    if (melt.kind === 'mixture') expect(melt.baseId).toBe('ing-crw45');
+
+    expect(diffuser.packagingId).toBe('pkg-diffuser-100');
+    expect(spray.packagingId).toBe('pkg-spray-100');
+    expect(melt.packagingId).toBe('pkg-clamshell');
+    expect(candle.packagingId).toBe('pkg-tumbler-250');
+  });
+
+  it('starts a fragrance load at zero rather than at a plausible number', () => {
+    // The load drives the CLP classification. A default of 8% would classify a product nobody
+    // has weighed, and the classification is the whole output.
+    const candle = blankSpec(homeFragrance, 'Container candle');
+    if (candle.kind === 'mixture') {
+      expect(candle.load).toBe(0);
+      expect(candle.fragranceId).toBe('');
+    }
+  });
+
+  it('carries a starting material through when the product was begun from a sheet', () => {
+    const fromSheet = blankSpec(homeFragrance, 'Container candle', 'ing-black-fig');
+    if (fromSheet.kind === 'mixture') expect(fromSheet.fragranceId).toBe('ing-black-fig');
+  });
+
+  it('starts a cosmetic with its phases and a device with an unassigned model', () => {
+    const cosmetic = blankSpec(categoryById('cosmetics'), 'Face oil');
+    expect(cosmetic.kind).toBe('phased');
+    if (cosmetic.kind === 'phased') {
+      expect(cosmetic.phases.map((phase) => phase.name)).toEqual(['Oil phase', 'Cool down']);
+      // Empty, not seeded. A phase list with ingredients in it is a recipe nobody wrote.
+      expect(cosmetic.phases.every((phase) => phase.items.length === 0)).toBe(true);
+    }
+
+    const device = blankSpec(categoryById('electronics'), 'Wax warmer');
+    expect(device.kind).toBe('bom');
+    if (device.kind === 'bom') {
+      expect(device.model).toBe('Not yet assigned');
+      expect(device.items).toEqual([]);
+    }
   });
 });
 
@@ -402,6 +597,152 @@ describe('creating a product', () => {
     expect(db.state.productPayload).not.toHaveProperty('account_id');
   });
 
+  /**
+   * THE ACCOUNT IS THE SESSION'S, AND THERE IS NO SECOND WAY IN.
+   *
+   * Rule 2 at the top of lib/products.ts: "NOTHING IN THIS FILE EVER TAKES AN ACCOUNT ID FROM A
+   * FORM, a URL or a props chain that a screen could influence. It comes from the entitlement
+   * read and nowhere else." The entitlement is resolved by the database for this deployment's
+   * brand, so the id in the parameter is the session's; `input` is the dialog's, and the dialog
+   * is the half a screen could reach.
+   *
+   * Today the type is the enforcement — NewProductInput has no account field — and a type is
+   * exactly the thing a later refactor widens without meaning to (a spread of a form object, a
+   * `Record<string, unknown>` payload, an added optional field). This asserts the behaviour
+   * underneath the type, so widening it fails here rather than in production. RLS would still
+   * refuse an id that is not the caller's; what it would NOT refuse is a second id of the
+   * caller's own, which is how a maker's product gets filed in the wrong one of their
+   * workspaces silently — the exact failure `account_ambiguous` exists to prevent.
+   */
+  it('takes the account from the session, never from anything the caller passed in', async () => {
+    const fromTheScreen = {
+      ...input,
+      account_id: 'acct-somebody-elses',
+      accountId: 'acct-somebody-elses'
+    } as NewProductInput;
+
+    await createProduct(fromTheScreen, 'acct-1111');
+
+    expect(db.state.specPayload?.account_id).toBe('acct-1111');
+    expect(db.state.productPayload?.account_id).toBe('acct-1111');
+    // And no second spelling of it rode along into either payload, where a column rename
+    // would one day pick it up.
+    expect(db.state.specPayload).not.toHaveProperty('accountId');
+    expect(db.state.productPayload).not.toHaveProperty('accountId');
+  });
+
+  it('sends no account at all when the session has none, whatever the caller passed', async () => {
+    // The unresolved case is where a supplied id would be most tempting and most wrong: with
+    // nothing to check it against, the column default — current_account_id() — is the only
+    // thing entitled to decide.
+    const fromTheScreen = { ...input, account_id: 'acct-somebody-elses' } as NewProductInput;
+
+    await createProduct(fromTheScreen);
+
+    expect(db.state.specPayload).not.toHaveProperty('account_id');
+    expect(db.state.productPayload).not.toHaveProperty('account_id');
+  });
+
+  /**
+   * The meter's refusal, as a maker reads it.
+   *
+   * classifyWriteError is tested above in isolation; this is the same refusal through the
+   * function a screen actually calls, because the classification only matters if createProduct
+   * returns it rather than the generic failure. The message must be the app's own sentence —
+   * SkuLimitNotice states the allowance from the entitlement, and the number has one source —
+   * and it must never be the database's, which is customer-facing copy the migration reserves
+   * the right to rewrite.
+   */
+  it('surfaces the SKU limit as the limit message, not as a Postgres error', async () => {
+    db.state.productInsert = {
+      data: null,
+      error: {
+        code: 'P0001',
+        hint: 'sku_limit_reached',
+        message: 'SKU limit reached: this account already holds 3 of 3 SKUs.'
+      }
+    };
+
+    const result = await createProduct(input, 'acct-1111');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('sku_limit');
+      expect(result.message).toMatch(/as many products as its plan allows/i);
+      // Not the trigger's sentence, and nothing that reads like a database at all.
+      expect(result.message).not.toContain('SKU limit reached:');
+      expect(result.message).not.toMatch(/P0001|violates|constraint|row-level|null value/i);
+      // It states no number: the allowance has one source and this is not it.
+      expect(result.message).not.toMatch(/\d/);
+    }
+  });
+
+  it('writes a cosmetic as phases and a device as a bill of materials', async () => {
+    // The shape-varying half of a composition goes in `specifications.data`, and the typed
+    // columns stay null for a shape that has no fragrance and no load. Sending a mixture's
+    // columns for a face oil would classify it against a recipe it does not have.
+    await createProduct(
+      { name: 'Rosehip Face Oil', sku: 'FO-RH-30', categoryId: 'cosmetics', productType: 'Face oil' },
+      'acct-1111'
+    );
+    expect(db.state.specPayload?.kind).toBe('phased');
+    expect(db.state.specPayload?.fragrance_id).toBeNull();
+    expect(db.state.specPayload?.load).toBeNull();
+    expect(db.state.specPayload?.data).toHaveProperty('phases');
+
+    await createProduct(
+      { name: 'Wax Warmer', sku: 'WW-100', categoryId: 'electronics', productType: 'Wax warmer' },
+      'acct-1111'
+    );
+    expect(db.state.specPayload?.kind).toBe('bom');
+    expect(db.state.specPayload?.data).toHaveProperty('items');
+    expect(db.state.specPayload?.data).toHaveProperty('ratings');
+  });
+
+  it('trims the name and the code, and sends an empty code as no code', async () => {
+    // A SKU of '' would take the unique index's slot for the empty string, so the second
+    // product created without a code would be told somebody already has that code.
+    await createProduct({ ...input, name: '  Black Fig  ', sku: '   ' }, 'acct-1111');
+    expect(db.state.specPayload?.name).toBe('Black Fig');
+    expect(db.state.productPayload?.sku).toBeNull();
+  });
+
+  /**
+   * The first insert failing, which is the ordinary case and the one with nothing to clean up.
+   *
+   * A product carries the foreign key, so the specification has to exist before it can be
+   * written — which means a refused specification must leave the product insert UNSENT. If it
+   * were ever sent anyway it would be sent with a specification_id of nothing, and the
+   * interesting half of this function (was a specification left behind? may it be archived?)
+   * would be reasoning about a row that was never created.
+   */
+  it('never reaches the second table when the first insert was refused', async () => {
+    db.state.specInsert = {
+      data: null,
+      error: { code: 'P0001', hint: 'sku_limit_reached', message: 'SKU limit reached' }
+    };
+
+    const result = await createProduct(input, 'acct-1111');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('sku_limit');
+    expect(db.state.productPayload).toBeNull();
+    // Nothing was created, so nothing may be archived — an archive here would be reaching for
+    // a row id that does not exist.
+    expect(db.state.archived).toEqual([]);
+  });
+
+  it('treats a specification insert that returned no row as a failure, not a success', async () => {
+    // No error and no row. Nothing to hang a product off, and carrying on would insert one
+    // with an undefined specification_id.
+    db.state.specInsert = { data: null, error: null };
+
+    const result = await createProduct(input, 'acct-1111');
+
+    expect(result.ok).toBe(false);
+    expect(db.state.productPayload).toBeNull();
+  });
+
   it('archives the specification when the meter definitely refused the product', async () => {
     db.state.productInsert = {
       data: null,
@@ -476,6 +817,23 @@ describe('creating a product', () => {
     expect(db.state.lookupFilters).toContainEqual(['specification_id', 'spec-1']);
   });
 
+  it('treats a product insert that answered nothing as an unknown outcome', async () => {
+    // No row and no error. There is no Postgres code to call a refusal, so the specification
+    // stays — an orphaned composition is invisible and meters nothing, whereas an archived one
+    // under a live product is unreachable from the browser for good.
+    db.state.productInsert = { data: null, error: null };
+    db.state.lookup = { data: null, error: null };
+
+    const result = await createProduct(input, 'acct-1111');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('unknown');
+      expect(result.message).toMatch(/check your products/i);
+    }
+    expect(db.state.archived).toEqual([]);
+  });
+
   it('archives nothing when it could not find out what happened', async () => {
     db.state.productInsert = { data: null, error: { code: '23505', message: 'duplicate key' } };
     db.state.lookup = { data: null, error: { message: 'Failed to fetch' } };
@@ -531,6 +889,27 @@ describe('saving a composition', () => {
     db.state.specUpdate = { data: [{ id: 'spec-1' }], error: null };
     db.state.productUpdate = { data: [{ id: 'prod-1' }], error: null };
     db.state.updated = [];
+    db.state.updatePayloads = [];
+  });
+
+  it('stores an unchosen material and an unstated quantity as null, never as blank', async () => {
+    // Both halves of this are label copy. A net quantity of 0 is a DECLARATION — the average
+    // quantity rules are about a stated weight or volume — so storing a literal 0 would print
+    // "0 g" on a container that is not empty. And an empty string in base_id or dye_id is a
+    // material id that resolves to nothing, which a derivation reads as a missing material
+    // rather than as one nobody has picked yet.
+    const unfinished = { ...product.spec, baseId: '', dyeId: '', packagingId: '', netQuantity: 0 };
+
+    const result = await saveComposition(product, unfinished);
+
+    expect(result.ok).toBe(true);
+    const [[, specPayload], [, packPayload]] = db.state.updatePayloads;
+    expect(specPayload.base_id).toBeNull();
+    expect(specPayload.dye_id).toBeNull();
+    expect(packPayload.net_quantity).toBeNull();
+    expect(packPayload.packaging_id).toBeNull();
+    // The unit still goes: it is not a claim about how much is in the container.
+    expect(packPayload.net_unit).toBe('g');
   });
 
   it('does not offer a retry on a write the policy refused', async () => {
@@ -602,6 +981,106 @@ describe('saving a composition', () => {
     const result = await saveComposition(product, product.spec);
     expect(result.ok).toBe(true);
     expect(db.state.updated).toEqual(['specifications', 'products']);
+  });
+
+  it('refuses to guess which composition to rewrite when the product carries no id', async () => {
+    // A product read back without its specification id cannot be edited: the only way to
+    // proceed would be to pick a specification, and a wrong pick rewrites the classification —
+    // the fragrance, the base, the load — of a DIFFERENT product. Silently. So it does not
+    // proceed, and it sends nothing.
+    const result = await saveComposition({ ...product, specificationId: '' }, product.spec);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('failed');
+    expect(db.state.updated).toEqual([]);
+  });
+});
+
+/**
+ * A read that failed, which must never arrive on a screen as "you have no products".
+ *
+ * This is the sentence lib/product-store.tsx was written around: "A failed read rendered as
+ * 'you have no products yet' is indistinguishable from a brand new account, and to a maker with
+ * forty SKUs it reads as 'your data is gone'." The store can only tell the two apart if the
+ * reader does — `{ok: true, products: []}` and `{ok: false}` are the same number of rows and
+ * completely different sentences, and the difference is made here.
+ *
+ * The failure is deliberately not the Postgres message either. A read failure is ours, the
+ * screen says so and offers a retry, and a customer is never shown a relation name.
+ */
+describe('a products read that could not be answered', () => {
+  beforeEach(() => {
+    db.state.lookupFilters = [];
+    db.state.productsRead = { data: [], error: null };
+    db.state.specificationsRead = { data: [], error: null };
+  });
+
+  it('fails rather than reporting an empty account when the products read errors', async () => {
+    db.state.productsRead = { data: null, error: { code: '08006', message: 'connection failure' } };
+
+    const result = await fetchProducts('acct-1111');
+
+    expect(result.ok).toBe(false);
+    // The thing that must not happen: ok with nothing in it. That is the empty state, and the
+    // empty state is a claim about the account that nothing here has established.
+    if (result.ok) expect(result.products).not.toEqual([]);
+    if (!result.ok) {
+      expect(result.message).toMatch(/this is us, not you/i);
+      expect(result.message).toMatch(/nothing has been lost/i);
+      expect(result.message).not.toMatch(/connection failure|08006/);
+    }
+  });
+
+  it('fails when only the specifications read errors', async () => {
+    // Half an answer is not an answer. The products came back, but without their compositions
+    // every one of them would be dropped by the join below — which would render as an empty
+    // account off the back of a read that half worked.
+    db.state.productsRead = { data: [productRow()], error: null };
+    db.state.specificationsRead = { data: null, error: { message: 'statement timeout' } };
+
+    const result = await fetchProducts('acct-1111');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).not.toMatch(/statement timeout/);
+  });
+
+  it('reports an account that genuinely holds nothing as an answer, not as a failure', async () => {
+    // The other half of the same rule, and the first screen every real customer sees. An empty
+    // list from a read that WORKED is the answer, and the store is entitled to say so.
+    const result = await fetchProducts('acct-1111');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.products).toEqual([]);
+  });
+
+  it('drops a product whose composition did not come back rather than rendering it blank', async () => {
+    // Reachable only by archiving a specification out from under a live product. There is no
+    // composition, so there is no classification, no label and no sheet — a row on the screen
+    // would be a product with nothing behind it, and every screen that opened it would fail.
+    db.state.productsRead = {
+      data: [productRow(), productRow({ id: 'prod-2', specification_id: 'spec-archived' })],
+      error: null
+    };
+    db.state.specificationsRead = { data: [specRow()], error: null };
+
+    const result = await fetchProducts('acct-1111');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.products.map((entry) => entry.id)).toEqual(['prod-1']);
+    }
+  });
+
+  it('scopes both reads to the account, and to live rows only', async () => {
+    await fetchProducts('acct-1111');
+
+    // Once per table. RLS is the boundary; this is the narrowing, and dropping it is what
+    // renders one workspace of a person's under another one's chrome.
+    const accountFilters = db.state.lookupFilters.filter(([column]) => column === 'account_id');
+    expect(accountFilters).toEqual([
+    ['account_id', 'acct-1111'],
+    ['account_id', 'acct-1111']]
+    );
   });
 });
 

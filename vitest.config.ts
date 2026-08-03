@@ -48,6 +48,20 @@ export default defineConfig({
       // Measured against the units that actually have tests, so the number is a
       // real signal rather than being diluted by the (as yet untested) view
       // layer inherited from the Magic Patterns scaffold.
+      //
+      // THE CURATION IS THE POINT AND ALSO THE RISK. A hand-written list keeps
+      // the percentage honest, and it silently excuses whatever is not on it —
+      // so a file added to the app is a file added to this list, or the number
+      // goes UP as the untested surface grows. That is what happened to the two
+      // entries at the bottom: lib/products.ts and lib/product-store.tsx landed
+      // with the cutover from the in-memory fixture store to Supabase, which is
+      // the account isolation, the SKU meter's client half and every write a
+      // maker makes, and coverage read 93% throughout without once looking at
+      // them.
+      //
+      // The rule for what belongs here: anything where being wrong costs a
+      // customer money, data, or a true sentence about their compliance. Not
+      // "anything with a test".
       include: [
         'src/lib/session-storage.ts',
         'src/lib/auth-redirect.ts',
@@ -64,12 +78,28 @@ export default defineConfig({
         'src/lib/consent-preferences.ts',
         'src/lib/meta-pixel.ts',
         'src/lib/meta-consent.tsx',
+        // The data layer. Two files decide, between them, which account's rows
+        // a screen reads, whether a write landed, and what a maker is told when
+        // it did not — and one of those answers ("you have no products") is the
+        // one this app must never get wrong, because to somebody holding forty
+        // SKUs it reads as data loss.
+        'src/lib/products.ts',
+        'src/lib/product-store.tsx',
       ],
       thresholds: {
         lines: 70,
         functions: 70,
         statements: 70,
         branches: 70,
+        // STILL POOLED, AND THAT IS A KNOWN HOLE — see docs/PRODUCTION_TODO.md,
+        // "Coverage thresholds are pooled, not per file". A pooled average is
+        // the same trick the include list was: a new module with no tests at
+        // all costs the total a point or two and the gate stays green. Turning
+        // `perFile: true` on today fails the build on src/lib/billing.ts
+        // (functions 66.66%: createRailTestSession and createPortalSession have
+        // no test), and billing is a live money rail this stream was told not
+        // to touch. It is two small tests away, not a threshold change away,
+        // and the TODO says which two.
       },
     },
   },
