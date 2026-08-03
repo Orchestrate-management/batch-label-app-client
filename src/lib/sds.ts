@@ -472,7 +472,7 @@ export function buildSds(product: Product, derivation: Derivation, market: Marke
     'Regulation (EC) No 1907/2006 (REACH), Annex II as amended by Regulation (EU) 2020/878.',
     product.identifiers.ufi ?
     `Unique formula identifier: ${product.identifiers.ufi}` :
-    'No unique formula identifier has been generated for this mixture.',
+    'No unique formula identifier is on file for this mixture. Batchlabel does not generate one.',
     'No chemical safety assessment has been carried out for this mixture.']
 
   },

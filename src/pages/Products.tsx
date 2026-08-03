@@ -5,7 +5,7 @@ import { PageHeader } from '../components/AppShell';
 import { Button, Card, EmptyState, Pill, SectionTitle } from '../components/ui/Primitives';
 import { NewProductDialog } from '../components/NewProductDialog';
 import { CATEGORIES, driftFor } from '../lib/products';
-import { obligationsFor } from '../lib/regimes';
+import { outstandingObligations } from '../lib/regimes';
 import { specSummary } from '../lib/derive';
 import { formatDate } from '../lib/model';
 import { useProducts, useWorkspace } from '../lib/workspace';
@@ -73,9 +73,7 @@ export function Products() {
                       </thead>
                       <tbody>
                         {products.map((product) => {
-                        const outstanding = obligationsFor(product).filter(
-                          (obligation) => !product.obligations[obligation.id]
-                        ).length;
+                        const outstanding = outstandingObligations(product).length;
                         const drift = driftFor(product);
                         const stale = product.artefacts.filter((a) => !a.current).length;
                         return (

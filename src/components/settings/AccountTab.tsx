@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { ExternalLinkIcon } from 'lucide-react';
 import {
   Button,
@@ -29,7 +30,6 @@ import {
 '../../lib/consent-preferences';
 import { ADVERTISING_AGREEMENT, MARKETING_EMAIL_AGREEMENT } from '../../lib/agreements';
 import {
-  ACCOUNT_URL,
   COOKIE_SETTINGS_URL,
   FORGOT_PASSWORD_URL,
   PRIVACY_URL,
@@ -573,7 +573,16 @@ function DataSection() {
           a month, usually the same week. There is no button for it yet.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
-          <ExternalLink href={ACCOUNT_URL}>Billing and invoices</ExternalLink>
+          {/* Internal now, and no longer an ExternalLink. This used to point at
+              www/dashboard/account, which is being removed: www is marketing and auth only,
+              and billing moved into this app. Sending somebody off-origin to reach a page
+              two clicks away in the sidebar was always the wrong shape. */}
+          <Link
+            to="/billing"
+            className="inline-flex h-8 items-center gap-1.5 rounded-control border border-paper-line px-3 text-2xs font-medium text-ink-secondary transition-colors hover:bg-paper-raised">
+
+            Billing and invoices
+          </Link>
           <ExternalLink href={TERMS_URL}>Terms you accepted</ExternalLink>
           <ExternalLink href={PRIVACY_URL}>Privacy notice</ExternalLink>
         </div>

@@ -128,6 +128,13 @@ export function isLabelSurface(type: ArtefactType): boolean {
 
 /* -------------------------------------------------------------- products */
 
+/**
+ * No product carries a UFI, and none marks `clp-ufi` or a poison centre
+ * notification as done. Batchlabel generates no UFI, and a notification dossier
+ * is keyed on one, so seeding either would be the app asserting compliance work
+ * that neither it nor the maker has any way of doing here. `obligationSatisfied`
+ * enforces the UFI half whatever this file says; the rest is kept honest here.
+ */
 const BASE_PRODUCTS: Product[] = [
 {
   id: 'p-black-fig',
@@ -136,7 +143,7 @@ const BASE_PRODUCTS: Product[] = [
   categoryId: 'home-fragrance',
   markets: ['GB', 'EU'],
   regimes: ['clp', 'en15494', 'gpsr'],
-  identifiers: { ufi: 'H8YP-K02M-J00X-7RTQ' },
+  identifiers: {},
   spec: {
     kind: 'mixture',
     productType: 'Container candle',
@@ -175,9 +182,9 @@ const BASE_PRODUCTS: Product[] = [
   obligations: {
     'clp-classification': true,
     'clp-artefact-current': false,
-    'clp-ufi': true,
+    'clp-ufi': false,
     'clp-pcn-eu': false,
-    'clp-pcn-gb': true,
+    'clp-pcn-gb': false,
     'en15494-safety-text': true,
     'gpsr-traceability': true,
     'gpsr-eu-responsible-person': false,
@@ -191,7 +198,7 @@ const BASE_PRODUCTS: Product[] = [
   categoryId: 'home-fragrance',
   markets: ['GB'],
   regimes: ['clp', 'gpsr'],
-  identifiers: { ufi: 'V210-N0K4-T00A-2FQD' },
+  identifiers: {},
   spec: {
     kind: 'mixture',
     productType: 'Reed diffuser',
@@ -227,8 +234,8 @@ const BASE_PRODUCTS: Product[] = [
   obligations: {
     'clp-classification': true,
     'clp-artefact-current': true,
-    'clp-ufi': true,
-    'clp-pcn-gb': true,
+    'clp-ufi': false,
+    'clp-pcn-gb': false,
     'gpsr-traceability': true,
     'gpsr-online-disclosure': true
   }
@@ -240,7 +247,7 @@ const BASE_PRODUCTS: Product[] = [
   categoryId: 'home-fragrance',
   markets: ['GB', 'EU'],
   regimes: ['clp', 'gpsr'],
-  identifiers: { ufi: 'JG00-R0FT-800P-M14V' },
+  identifiers: {},
   spec: {
     kind: 'mixture',
     productType: 'Room spray',
@@ -276,9 +283,9 @@ const BASE_PRODUCTS: Product[] = [
   obligations: {
     'clp-classification': true,
     'clp-artefact-current': true,
-    'clp-ufi': true,
-    'clp-pcn-eu': true,
-    'clp-pcn-gb': true,
+    'clp-ufi': false,
+    'clp-pcn-eu': false,
+    'clp-pcn-gb': false,
     'gpsr-traceability': true,
     'gpsr-eu-responsible-person': true,
     'gpsr-online-disclosure': false
@@ -944,7 +951,15 @@ export const BUSINESS = {
   tradingName: 'Hearth & Hollow',
   phone: '+44 1273 555 018',
   email: 'hello@hearthandhollow.co.uk',
-  website: 'hearthandhollow.co.uk'
+  website: 'hearthandhollow.co.uk',
+  /**
+   * A REGULATORY reference, not a billing field, which is why it sits with the rest of the
+   * printed identity: it appears in section 15 of every safety data sheet. The VAT number
+   * Stripe needs for the reverse charge is a different value collected in Checkout and
+   * editable in the billing portal, and the two must not be conflated — one is printed on a
+   * document, the other decides what a customer is charged.
+   */
+  vatNumber: 'GB 418 2296 05'
 };
 
 /**
@@ -963,65 +978,21 @@ export const COMPETENT_PERSON = {
 
 /* --------------------------------------------------------------- billing */
 
-export type Plan = {
-  id: string;
-  name: string;
-  productLimit: number;
-  monthly: number;
-  blurb: string;
-};
-
-export const PLANS: Plan[] = [
-{
-  id: 'maker',
-  name: 'Maker',
-  productLimit: 3,
-  monthly: 24,
-  blurb: 'For a single range. Unlimited documents read.'
-},
-{
-  id: 'studio',
-  name: 'Studio',
-  productLimit: 10,
-  monthly: 58,
-  blurb: 'For a growing range across more than one category. Unlimited documents read.'
-},
-{
-  id: 'house',
-  name: 'House',
-  productLimit: 40,
-  monthly: 140,
-  blurb: 'For established makers with several lines and a review workflow.'
-}];
-
-
-export const BILLING = {
-  planId: 'studio',
-  renews: '2026-08-14',
-  card: { brand: 'Visa', last4: '4417', expires: '09/29' },
-  billingEmail: 'accounts@hearthandhollow.co.uk',
-  vatNumber: 'GB 418 2296 05'
-};
-
-export type Invoice = {
-  id: string;
-  number: string;
-  date: string;
-  amount: number;
-  status: 'Paid' | 'Due';
-};
-
-export const INVOICES: Invoice[] = [
-{ id: 'inv-6', number: 'HH-0026', date: '2026-07-14', amount: 58, status: 'Paid' },
-{ id: 'inv-5', number: 'HH-0025', date: '2026-06-14', amount: 58, status: 'Paid' },
-{ id: 'inv-4', number: 'HH-0024', date: '2026-05-14', amount: 58, status: 'Paid' },
-{ id: 'inv-3', number: 'HH-0023', date: '2026-04-14', amount: 24, status: 'Paid' },
-{ id: 'inv-2', number: 'HH-0022', date: '2026-03-14', amount: 24, status: 'Paid' }];
-
-
-export function planById(id: string): Plan {
-  return PLANS.find((plan) => plan.id === id) ?? PLANS[0];
-}
+/**
+ * THERE IS NO BILLING FIXTURE HERE ANY MORE, and this note is what stops one coming back.
+ *
+ * This file used to hold a PLANS array — Maker £24 for 3 products, Studio £58 for 10, House
+ * £140 for 40 — plus a card on file, an invoice history and a renewal date. Every number in
+ * it was invented, none of them existed in Stripe, and all of them were rendered to
+ * signed-in customers on the Settings billing tab. Three tiers at three prices nobody could
+ * be charged, next to a real plan status read from the database.
+ *
+ * Prices, allowances and tier names now come from GET /api/plans on the marketing origin,
+ * which is generated from the plan contract that also creates the Stripe prices; the card,
+ * the invoices and the VAT number come from the Stripe billing portal. See src/lib/plans.ts
+ * and src/pages/Billing.tsx. Nothing about money belongs in a fixture file, because a fixture
+ * price is indistinguishable from a real one on screen and wrong the moment either changes.
+ */
 
 export const ADDRESSES: SupplierAddress[] = [
 {

@@ -233,11 +233,14 @@ function AccountMenu() {
             <UserIcon className="h-4 w-4" strokeWidth={1.25} aria-hidden="true" />
             Account and password
           </button>
+          {/* Straight to /billing. `/settings/billing` still resolves — App.tsx keeps it as a
+              redirect so older links survive — but there is no reason to send somebody
+              through a hop to reach a page that has its own route. */}
           <button
           type="button"
           role="menuitem"
           className={itemClass}
-          onClick={() => navigate('/settings/billing')}>
+          onClick={() => navigate('/billing')}>
 
             <CreditCardIcon className="h-4 w-4" strokeWidth={1.25} aria-hidden="true" />
             Billing

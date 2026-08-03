@@ -1,37 +1,95 @@
 import { describe, expect, it } from 'vitest';
 import {
+  allowanceLabel,
   entitlementMessage,
   mapEntitlement,
+  mayModify,
+  periodLine,
   planLabel,
-  readMembershipRow,
-  type MembershipRow } from
+  readEntitlementRow,
+  type EntitlementRow } from
 './membership';
 
 /**
- * What a row in brand_memberships means.
+ * What a row of `public.entitlements` means to this app.
  *
- * This mapping decides whether someone can produce the artefact they came here
- * to produce, so both directions of getting it wrong are expensive: too strict
- * and a paying customer is locked out mid-batch, too loose and the paid output
- * is free. The rules are stated once, here, and asserted here.
+ * The important property, and the reason most of these tests exist: THE DATABASE DECIDES
+ * WHETHER SOMEBODY IS ENTITLED. `public.entitlement_is_active()` is the single definition of
+ * that, and this module copies its answer out of the `active` column and labels it. So the
+ * cases below deliberately feed combinations where a plausible local rule would disagree with
+ * the column — an `unpaid` subscription, a paid plan with no Stripe status, a status nobody
+ * has heard of — and assert that the column wins every time. Each of those three is a real
+ * disagreement this app used to have with the database, in the direction that gave away the
+ * paid product.
  */
 
-function row(overrides: Partial<MembershipRow> = {}): MembershipRow {
+function row(overrides: Partial<EntitlementRow> = {}): EntitlementRow {
   return {
-    brandSlug: 'batchlabel',
+    brand: 'batchlabel',
     membershipStatus: 'active',
     businessName: 'Hearth & Hollow',
     plan: 'free',
     planStatus: null,
+    active: false,
+    currentPeriodEnd: null,
+    cancelAtPeriodEnd: false,
+    trialEnd: null,
+    skuLimit: 3,
+    skuUnlimited: false,
+    editorSeatLimit: 1,
+    canModify: null,
     ...overrides
   };
 }
 
+describe('the database decides `active`', () => {
+  it('does not entitle an `unpaid` subscription the view refused to entitle', () => {
+    // This app used to treat `unpaid` as a grace period and keep access on. The view does
+    // not: Stripe has given up retrying by then. One of the three disagreements the cutover
+    // removed, and the one that gave the paid product away for free.
+    const entitlement = mapEntitlement(row({ plan: 'studio', planStatus: 'unpaid', active: false }));
+    expect(entitlement.active).toBe(false);
+    expect(entitlement.status).toBe('lapsed');
+  });
+
+  it('does not entitle a paid plan with no Stripe status', () => {
+    // The old rule read a null status on a paid plan as a comped account and switched
+    // everything on. entitlement_is_active requires a status in its allow-list, so it does
+    // not — and a comped account is granted by writing plan_status, not by guessing.
+    expect(mapEntitlement(row({ plan: 'studio', planStatus: null, active: false })).active).toBe(false);
+  });
+
+  it('does not entitle an expired period', () => {
+    // current_period_end was never even selected before, so expiry could not revoke anything.
+    // It is the view's business now: one day of grace, then false.
+    const entitlement = mapEntitlement(
+      row({ plan: 'maker', planStatus: 'active', currentPeriodEnd: '2020-01-01T00:00:00Z', active: false })
+    );
+    expect(entitlement.active).toBe(false);
+  });
+
+  it('entitles a status this app has never heard of, when the column says so', () => {
+    // The other direction, and the one a "tighten it up" change would break. If Stripe adds
+    // a status and the view's allow-list is updated, this app must not lock a paying
+    // customer out because a string is unfamiliar. It labels, it does not adjudicate.
+    const entitlement = mapEntitlement(row({ plan: 'consultant', planStatus: 'something_new', active: true }));
+    expect(entitlement.active).toBe(true);
+    expect(entitlement.status).toBe('active');
+  });
+
+  it('entitles past_due, and says so without withholding anything', () => {
+    const entitlement = mapEntitlement(row({ plan: 'maker', planStatus: 'past_due', active: true }));
+    expect(entitlement.active).toBe(true);
+    expect(entitlement.status).toBe('past_due');
+    expect(entitlementMessage(entitlement)).toContain('Update your card');
+  });
+});
+
 describe('a read that did not succeed', () => {
   /**
-   * The important one. `unknown` is not `free`. Telling a customer with a live
-   * subscription that they are on the free plan because a request timed out is
-   * how you get a cancellation email.
+   * The important one. `unknown` is not `free`. Telling a customer with a live subscription
+   * that they are on the free plan because a request timed out is how you get a cancellation
+   * email.
    */
   it('is unknown, not free', () => {
     const entitlement = mapEntitlement(null, true);
@@ -45,12 +103,21 @@ describe('a read that did not succeed', () => {
       'We could not check your plan just now.'
     );
   });
+
+  it('reads a missing `active` column as unknown rather than as a grant', () => {
+    // A schema old enough to have no `active` column leaves nothing to fall back on now that
+    // the local rule is deleted. Withhold and blame ourselves — inventing an entitlement
+    // here would hand out the paid product on a schema error.
+    const entitlement = mapEntitlement(row({ plan: 'studio', planStatus: 'active', active: null }));
+    expect(entitlement.status).toBe('unknown');
+    expect(entitlement.active).toBe(false);
+  });
 });
 
 describe('no membership row yet', () => {
   it('reads as mid-signup rather than as a failure', () => {
-    // Real, and hits people at the worst moment: an OAuth signup lands here
-    // before the provisioning call has finished writing the row.
+    // Real, and hits people at the worst moment: an OAuth signup lands here before the
+    // provisioning call has finished writing the row.
     const entitlement = mapEntitlement(null);
     expect(entitlement.status).toBe('no_membership');
     expect(entitlement.active).toBe(false);
@@ -60,13 +127,13 @@ describe('no membership row yet', () => {
 
 describe('the free plan', () => {
   it('is not active', () => {
-    const entitlement = mapEntitlement(row({ plan: 'free' }));
+    const entitlement = mapEntitlement(row({ plan: 'free', active: false }));
     expect(entitlement.status).toBe('free');
     expect(entitlement.active).toBe(false);
   });
 
   it('treats an empty plan as free', () => {
-    expect(mapEntitlement(row({ plan: null })).status).toBe('free');
+    expect(mapEntitlement(row({ plan: null, active: false })).status).toBe('free');
   });
 
   it('still carries the business name', () => {
@@ -75,137 +142,209 @@ describe('the free plan', () => {
   });
 });
 
-describe('a paid plan', () => {
-  it.each(['active', 'trialing'])('is active when Stripe says %s', (planStatus) => {
-    const entitlement = mapEntitlement(row({ plan: 'studio', planStatus }));
-    expect(entitlement.status).toBe('active');
-    expect(entitlement.active).toBe(true);
-    expect(planLabel(entitlement)).toBe('Studio');
-  });
-
-  it('is active when there is no Stripe status at all', () => {
-    // plan defaults to 'free' and no client can write the column, so a non-free
-    // value with no subscription behind it was granted server-side on purpose —
-    // a comped account or a migration, not a broken row.
-    expect(mapEntitlement(row({ plan: 'house', planStatus: null })).active).toBe(true);
-  });
-
-  it('ignores case and stray whitespace', () => {
-    // Neither column is constrained, and both are written by a webhook.
-    const entitlement = mapEntitlement(row({ plan: ' Studio ', planStatus: '  ACTIVE ' }));
-    expect(entitlement.status).toBe('active');
-    expect(entitlement.plan).toBe('studio');
-  });
-});
-
-describe('a payment that failed', () => {
-  it.each(['past_due', 'unpaid'])('keeps access while Stripe retries (%s)', (planStatus) => {
-    // Deliberate. Stripe retries for days; cutting a maker off mid-batch over a
-    // card that expired yesterday is worse for them and for us than a loud
-    // banner. Access ends at `canceled`, not before.
-    const entitlement = mapEntitlement(row({ plan: 'studio', planStatus }));
-    expect(entitlement.status).toBe('past_due');
-    expect(entitlement.active).toBe(true);
-  });
-
-  it('says what to do about it', () => {
-    expect(entitlementMessage(mapEntitlement(row({ plan: 'studio', planStatus: 'past_due' })))).
-    toContain('Update your card');
-  });
-});
-
-describe('a plan that ended', () => {
-  it.each(['canceled', 'cancelled', 'incomplete_expired'])(
-    'switches paid features off (%s)',
+describe('a plan that lapsed', () => {
+  it.each(['canceled', 'cancelled', 'incomplete_expired', 'paused'])(
+    'is lapsed rather than cancelled (%s)',
     (planStatus) => {
-      // Both spellings: Stripe emits the American one, and a hand-written row or
-      // a future column could carry the British one.
-      const entitlement = mapEntitlement(row({ plan: 'studio', planStatus }));
-      expect(entitlement.status).toBe('cancelled');
+      const entitlement = mapEntitlement(row({ plan: 'studio', planStatus, active: false }));
+      expect(entitlement.status).toBe('lapsed');
       expect(entitlement.active).toBe(false);
     }
   );
 
-  it('reassures rather than threatens', () => {
+  it('is never told it is worse off than somebody who never paid', () => {
+    // Ruling R9. The sentence may not imply a penalty, a lockout or a countdown.
     const message = entitlementMessage(mapEntitlement(row({ plan: 'studio', planStatus: 'canceled' })));
-    expect(message).toContain('Your work is safe');
+    expect(message).toContain('everything the free plan can');
+    expect(message).toContain('nothing has been deleted');
   });
 });
 
 describe('a membership that is not in good standing', () => {
   it.each(['suspended', 'left'])('overrides the plan entirely (%s)', (membershipStatus) => {
+    // The view already refuses to entitle these. The separate LABEL exists because "we
+    // paused your account" and "your subscription ended" need different words — somebody
+    // suspended may well still be paying.
     const entitlement = mapEntitlement(
-      row({ membershipStatus, plan: 'house', planStatus: 'active' })
+      row({ membershipStatus, plan: 'consultant', planStatus: 'active', active: false })
     );
     expect(entitlement.status).toBe('suspended');
     expect(entitlement.active).toBe(false);
   });
 
   it('does not treat a blank membership status as suspended', () => {
-    // The column is NOT NULL with a default, but a `select *` fallback against a
-    // changed schema could still hand us nothing here.
-    expect(mapEntitlement(row({ membershipStatus: null, plan: 'studio' })).active).toBe(true);
+    expect(mapEntitlement(row({ membershipStatus: null, plan: 'studio', active: true })).status).toBe(
+      'active'
+    );
   });
 });
 
-describe('a status we do not recognise', () => {
-  it('withholds access without accusing anyone', () => {
-    // Stripe adds statuses. `paused` was not in the original set.
-    const entitlement = mapEntitlement(row({ plan: 'studio', planStatus: 'paused' }));
-    expect(entitlement.status).toBe('unknown');
-    expect(entitlement.active).toBe(false);
+describe('the allowance, which answers a different question from `active`', () => {
+  it('reports a finite limit', () => {
+    const entitlement = mapEntitlement(row({ plan: 'maker', active: true, skuLimit: 45, skuUnlimited: false }));
+    expect(entitlement.skuLimit).toBe(45);
+    expect(entitlement.skuUnlimited).toBe(false);
+    expect(allowanceLabel(entitlement)).toBe('45 SKUs');
+  });
+
+  it('reports unlimited without ever holding a number', () => {
+    // The sentinel is int4 max and the whole point of the sku_unlimited column is that no
+    // client holds it. Nothing in this repo may render "2,147,483,647 SKUs".
+    const entitlement = mapEntitlement(
+      row({ plan: 'consultant', active: true, skuLimit: 2147483647, skuUnlimited: true })
+    );
+    expect(entitlement.skuUnlimited).toBe(true);
+    expect(entitlement.skuLimit).toBeNull();
+    expect(allowanceLabel(entitlement)).toBe('Unlimited SKUs');
+  });
+
+  it('refuses to state a limit when it cannot tell unlimited from a number', () => {
+    // No sku_unlimited column means we cannot know whether sku_limit is an allowance or the
+    // sentinel, and a guess either way is a number on a customer's screen that we made up.
+    const entitlement = mapEntitlement(row({ plan: 'maker', active: true, skuLimit: 45, skuUnlimited: null }));
+    expect(entitlement.skuLimit).toBeNull();
+    expect(entitlement.skuUnlimited).toBe(false);
+    expect(allowanceLabel(entitlement)).toBe('Allowance unavailable');
+  });
+
+  it('carries the editor seat allowance through', () => {
+    expect(mapEntitlement(row({ editorSeatLimit: 3 })).editorSeatLimit).toBe(3);
+  });
+
+  it('does not let an allowance decide entitlement', () => {
+    // WHETHER and HOW MUCH are two columns and two questions. An account at zero SKUs of
+    // allowance is still entitled if the view says so.
+    expect(mapEntitlement(row({ plan: 'maker', active: true, skuLimit: 0 })).active).toBe(true);
+  });
+});
+
+describe('can_modify, which does not exist yet', () => {
+  it('fails open when the column is absent', () => {
+    // R8. The column ships with the SKU enforcement trigger. Until then its absence must
+    // never remove an ability — including from a paying Consultant, silently, with no error.
+    const entitlement = mapEntitlement(row({ plan: 'consultant', active: true, canModify: null }));
+    expect(entitlement.canModify).toBeNull();
+    expect(mayModify(entitlement)).toBe(true);
+  });
+
+  it('fails open on a read that failed', () => {
+    expect(mayModify(mapEntitlement(null, true))).toBe(true);
+  });
+
+  it('denies only when the column is actually false', () => {
+    expect(mayModify(mapEntitlement(row({ canModify: false })))).toBe(false);
+    expect(mayModify(mapEntitlement(row({ canModify: true })))).toBe(true);
+  });
+});
+
+describe('what happens next, and when', () => {
+  it('says a scheduled cancellation ends the plan, not that it renews', () => {
+    // Same date, opposite meaning. cancel_at_period_end is still `active`: they paid up to
+    // that date and everything stays on until it.
+    const line = periodLine(
+      mapEntitlement(
+        row({ plan: 'maker', active: true, currentPeriodEnd: '2026-09-14T00:00:00Z', cancelAtPeriodEnd: true })
+      )
+    );
+    expect(line).toContain('ends on 14 September 2026');
+    expect(line).not.toContain('Renews');
+  });
+
+  it('says when an active plan renews', () => {
+    expect(
+      periodLine(mapEntitlement(row({ plan: 'maker', active: true, currentPeriodEnd: '2026-09-14T00:00:00Z' })))
+    ).toBe('Renews on 14 September 2026.');
+  });
+
+  it('prefers the trial end while a trial is running', () => {
+    expect(
+      periodLine(
+        mapEntitlement(
+          row({ plan: 'maker', active: true, currentPeriodEnd: '2026-09-14T00:00:00Z', trialEnd: '2026-08-20T00:00:00Z' })
+        )
+      )
+    ).toBe('Your trial ends on 20 August 2026.');
+  });
+
+  it('says nothing at all when there is no date', () => {
+    expect(periodLine(mapEntitlement(row({ plan: 'free' })))).toBeNull();
+  });
+
+  it('ignores a timestamp it cannot parse rather than printing one', () => {
+    expect(periodLine(mapEntitlement(row({ plan: 'maker', active: true, currentPeriodEnd: 'soon' })))).toBeNull();
   });
 });
 
 describe('reading the raw row', () => {
   /**
-   * The marketing side owns this schema and is adding fields to it. Anything
-   * missing has to read as absent rather than throwing — a column that is not
-   * there yet must not take the whole app down.
+   * The marketing side owns this view and is still adding columns to it — `can_modify` with
+   * the enforcement trigger, `sku_count` with the products table. Anything missing has to
+   * read as absent rather than throwing, and absent must never read as zero or as false.
    */
   it('tolerates an empty object', () => {
-    expect(readMembershipRow({})).toEqual({
-      brandSlug: null,
+    expect(readEntitlementRow({})).toEqual({
+      brand: null,
       membershipStatus: null,
       businessName: null,
       plan: null,
-      planStatus: null
+      planStatus: null,
+      active: null,
+      currentPeriodEnd: null,
+      cancelAtPeriodEnd: null,
+      trialEnd: null,
+      skuLimit: null,
+      skuUnlimited: null,
+      editorSeatLimit: null,
+      canModify: null
     });
   });
 
   it.each([[null], [undefined], ['not an object'], [42]])(
     'tolerates %s where a row was expected',
     (raw) => {
-      expect(() => readMembershipRow(raw)).not.toThrow();
-      expect(readMembershipRow(raw).plan).toBeNull();
+      expect(() => readEntitlementRow(raw)).not.toThrow();
+      expect(readEntitlementRow(raw).plan).toBeNull();
     }
   );
 
   it('ignores values of the wrong type instead of coercing them', () => {
-    const parsed = readMembershipRow({ plan: 42, business_name: {}, plan_status: true });
+    const parsed = readEntitlementRow({ plan: 42, business_name: {}, active: 'yes', sku_limit: '45' });
     expect(parsed.plan).toBeNull();
     expect(parsed.businessName).toBeNull();
-    expect(parsed.planStatus).toBeNull();
+    // 'yes' is not a boolean, and coercing it would be this app deciding entitlement from a
+    // string it does not understand.
+    expect(parsed.active).toBeNull();
+    expect(parsed.skuLimit).toBeNull();
   });
 
   it('treats a blank string as absent', () => {
-    expect(readMembershipRow({ business_name: '   ' }).businessName).toBeNull();
+    expect(readEntitlementRow({ business_name: '   ' }).businessName).toBeNull();
   });
 
   it('trims what it keeps', () => {
-    expect(readMembershipRow({ business_name: ' Hearth & Hollow ' }).businessName).toBe(
+    expect(readEntitlementRow({ business_name: ' Hearth & Hollow ' }).businessName).toBe(
       'Hearth & Hollow'
     );
   });
 
-  it('maps a real row through to an entitlement', () => {
+  it('maps a real view row through to an entitlement', () => {
     const entitlement = mapEntitlement(
-      readMembershipRow({
-        brand_slug: 'batchlabel',
-        status: 'active',
-        business_name: 'Hearth & Hollow',
+      readEntitlementRow({
+        user_id: '00000000-0000-0000-0000-000000000000',
+        brand: 'batchlabel',
         plan: 'studio',
-        plan_status: 'active'
+        status: 'active',
+        membership_status: 'active',
+        active: true,
+        current_period_end: '2026-09-14T00:00:00Z',
+        cancel_at_period_end: false,
+        trial_end: null,
+        updated_at: '2026-08-01T00:00:00Z',
+        account_id: '00000000-0000-0000-0000-000000000000',
+        business_name: 'Hearth & Hollow',
+        sku_limit: 180,
+        editor_seat_limit: 3,
+        sku_unlimited: false
       })
     );
     expect(entitlement).toEqual({
@@ -213,7 +352,20 @@ describe('reading the raw row', () => {
       active: true,
       plan: 'studio',
       planStatus: 'active',
-      businessName: 'Hearth & Hollow'
+      businessName: 'Hearth & Hollow',
+      skuLimit: 180,
+      skuUnlimited: false,
+      editorSeatLimit: 3,
+      canModify: null,
+      currentPeriodEnd: '2026-09-14T00:00:00Z',
+      cancelAtPeriodEnd: false,
+      trialEnd: null
     });
+    expect(planLabel(entitlement)).toBe('Studio');
+  });
+
+  it('ignores case and stray whitespace in the plan slug', () => {
+    // Written by a webhook into an unconstrained column.
+    expect(mapEntitlement(row({ plan: ' Studio ', active: true })).plan).toBe('studio');
   });
 });

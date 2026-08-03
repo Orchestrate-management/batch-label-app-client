@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 
 /**
  * The account screen, in jsdom.
@@ -57,7 +58,13 @@ async function renderTab() {
   }));
 
   const { AccountTab } = await import('./AccountTab');
-  const result = render(<AccountTab />);
+  // AccountTab links to /billing with a router Link now — billing moved into this app, so
+  // it is internal navigation rather than a hop to www — and Link needs router context.
+  const result = render(
+    <MemoryRouter>
+      <AccountTab />
+    </MemoryRouter>
+  );
   // The consent read is fired on mount. Settle it here so every test starts from
   // a resolved screen rather than racing a promise it never mentions.
   await waitFor(() =>

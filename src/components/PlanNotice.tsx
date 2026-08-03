@@ -1,38 +1,56 @@
-import { ExternalLinkIcon, RefreshCwIcon } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { RefreshCwIcon } from 'lucide-react';
 import { Button, Callout } from './ui/Primitives';
 import { useEntitlement } from '../lib/entitlement';
-import { ACCOUNT_URL, PRICING_URL } from '../lib/marketing';
+import { planLabel } from '../lib/membership';
+import { SUPPORT_EMAIL } from '../lib/marketing';
 import { metaInitiateCheckout } from '../lib/meta-pixel';
 import type { EntitlementStatus } from '../lib/membership';
 
 /**
  * What to say to a maker whose plan does not currently allow something.
  *
- * One component for every not-entitled state, because the difference between
- * them is the whole point. "You have not paid" and "we could not reach the
- * server" and "your card bounced" are three completely different sentences and
- * three completely different next actions, and a single generic "upgrade to
- * continue" would be wrong — sometimes insultingly so, to someone who is paying.
+ * One component for every not-entitled state, because the difference between them is the
+ * whole point. "You have not paid", "we could not reach the server" and "your card bounced"
+ * are three completely different sentences and three completely different next actions, and a
+ * single generic "upgrade to continue" would be wrong — sometimes insultingly so, to someone
+ * who is paying.
  *
- * Every action leaves for www.batchlabel.xyz. This app deliberately has no
- * checkout of its own: plans are sold, changed and cancelled in one place, next
- * to the Stripe customer portal, and that place is not here.
+ * TWO THINGS CHANGED WHEN BILLING MOVED INTO THIS APP.
  *
- * Which is why `upgrade` exists below rather than "fire the event on every link
- * in this file". Two of these actions are somebody deciding to start paying;
- * the other two are somebody fixing a card or asking about a suspension, and
- * reporting those as checkouts would inflate the exact number the ad account
- * optimises against. See lib/meta-pixel.ts and docs/META_TRACKING.md.
+ * Every action now stays here. It used to leave for www.batchlabel.xyz, because plans were
+ * sold there; they are sold on /billing now, and sending somebody to another origin to buy
+ * the thing they are looking at is a step that loses people for no reason. The one exception
+ * is `suspended`, which needs a human rather than a checkout.
+ *
+ * And `cancelled` became `lapsed`, which is not a rename for its own sake. Ruling R9: a
+ * lapsed account is a FREE account, with Free's allowance and Free's abilities. Nothing about
+ * having once paid may leave somebody worse off than a new signup, so the copy may not imply
+ * a penalty, a lockout or a countdown.
+ *
+ * WHAT THIS COMPONENT MAY NOT SAY. It names the gate, never the machinery behind it. There is
+ * no exporter yet — both export buttons are stubs — and there is no SDS upload and no
+ * archive, so no sentence here describes a print-ready file, a document you can upload, or
+ * anything you can archive. `feature` is the label on the control the maker is looking at,
+ * and that is deliberately all it is.
+ *
+ * `upgrade` survived the move, and it is still selective rather than "fire the event on every
+ * link in this file". Two of these actions are somebody deciding to start paying; the others
+ * are somebody asking about a suspension or retrying a failed read, and reporting those as
+ * checkouts would inflate the exact number the ad account optimises against. The destination
+ * changed from www to /billing; which presses count as intent did not. See lib/meta-pixel.ts
+ * and docs/META_TRACKING.md.
  */
 
 type Action =
 {
-  kind: 'link';
-  href: string;
+  kind: 'internal';
+  to: string;
   label: string;
   /** True when pressing this is a maker starting a purchase. Meta's InitiateCheckout. */
   upgrade?: boolean;
 } |
+{kind: 'external';href: string;label: string;} |
 {kind: 'retry';label: string;} |
 {kind: 'none';};
 
@@ -43,9 +61,21 @@ interface Copy {
   action: Action;
 }
 
-function copyFor(status: EntitlementStatus, feature: string): Copy | null {
+/**
+ * `plan` is the tier the account holds, already display-cased — Free, Maker, Studio or
+ * Consultant, or whatever a comped account carries. It is named in the copy wherever it
+ * changes the sentence, because "your plan" and "your Studio plan" read very differently to
+ * somebody who is paying £35 a month and has just been told something is off.
+ */
+export function copyFor(status: EntitlementStatus, feature: string, plan: string): Copy | null {
   switch (status) {
     case 'active':
+    case 'past_due':
+      // BOTH are entitled — `past_due` deliberately so, because Stripe retries a failed card
+      // for days and the database keeps access on throughout. Nothing is being withheld, so
+      // this component has nothing to explain. The dunning nag lives on /billing instead,
+      // beside the button that opens the portal where the card is actually replaced; a
+      // "update your card" banner over a screen with no card field is a dead end.
       return null;
 
     case 'free':
@@ -53,29 +83,21 @@ function copyFor(status: EntitlementStatus, feature: string): Copy | null {
         tone: 'info',
         title: `${feature} is part of a paid plan`,
         body:
-        'Everything else stays open on the free plan — build products, read supplier documents ' +
-        'and check what the regulations require. Producing the finished artefact is the paid part.',
-        action: { kind: 'link', href: PRICING_URL, label: 'See plans', upgrade: true }
+        'You are on Free. Building products, working through a specification and seeing which ' +
+        'checks each regime requires all stay open. A plan raises how many SKUs your account ' +
+        'holds and turns this on.',
+        action: { kind: 'internal', to: '/billing', label: 'See plans', upgrade: true }
       };
 
-    case 'past_due':
+    case 'lapsed':
       return {
-        tone: 'warn',
-        title: 'Your last payment did not go through',
+        tone: 'info',
+        title: `Your ${plan} plan is not running`,
         body:
-        'Your plan is still on while your bank retries, so nothing is blocked yet. Update your ' +
-        'card to keep it that way.',
-        action: { kind: 'link', href: ACCOUNT_URL, label: 'Update your card' }
-      };
-
-    case 'cancelled':
-      return {
-        tone: 'warn',
-        title: 'Your plan has ended',
-        body:
-        'Nothing has been deleted. Your products, materials and records are all still here and ' +
-        'still readable — starting a plan again switches this back on exactly as it was.',
-        action: { kind: 'link', href: PRICING_URL, label: 'Start a plan again', upgrade: true }
+        'Nothing has been deleted and nothing has been taken off you. Your account can do ' +
+        'everything the Free plan can, exactly as it would for somebody who never subscribed. ' +
+        'Starting a plan again switches this back on.',
+        action: { kind: 'internal', to: '/billing', label: 'Start a plan again', upgrade: true }
       };
 
     case 'no_membership':
@@ -84,7 +106,8 @@ function copyFor(status: EntitlementStatus, feature: string): Copy | null {
         title: 'Your account is still being set up',
         body:
         'You are signed in, but your account has not finished setting up. This usually takes a ' +
-        'moment — check again, and if it keeps saying this, finish setting up on batchlabel.xyz.',
+        'moment — check again, and if it keeps saying this, get in touch and we will finish it ' +
+        'off for you.',
         action: { kind: 'retry', label: 'Check again' }
       };
 
@@ -93,9 +116,9 @@ function copyFor(status: EntitlementStatus, feature: string): Copy | null {
         tone: 'warn',
         title: 'This account is suspended',
         body:
-        'We have paused this account rather than closed it, so nothing has been lost. Get in ' +
-        'touch from your account page and we will sort it out.',
-        action: { kind: 'link', href: ACCOUNT_URL, label: 'Go to your account' }
+        'We have paused this account rather than closed it, so nothing has been lost. Paying ' +
+        'again will not switch it back on by itself — email us and we will sort it out.',
+        action: { kind: 'external', href: `mailto:${SUPPORT_EMAIL}`, label: 'Email us' }
       };
 
     case 'unknown':
@@ -111,9 +134,12 @@ function copyFor(status: EntitlementStatus, feature: string): Copy | null {
   }
 }
 
+const ACTION_CLASS =
+'mt-3 inline-flex h-9 items-center gap-2 rounded-control bg-teal px-3 text-[0.8125rem] font-medium text-white transition-colors hover:bg-teal-hover';
+
 /**
- * `feature` names the thing being withheld, so the free-plan copy can be honest
- * about what is and is not included rather than waving at "premium features".
+ * `feature` names the thing being withheld, so the free-plan copy can name the control the
+ * maker is actually looking at rather than waving at "premium features".
  */
 export function PlanNotice({
   feature = 'Exporting',
@@ -125,24 +151,28 @@ export function PlanNotice({
 }: {feature?: string;className?: string;}) {
   const entitlement = useEntitlement();
 
-  // Nothing to say until the read resolves. Flashing "you are on the free plan"
-  // at a paying customer for half a second is worse than saying nothing.
+  // Nothing to say until the read resolves. Flashing "you are on the free plan" at a paying
+  // customer for half a second is worse than saying nothing.
   if (entitlement.loading) return null;
 
-  const copy = copyFor(entitlement.status, feature);
+  const copy = copyFor(entitlement.status, feature, planLabel(entitlement));
   if (!copy) return null;
 
   return (
     <Callout tone={copy.tone} title={copy.title} className={className}>
       <p className="max-w-prose leading-relaxed">{copy.body}</p>
-      {copy.action.kind === 'link' &&
-      <a
-        href={copy.action.href}
+      {copy.action.kind === 'internal' &&
+      <Link
+        to={copy.action.to}
         onClick={copy.action.upgrade ? () => metaInitiateCheckout('plan-gate') : undefined}
-        className="mt-3 inline-flex h-9 items-center gap-2 rounded-control bg-teal px-3 text-[0.8125rem] font-medium text-white transition-colors hover:bg-teal-hover">
+        className={ACTION_CLASS}>
 
           {copy.action.label}
-          <ExternalLinkIcon className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
+        </Link>
+      }
+      {copy.action.kind === 'external' &&
+      <a href={copy.action.href} className={ACTION_CLASS}>
+          {copy.action.label}
         </a>
       }
       {copy.action.kind === 'retry' &&

@@ -1,30 +1,33 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useAuth } from './auth';
-import { fetchMembership, mapEntitlement, type Entitlement } from './membership';
+import {
+  fetchEntitlement,
+  mapEntitlement,
+  UNRESOLVED_ENTITLEMENT,
+  type Entitlement } from
+'./membership';
 
 /**
  * The signed-in maker's entitlement, read once and shared.
  *
  * Read once because several places need it at the same time — the sidebar wants
  * the business name, the designer wants to know whether export is on, the
- * billing screen wants the plan — and three components each firing their own
- * query on every render is how you turn one row into a rate limit.
+ * billing page wants the plan, the allowance and the period end — and four
+ * components each firing their own query on every render is how you turn one row
+ * into a rate limit.
  */
 
 export interface EntitlementValue extends Entitlement {
   /** True until the first read resolves. Check this before trusting `status`. */
   loading: boolean;
-  /** Re-read the membership. Used by the retry on a failed read. */
+  /**
+   * Re-read the entitlement. Used by the retry on a failed read, and by the
+   * return-from-checkout poll: the subscription row is written by a Stripe
+   * webhook that races the browser redirect, so the billing return screen asks
+   * again on a backoff until the row says what happened.
+   */
   refresh: () => void;
 }
-
-const UNRESOLVED: Entitlement = {
-  status: 'unknown',
-  active: false,
-  plan: null,
-  planStatus: null,
-  businessName: null
-};
 
 const EntitlementContext = createContext<EntitlementValue | null>(null);
 
@@ -47,7 +50,7 @@ export function EntitlementProvider({ children }: {children: React.ReactNode;}) 
     // No setEntitlement(null) here: a refresh revalidates in the background and
     // keeps showing the answer we already have, so a manual retry does not blank
     // the screen someone is working on.
-    fetchMembership().then(({ row, failed }) => {
+    fetchEntitlement().then(({ row, failed }) => {
       if (active) setEntitlement(mapEntitlement(row, failed));
     });
     return () => {
@@ -59,7 +62,7 @@ export function EntitlementProvider({ children }: {children: React.ReactNode;}) 
 
   const value = useMemo<EntitlementValue>(
     () => ({
-      ...(entitlement ?? UNRESOLVED),
+      ...(entitlement ?? UNRESOLVED_ENTITLEMENT),
       loading: entitlement === null,
       refresh
     }),

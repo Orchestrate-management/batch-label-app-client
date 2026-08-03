@@ -2,7 +2,7 @@ import { INBOX, ingredientById, materialById } from './catalog';
 import { Derivation } from './derive';
 import { Market, Product } from './model';
 import { driftFor } from './products';
-import { obligationsFor } from './regimes';
+import { outstandingObligations } from './regimes';
 import { buildSds } from './sds';
 
 /**
@@ -132,9 +132,7 @@ market: Market)
   const sds = product.artefacts.some((artefact) => artefact.type === 'sds') ?
   buildSds(product, derivation, market) :
   null;
-  const outstandingObligations = obligationsFor(product).filter(
-    (obligation) => !product.obligations[obligation.id]
-  );
+  const outstanding = outstandingObligations(product);
 
   const outputIssues: StageIssue[] = [
   ...(stale.length ?
@@ -156,7 +154,7 @@ market: Market)
   }] :
 
   []),
-  ...outstandingObligations.map((obligation) => ({
+  ...outstanding.map((obligation) => ({
     label: obligation.label,
     detail: obligation.missingText,
     to: obligation.to.replace(':id', product.id)

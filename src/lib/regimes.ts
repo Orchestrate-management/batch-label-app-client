@@ -55,7 +55,7 @@ export const REGIMES: Regime[] = [
   { key: 'hazard', label: 'Hazard statements', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'carton', 'listing'] },
   { key: 'precautionary', label: 'Precautionary statements', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'carton', 'listing'] },
   { key: 'allergen', label: 'Allergen line, EUH208', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'carton'] },
-  { key: 'ufi', label: 'UFI', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'carton'] },
+  { key: 'ufi', label: 'UFI', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'carton'], note: 'Batchlabel does not generate one. Get it from the ECHA UFI generator' },
   { key: 'batch', label: 'Batch number', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'carton'] }],
 
   obligations: [
@@ -79,9 +79,10 @@ export const REGIMES: Regime[] = [
     id: 'clp-ufi',
     regimeId: 'clp',
     label: 'UFI assigned',
-    doneText: 'A UFI has been generated and printed on the label.',
-    missingText: 'No UFI has been generated for this composition.',
-    to: '/settings'
+    doneText: 'A UFI obtained from the ECHA UFI generator is on file for this composition.',
+    missingText:
+    'Batchlabel does not generate a UFI. Get one from the ECHA UFI generator for this composition and put it on the label yourself. The poison centre notification cannot be made without it.',
+    to: '/products/:id/artefacts/unit-label'
   },
   {
     id: 'clp-pcn-eu',
@@ -413,4 +414,30 @@ export function obligationsFor(product: Product): Obligation[] {
 
 export function obligationRoute(obligation: Obligation, productId: string): string {
   return obligation.to.replace(':id', productId);
+}
+
+/**
+ * Obligations an account cannot honestly hold, whatever is stored against the
+ * product. Nothing in Batchlabel generates a UFI and nothing records one, so a
+ * satisfied `clp-ufi` could only ever have come from data someone typed in;
+ * trusting it tells a maker a CLP obligation is met when it is not, and the
+ * next thing they skip is the poison centre notification. Ignoring the stored
+ * value is deliberate: showing outstanding work that is done costs an hour,
+ * hiding work that is not done ships an illegal label.
+ *
+ * Delete an id from here the day the mechanism behind it exists.
+ */
+const UNSATISFIABLE: ReadonlySet<string> = new Set(['clp-ufi']);
+
+/** The single answer to "is this obligation met", for every screen that asks. */
+export function obligationSatisfied(product: Product, obligationId: string): boolean {
+  if (UNSATISFIABLE.has(obligationId)) return false;
+  return product.obligations[obligationId] === true;
+}
+
+/** Every obligation the product still owes. */
+export function outstandingObligations(product: Product): Obligation[] {
+  return obligationsFor(product).filter(
+    (obligation) => !obligationSatisfied(product, obligation.id)
+  );
 }

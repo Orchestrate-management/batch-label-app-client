@@ -209,6 +209,17 @@ export type Product = {
   spec: Spec;
   artefacts: ArtefactInstance[];
   identifiers: {
+    /**
+     * Nothing in Batchlabel generates a UFI, so this is never populated and is
+     * never seeded with a plausible looking one: a maker who sees a UFI here
+     * believes an obligation is met that is not, and skips the poison centre
+     * notification that depends on it.
+     *
+     * For whoever builds the generator: under CLP Annex VIII a UFI belongs to
+     * the composition, not to the thing you sell. Every pack size of the same
+     * formulation shares one UFI. This field therefore has to move off Product,
+     * which is 1:1 with a SKU, and onto whatever holds the composition.
+     */
     ufi?: string;
     model?: string;
     weeeRegistration?: string;

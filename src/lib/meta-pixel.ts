@@ -117,8 +117,15 @@ const META_COOKIES = ['_fbp', '_fbc'] as const;
  */
 type AppMetaEventName = 'InitiateCheckout';
 
-/** Which upgrade control was pressed. Reported so app clicks stay separable. */
-export type UpgradeSurface = 'plan-gate' | 'billing-settings';
+/**
+ * Which upgrade control was pressed. Reported so app clicks stay separable.
+ *
+ * `billing-page` replaced `billing-settings` when billing moved out of Settings onto its own
+ * route and became the place a purchase actually happens. The old value is kept rather than
+ * renamed: events already sitting in the Meta dataset carry it, and dropping the union member
+ * would make historical data unreadable against the current type for no gain.
+ */
+export type UpgradeSurface = 'plan-gate' | 'billing-page' | 'billing-settings';
 
 type FbqCommand = (...args: unknown[]) => void;
 
