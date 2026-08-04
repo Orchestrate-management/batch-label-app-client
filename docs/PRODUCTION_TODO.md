@@ -478,9 +478,17 @@ silently stops matching the DSN, and `tunnel` is the only setting that would ove
 **Two things about the region that the word "EU" hides, and both belong in a privacy conversation
 rather than in this file's summary of them.** Storage in that region is Frankfurt, but account and
 org settings, access tokens, audit logs, project metadata and the DSN keys themselves sit in the US
-regardless of region. And there is no EU entity to contract with — the counterparty is Functional
-Software, Inc. So "the data is in the EU" is not a sentence anyone should repeat to a customer
-without qualification. The www privacy notice states the qualified version.
+regardless of region. And the counterparty on the DPA is Functional Software, Inc., a US company.
+
+This line used to read "there is no EU entity to contract with", and that half-sentence cost a
+later reader a round trip: there IS a Sentry entity in the EU — Sentry Software Netherlands B.V. —
+and finding it makes the line look wrong. It is not the counterparty. It is Sentry's Article 27
+REPRESENTATIVE, the EU address a data subject or a supervisory authority writes to, and a
+representative is not a party to the processing agreement. So the correct statement is the narrow
+one: the processor you contract with is American, and the transfer is a transfer to the US whatever
+the storage region says. So "the data is in the EU" is not a sentence anyone should repeat to a
+customer without qualification. The www privacy notice states the qualified version, with the
+safeguards it relies on.
 
 **CONTENT SECURITY POLICY: THERE ISN'T ONE, IN EITHER REPO.** Checked because an EU ingest host
 missing from a `connect-src` fails silently — every test passes, the code is correct, and no error

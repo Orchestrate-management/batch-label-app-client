@@ -186,13 +186,27 @@ export interface SentryLike {
  * The keys of an event that may be transmitted.
  *
  * The second gate, and it is aimed at the SDK rather than at us. `beforeSend`
- * runs after Sentry has prepared the event, which is where it would have merged
- * in anything a scope, an integration or a future version of the client decided
- * to attach — `request` (the page URL), `user`, `breadcrumbs`, `contexts`,
- * `server_name`. The integrations that add those are all switched off, so on
- * today's version this list removes nothing; it exists so that turning one back
- * on by accident, or an SDK upgrade that adds a field, cannot post something new
- * without a diff to this line.
+ * runs after Sentry has prepared the event, which is where it has merged in
+ * anything a scope, an integration or a future version of the client decided to
+ * attach — `request` (the page URL), `user`, `breadcrumbs`, `contexts`,
+ * `server_name`.
+ *
+ * THIS COMMENT USED TO SAY "ON TODAY'S VERSION THIS LIST REMOVES NOTHING". It
+ * does not. Read out of a real prepared event on @sentry/react 10.69, with every
+ * default integration off, the SDK hands `beforeSend` twelve keys and this list
+ * drops THREE of them:
+ *
+ *   breadcrumbs             empty here, because maxBreadcrumbs is 0.
+ *   contexts                `{ trace: { trace_id, span_id }, react: { version } }`.
+ *   sdkProcessingMetadata   a dynamic sampling context — environment, org id and
+ *                           the DSN's public key.
+ *
+ * None of that is a maker's data and none of it is why the list exists. It is
+ * worth writing down anyway, because "removes nothing" was the sentence that
+ * would have let somebody delete this as dead weight, and because a field the
+ * SDK adds without being asked is exactly the thing the list is for: turning an
+ * integration back on by accident, or an upgrade that adds a key, cannot post
+ * something new without a diff to this line.
  */
 const EVENT_FIELDS_THAT_MAY_LEAVE = [
 'event_id',
@@ -308,6 +322,12 @@ export function eventFor(scrubbed: ScrubbedReport): SentryEvent {
     },
     extra: {
       message_digest: scrubbed.messageDigest,
+      // Every name in here has been held to the list in
+      // lib/app-component-names.ts, and anything else is '[redacted]'. This was
+      // the field that shipped a real batch code: React names a component from
+      // `type.name`, V8 infers `type.name` from a computed key, and a batch code
+      // used as a key therefore became a component. Same mechanism that had
+      // frames[].function deleted, one level up the tree.
       component_trail: scrubbed.components
     }
   };
@@ -336,20 +356,59 @@ type DataCollection = NonNullable<BrowserOptions['dataCollection']>;
  * `sdk.settings` and `scrubReport` is irrelevant to it. There is no runtime gate
  * downstream of this object; there is only this object.
  *
- * `Required<…>` over the SDK's own type means a category added in a minor
- * release — which under the rule above would arrive switched ON — fails
- * `npm run typecheck` with "property missing" rather than shipping quietly. The
- * nested bags are re-required for the same reason. `queryParams` is excluded
- * deliberately: it is the SDK's deprecated alias for `urlQueryParams`, which is
- * set below, and the resolver reads it only when `urlQueryParams` is unset.
+ * EXHAUSTIVE ALL THE WAY DOWN, WHICH IT WAS NOT. The type here used to be
+ * `Required<Omit<DataCollection, 'queryParams'>>` with the three bags known
+ * TODAY re-required by hand. That caught a new category BY NAME and not BY
+ * CONTENTS: a future nested bag — `websocket?: { frames?: boolean }` — would be
+ * required as a key and could then be silenced with `{}`, and the resolver above
+ * defaults every sub-key it did not find to TRUE. The comment claimed a
+ * completeness the type did not have.
+ *
+ * `EveryKeyRequired` closes it: it recurses, so `{}` fails for a bag at any
+ * depth. Unions are left alone (`CollectBehavior` is `boolean | {allow} | {deny}`
+ * and its object arms already require their keys), arrays are left alone
+ * (`httpBodies: []` is the "collect nothing" value), and anything not an object
+ * is itself. So a category added in a minor release — which under the rule above
+ * would arrive switched ON — fails `npm run typecheck` with "property missing"
+ * rather than shipping quietly, and so does a bag added inside one.
+ *
+ * `queryParams` is excluded deliberately: it is the SDK's deprecated alias for
+ * `urlQueryParams`, which is set below, and the resolver reads it only when
+ * `urlQueryParams` is unset.
  */
-type EveryDataCollectionCategory = Required<Omit<DataCollection, 'queryParams'>> & {
-  httpHeaders: Required<NonNullable<DataCollection['httpHeaders']>>;
-  graphQL: Required<NonNullable<DataCollection['graphQL']>>;
-  genAI: Required<NonNullable<DataCollection['genAI']>>;
-};
+type EveryKeyRequired<T> =
+T extends readonly unknown[] ? T :
+T extends (...args: never[]) => unknown ? T :
+T extends object ? {[K in keyof T]-?: EveryKeyRequired<NonNullable<T[K]>>} :
+T;
 
-const NOTHING_COLLECTED_BY_THE_SDK: EveryDataCollectionCategory = {
+type EveryDataCollectionCategory = EveryKeyRequired<Omit<DataCollection, 'queryParams'>>;
+
+/**
+ * Frozen, and frozen all the way down, because a caller mutated it.
+ *
+ * `sentryOptionsFor` returns a fresh options object every call but this bag was
+ * SHARED BY REFERENCE, and the negative-control test — the one that proves the
+ * `infer_ip: "never"` assertion has teeth — did `delete options.dataCollection.
+ * userInfo` on it. That permanently switched the maker's IP address back on for
+ * every later caller in the worker, and made the assertion that the IP is off
+ * pass or fail depending on which test had run first. The single most important
+ * privacy property in this repo was being decided by test ordering.
+ *
+ * Deep-frozen rather than copied on the way out: a copy would make that mutation
+ * silent and local, and this one should be LOUD. In a module (which is strict
+ * mode) both `delete` and assignment on a frozen object throw. A caller that
+ * genuinely wants a variant — the negative control does — builds its own copy.
+ */
+function deepFreeze<T>(value: T): T {
+  Object.freeze(value);
+  for (const inner of Object.values(value as Record<string, unknown>)) {
+    if (inner !== null && typeof inner === 'object' && !Object.isFrozen(inner)) deepFreeze(inner);
+  }
+  return value;
+}
+
+const NOTHING_COLLECTED_BY_THE_SDK: EveryDataCollectionCategory = deepFreeze({
   userInfo: false,
   cookies: false,
   httpHeaders: { request: false, response: false },
@@ -360,7 +419,7 @@ const NOTHING_COLLECTED_BY_THE_SDK: EveryDataCollectionCategory = {
   databaseQueryData: false,
   stackFrameVariables: false,
   frameContextLines: 0
-};
+});
 
 /**
  * Everything handed to `Sentry.init`, as a value, so a test can read it.
@@ -400,12 +459,13 @@ export function sentryOptionsFor(dsn: string): BrowserOptions {
     // request hostname — which here would be the Supabase project host, added
     // to an Error a maker's screen may go on to display. Off.
     enhanceFetchErrorMessages: false,
-    // Every category, off, and exhaustive by construction — see
-    // NOTHING_COLLECTED_BY_THE_SDK for why the type is load-bearing here and
+    // Every category, off, exhaustive by construction to any depth, and FROZEN
+    // — see NOTHING_COLLECTED_BY_THE_SDK for why the type is load-bearing here,
     // why `userInfo: false` in particular is the only thing standing between a
-    // maker's IP address and Sentry. `sendDefaultPii` is the deprecated single
-    // switch for the same thing; setting both means one is ignored, so only
-    // this is set.
+    // maker's IP address and Sentry, and why a caller that mutated this object
+    // once made that property depend on test ordering. `sendDefaultPii` is the
+    // deprecated single switch for the same thing; setting both means one is
+    // ignored, so only this is set.
     dataCollection: NOTHING_COLLECTED_BY_THE_SDK,
     /**
      * The last gate before the network, and the one that catches us rather than

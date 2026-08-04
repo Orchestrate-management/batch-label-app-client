@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createElement, type FC } from 'react';
+import { render } from '@testing-library/react';
 import type { BrowserOptions } from '@sentry/react';
 import * as realSentry from '@sentry/react';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import {
   eventFor,
   gateOutgoingEvent,
@@ -207,6 +210,31 @@ describe('what Sentry is allowed to collect on its own account', () => {
     // enhanceFetchErrorMessages defaults to 'always' and appends the request
     // hostname to a real Error object — one a maker's screen may go on to show.
     expect(options.enhanceFetchErrorMessages).toBe(false);
+  });
+
+  it('cannot be switched back on by a caller, at any depth', () => {
+    // THE REGRESSION THIS EXISTS FOR. `dataCollection` was a module-level object
+    // handed out by reference, and the negative control further down this file
+    // did `delete options.dataCollection.userInfo` on it — permanently turning
+    // the maker's IP address back on for every later caller in the worker, and
+    // making the "infer_ip is never" assertion depend on which test ran first.
+    // The test guarding the most important privacy property in this repo was the
+    // thing breaking it.
+    const handed = sentryOptionsFor(DSN) as Record<string, any>;
+    expect(() => delete handed.dataCollection.userInfo).toThrow(TypeError);
+    expect(() => {
+      handed.dataCollection.userInfo = true;
+    }).toThrow(TypeError);
+    // Frozen all the way down, not just at the top.
+    expect(() => {
+      handed.dataCollection.httpHeaders.request = true;
+    }).toThrow(TypeError);
+    expect(() => handed.dataCollection.httpBodies.push('incomingRequest')).toThrow(TypeError);
+
+    // And a later caller gets the configuration this file wrote.
+    const later = sentryOptionsFor(DSN).dataCollection as Record<string, unknown>;
+    expect(later.userInfo).toBe(false);
+    expect(later.httpHeaders).toEqual({ request: false, response: false });
   });
 });
 
@@ -548,11 +576,25 @@ describe('against the real @sentry/react, with the wire replaced', () => {
     // `dataCollection` is non-null, so an unset category is an ON category —
     // `dataCollection: {}` produces "auto" too, despite the SDK's own type doc
     // saying `userInfo` defaults to false. That is why the object in
-    // error-sink.ts is typed to require every category by name: a category added
-    // in an SDK minor fails the typecheck instead of switching itself on.
+    // error-sink.ts is typed to require every category to any depth: a category
+    // added in an SDK minor, or a bag added inside one, fails the typecheck
+    // instead of switching itself on.
+    //
+    // ON ITS OWN COPY, AND THAT IS NOT A DETAIL. This test used to do
+    // `delete options.dataCollection.userInfo` on the object `sentryOptionsFor`
+    // returns — which was the shared module-level one. It permanently switched
+    // the maker's IP address back on for every later caller in the worker and
+    // made the assertion directly above pass or fail on test ordering: the test
+    // proving the IP is off was the thing turning it on. The object is frozen
+    // now, so that line throws rather than poisoning, and a variant is built
+    // here.
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    const options = sentryOptionsFor(UNROUTABLE_DSN) as Record<string, any>;
-    delete options.dataCollection.userInfo;
+    const shipped = sentryOptionsFor(UNROUTABLE_DSN);
+    const withoutUserInfo: Record<string, unknown> = {
+      ...(shipped.dataCollection as Record<string, unknown>)
+    };
+    delete withoutUserInfo.userInfo;
+    const options = { ...shipped, dataCollection: withoutUserInfo } as Record<string, any>;
     await installErrorSink(UNROUTABLE_DSN, () =>
     Promise.resolve({
       init: () =>
@@ -575,6 +617,77 @@ describe('against the real @sentry/react, with the wire replaced', () => {
 
     expect(envelopes).toHaveLength(1);
     expect(eventOnTheWire().sdk.settings.infer_ip).toBe('auto');
+
+    // And the shipped configuration is untouched by the copy above, which is
+    // the property that makes the "never" assertion order-independent.
+    expect((sentryOptionsFor(UNROUTABLE_DSN).dataCollection as Record<string, unknown>).userInfo).
+    toBe(false);
+  });
+
+  it('drops the fields the SDK attaches on its own, which is not nothing', async () => {
+    // The comment on EVENT_FIELDS_THAT_MAY_LEAVE used to say that with every
+    // integration off "this list removes nothing". Read out of a real prepared
+    // event it removes three keys: `contexts` (a trace id, a span id and the
+    // React version), `sdkProcessingMetadata` (a dynamic sampling context
+    // carrying the DSN's public key) and `breadcrumbs`. None of that is a
+    // maker's data — and all of it arrived without being asked for, which is
+    // exactly what the list is for.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await installErrorSink(UNROUTABLE_DSN, () => Promise.resolve(realSentryWithStubTransport()));
+    reportError(new Error('Failed to fetch'), 'render');
+    await realSentry.flush(2000);
+
+    const event = eventOnTheWire();
+    expect(event.contexts).toBeUndefined();
+    expect(event.sdkProcessingMetadata).toBeUndefined();
+    expect(event.breadcrumbs).toBeUndefined();
+    expect(JSON.stringify(envelopes)).not.toContain('trace_id');
+    // Exactly what is left, so a key the SDK starts adding shows up here.
+    expect(Object.keys(event).sort()).toEqual([
+    'environment',
+    'event_id',
+    'exception',
+    'extra',
+    'fingerprint',
+    'level',
+    'platform',
+    'sdk',
+    'tags',
+    'timestamp']
+    );
+  });
+
+  it('puts no data-derived component name on the wire', async () => {
+    // THE SEND-BY-DEFAULT FIELD THAT MOVED RATHER THAN DYING, AND THIS IS THE
+    // RENDER THAT PROVED IT. `frames[].function` was deleted because V8 infers
+    // function names from data. `extra.component_trail` inherited the leak one
+    // level up the tree: React reads a component's label from
+    // `type.displayName || type.name`, and a batch code used as a computed key
+    // IS `type.name`. Before lib/app-component-names.ts existed, this exact
+    // render put `["BL240417A","ErrorBoundary"]` into a real envelope.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await installErrorSink(UNROUTABLE_DSN, () => Promise.resolve(realSentryWithStubTransport()));
+
+    const batch = { code: 'BL240417A' };
+    const screens: Record<string, () => never> = {
+      [batch.code]: function () {
+        throw new Error('Failed to fetch');
+      }
+    };
+    // V8 did it, not the test: the component is called after the batch code.
+    expect(screens[batch.code].name).toBe('BL240417A');
+
+    render(
+      createElement(ErrorBoundary, null, createElement(screens[batch.code] as unknown as FC))
+    );
+    await realSentry.flush(2000);
+
+    expect(envelopes).toHaveLength(1);
+    expect(JSON.stringify(envelopes)).not.toContain('BL240417A');
+    // The trail keeps its depth and its shape; it loses the one label it could
+    // not vouch for. `ErrorBoundary` is on the list, so it still reads.
+    expect(eventOnTheWire().extra.component_trail).toContain('[redacted]');
+    expect(eventOnTheWire().extra.component_trail).toContain('ErrorBoundary');
   });
 
   it('carries the scrubber\'s mark as a fact and never as its value', async () => {

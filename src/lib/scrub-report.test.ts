@@ -368,6 +368,36 @@ describe('the stack', () => {
     expect(scrubStack('    at go (/src/lib/derive.ts:1:2)')[0].filename).toBe('/src/lib/derive.ts');
   });
 
+  it('cuts the WHOLE header, so a multi-line message cannot smuggle a frame', () => {
+    // THE SECOND COUNTEREXAMPLE TO A CLAIM THIS FILE MADE. The claim was that a
+    // path only reaches scrubScriptPath from a stack and V8 writes those from
+    // real script URLs. But `error.stack` BEGINS with the message, so every
+    // line of a multi-line message is inside the stack — and one that parses as
+    // a frame gets its path read, prefix, suffix and all.
+    const message =
+    'Failed to derive hazards\n' +
+    '    at go (/assets/Winter-Fig-and-Cassis-unlaunched-2027.js:1:2)';
+    const report: ErrorReport = {
+      ...REALISTIC,
+      message,
+      stack: `Error: ${message}\n    at deriveHazards (/assets/index-abc.js:9:1)`,
+      componentStack: undefined
+    };
+
+    expect(scrubReport(report, null).frames).toEqual([
+    { filename: '/assets/index-abc.js', lineno: 9, colno: 1 }]
+    );
+    expect(everythingSent(report, null)).not.toContain('Winter-Fig');
+  });
+
+  it('cuts nothing when there is no header, which is Safari and Firefox', () => {
+    // Their stacks are frames from the first character, so `indexOf` finds
+    // nothing and the frames survive. Cutting on a guess would lose all of them.
+    expect(scrubStack('deriveHazards@/assets/x.js:9:4', 'Failed to fetch')).toEqual([
+    { filename: '/assets/x.js', lineno: 9, colno: 4 }]
+    );
+  });
+
   it('has a floor and a ceiling: no stack is empty, no stack is unbounded', () => {
     expect(scrubStack(undefined)).toEqual([]);
     const huge = Array.from({ length: 200 }, (_, i) => `    at f${i} (/assets/a.js:1:2)`).join('\n');
@@ -532,6 +562,56 @@ describe('the fingerprint, and what a guesser can do with it', () => {
     expect(after.meanSurvivors).toBeGreaterThan(2);
   });
 
+  it('names one candidate from a bounded list when the message was NOT recognised', () => {
+    // THE RESIDUAL THE HEADER NOW STATES, MEASURED HERE SO IT STAYS CHECKABLE.
+    // The header used to close by saying a 16-bit match "would still leave
+    // several thousand other messages that produce it". That is true of the
+    // space of all strings and false of the space anybody enumerates — and a
+    // formulation percentage is a space of 10,001. This is what a guesser who
+    // holds the template and the candidate list actually gets.
+    const asFreeText = (value: string) => `Failed to derive hazards for ${value}`;
+    expect(scrubMessage(asFreeText('x')).recognised).toBe(false);
+
+    const percentages = Array.from({ length: 10_001 }, (_, i) => (i / 100).toFixed(2));
+    const tag = shippedDigestFor(asFreeText('12.43'));
+    expect(percentages.filter((p) => shippedDigestFor(asFreeText(p)) === tag)).toEqual(['12.43']);
+
+    const suppliers = Array.from({ length: 4096 }, (_, i) => `Supplier ${i} Fragrances Europe Ltd`);
+    const secret = suppliers[1234];
+    const supplierTag = shippedDigestFor(asFreeText(secret));
+    expect(suppliers.filter((s) => shippedDigestFor(asFreeText(s)) === supplierTag)).toEqual([
+    secret]
+    );
+  });
+
+  it('composes: two unrecognised messages about one secret are two oracles', () => {
+    // NOBODY HAD CONSIDERED THIS, so it is written down rather than assumed
+    // away. Two DIFFERENT unrecognised messages carrying the SAME value are two
+    // independent 16-bit fingerprints of it, and intersecting the candidate sets
+    // is 32 bits. The header says why it is not defended against — a per-report
+    // salt would break the grouping the digest exists for, and narrowing only
+    // changes the arithmetic.
+    const asFreeText = (value: string) => `Failed to derive hazards for ${value}`;
+    const andAlso = (value: string) => `Could not price the batch for ${value}`;
+    expect(scrubMessage(andAlso('x')).recognised).toBe(false);
+
+    const buckets = new Map<string, string[]>();
+    for (const name of CATALOGUE) {
+      const tag = shippedDigestFor(asFreeText(name));
+      const bucket = buckets.get(tag);
+      if (bucket) bucket.push(name);else buckets.set(tag, [name]);
+    }
+    // A secret whose FIRST oracle leaves a crowd, so the second one is visibly
+    // what does the work rather than the arithmetic being a coincidence.
+    const afterOneOracle = [...buckets.values()].find((names) => names.length >= 5) as string[];
+    expect(afterOneOracle.length).toBeGreaterThanOrEqual(5);
+
+    const secret = afterOneOracle[0];
+    const secondTag = shippedDigestFor(andAlso(secret));
+    const afterTwo = afterOneOracle.filter((n) => shippedDigestFor(andAlso(n)) === secondTag);
+    expect(afterTwo).toEqual([secret]);
+  });
+
   it('still groups: same message, same fingerprint; different message, different bucket', () => {
     // The other half of the bargain, and the reason the digest exists at all.
     // 16 bits is 65,536 buckets, which is the separation being traded for.
@@ -553,6 +633,33 @@ describe('the component trail', () => {
 
   it('reads React\'s older `in` wording as well as `at`', () => {
     expect(scrubComponentStack('\n    in Materials (created by App)')).toEqual(['Materials']);
+  });
+
+  it('redacts a name the runtime inferred from a maker\'s data', () => {
+    // THE FIELD THAT INHERITED THE `function` LEAK. React labels a component
+    // from `type.displayName || type.name`, V8 infers `type.name` from a
+    // computed key, and a batch code used as a key is therefore a component
+    // name. A shape check sent it — it went out on the real Sentry wire —
+    // because `BL240417A` is a perfectly good identifier and so is
+    // `deriveHazards`. The list in lib/app-component-names.ts is the only thing
+    // that can tell them apart, and the trail keeps its depth either way.
+    const batch = { code: 'BL240417A' };
+    const inferred = { [batch.code]: function () {/* a screen keyed by batch */} };
+    expect(inferred[batch.code].name).toBe('BL240417A');
+
+    expect(
+      scrubComponentStack(
+        `\n    at ${inferred[batch.code].name}` +
+        '\n    at Suspense' +
+        '\n    at ErrorBoundary'
+      )
+    ).toEqual(['[redacted]', 'Suspense', 'ErrorBoundary']);
+  });
+
+  it('redacts the other shapes a maker\'s data arrives in', () => {
+    for (const name of ['WinterFigAndCassis', 'Robertet', 'Firmenich', 'BL2026_0417']) {
+      expect(scrubComponentStack(`    at ${name}`)).toEqual(['[redacted]']);
+    }
   });
 });
 

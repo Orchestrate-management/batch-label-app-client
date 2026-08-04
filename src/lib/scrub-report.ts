@@ -1,3 +1,4 @@
+import { APP_COMPONENT_NAMES } from './app-component-names';
 import type { ErrorReport } from './report-error';
 
 /**
@@ -34,6 +35,49 @@ import type { ErrorReport } from './report-error';
  * comment.
  *
  * ─────────────────────────────────────────────────────────────────────────────
+ * THE RULE INSIDE THE RULE: ASK WHO WROTE THE STRING, NOT WHAT IT LOOKS LIKE
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * "Allow-list" is not enough said on its own, because a regex is an allow-list
+ * too and TWO FIELDS IN A ROW have now leaked through one. `frames[].function`
+ * was deleted after a batch code was shown arriving in it. `extra.component_trail`
+ * then did the same thing, by the same mechanism, in the field next door — and
+ * that one was not a demonstration, a real batch code went out on the real
+ * Sentry wire before anybody noticed. Deleting a second field is not a rule. So:
+ *
+ * FOR EVERY FIELD THAT LEAVES, ASK WHO WROTE THE STRING.
+ *
+ *   WE DID, FROM AN ALPHABET WE FIXED — `reference` (report-error.ts's own
+ *   alphabet, minus the characters that misread down a phone) and `at` (a
+ *   clock). Here a shape check IS a list: the pattern enumerates the entire
+ *   space of values the field can hold, and no input can add to it. These two
+ *   are the ONLY fields in this file entitled to a bare shape check.
+ *
+ *   THE RUNTIME DID — and then ask what the runtime READ in order to write it.
+ *   V8 and React both name things after values: a computed object key becomes a
+ *   function's `name`, that `name` becomes React's component label, `error.name`
+ *   is a plain writable property, and a message is assembled at a throw site out
+ *   of whatever was in scope. Every one of those is a channel from a customer's
+ *   product to a string that looks exactly like one of our identifiers, and
+ *   nothing can tell `BL240417A` from `deriveHazards`. These fields get a LIST
+ *   of strings that occur in our own source, or they do not go.
+ *
+ * THE TEST FOR THE NEXT FIELD, and it takes a minute: can you write a line of
+ * ORDINARY application code — not a contrived one — that puts a value read off a
+ * product into it? For `function` it was `{ [batch.code]: fn }`. For
+ * `component_trail` it was that line with JSX around it. If you can, the field
+ * is list-checked or it does not go, and "it is always an identifier from our
+ * own code today" is not an answer — that is a property of the call sites, and
+ * the check is what runs.
+ *
+ * WHERE EACH FIELD STANDS TODAY. List-checked: `source`, `name`, `message` (and
+ * inside it the screen name and the provider-hook sentence), `route`, and now
+ * every component name. Shape-checked, for the reason above: `reference`, `at`.
+ * Neither, and the one place this file still owes an answer: `frames[].filename`
+ * — see SCRIPT_SUFFIXES, which says what it costs and why nothing better is
+ * available at runtime.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
  * WHAT LEAVES, AND WHY EACH ONE IS SAFE
  * ─────────────────────────────────────────────────────────────────────────────
  *
@@ -54,9 +98,14 @@ import type { ErrorReport } from './report-error';
  *               See scrubRoute: a product id in a path segment identifies a
  *               customer's product, and a query string can hold anything at all.
  *   frames      Script path, line and column — reconstructed from the stack
- *               rather than passed through, and deliberately WITHOUT the
- *               function name. See scrubStack.
- *   components  React component names only, from the componentStack.
+ *               rather than passed through, with the header cut off by
+ *               construction and deliberately WITHOUT the function name. See
+ *               scrubStack.
+ *   components  React component names from the componentStack, each held to the
+ *               list in lib/app-component-names.ts. Anything else is
+ *               `[redacted]`, so the trail keeps its depth and loses a label.
+ *               A shape check here put a real batch code on the wire — see
+ *               scrubComponentStack.
  *
  * And what leaves is ONLY that. `scrubReport` names each field explicitly rather
  * than spreading the report, so a field added to `ErrorReport` next month does
@@ -117,18 +166,72 @@ import type { ErrorReport } from './report-error';
  * collided pairs over the life of the project, which is far more separation than
  * an unknown-fault stream needs.
  *
- * IT IS NOT A ONE-WAY FUNCTION AND THIS COMMENT WILL NOT CALL IT ONE. What is
- * true is narrower and is the whole claim: no fingerprint that leaves this file
- * takes a value we redacted as its input, and the one that takes an original
- * message takes one an attacker would have to reconstruct in full — template
- * included — before a 16-bit match told them anything, and a match would then
- * still leave several thousand other messages that produce it.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHAT IS TRUE ABOUT IT, IN TWO PARTS: THE STRONG ONE AND THE RESIDUAL
+ * ─────────────────────────────────────────────────────────────────────────────
  *
- * PURE, AND IN ITS OWN FILE, ON PURPOSE. Everything below is a function of its
- * arguments — no `window`, no clock, no Sentry — because the one thing this
- * repo cannot afford is for "what leaves the machine" to be an emergent property
- * of an integration nobody can run in a test. The sink imports this; this
- * imports nothing but a type.
+ * RECOGNISED MESSAGES ARE FULLY DEFEATED, and that is the strong result, so it
+ * goes first. For a message this file recognises, NOTHING that varies with the
+ * removed value reaches the wire in any field — not the exception value, not the
+ * type, not `fingerprint`, not `extra.message_digest`, not a tag, not a frame.
+ * Measured by running the shipped chain — `eventFor(scrubReport(…))`, the actual
+ * bytes, every field, mark excluded because it is random per page load — over a
+ * generated 187,200-name candle catalogue, over all 10,001 percentages from 0.00
+ * to 100.00, and over 65,536 supplier names: ONE distinct wire signature each, in
+ * every case. The 32-bit per-value tag this replaced recovered 99.995% of that
+ * same space uniquely.
+ *
+ * UNRECOGNISED FREE TEXT CARRIES A 16-BIT FINGERPRINT OF THE ORIGINAL, AND
+ * AGAINST A BOUNDED CANDIDATE LIST A GUESSER ALREADY HOLDS, THAT IS NOT
+ * ANONYMITY. This comment used to close by saying a match "would still leave
+ * several thousand other messages that produce it". That is true of the space of
+ * all strings and false of the space anybody actually enumerates — which is the
+ * same bounded catalogue this header calls realistic three paragraphs up. On the
+ * shipped function, with the message `Failed to derive hazards for <x>`:
+ *
+ *   - the percentage 12.43 comes back UNIQUELY from all 10,001 candidates
+ *     between 0.00 and 100.00;
+ *   - one supplier comes back UNIQUELY from a bounded list of 4,096;
+ *   - it takes a big catalogue before 16 bits leaves more than a handful: over
+ *     124,800 names the mean survivor count is 2.91, and over 400,000 it is 4.
+ *
+ * 16 bits is still a real improvement on 32: it is the difference between "any
+ * catalogue at all" and "a catalogue smaller than 65,536". It is not anonymity
+ * for a small space, and the defence for an unrecognised message is NOT the
+ * width — it is adding the message to RECOGNISED. `tags.message_recognised` is
+ * on every event for exactly that reason: it is the count that says this
+ * residual is growing.
+ *
+ * AND TWO ORACLES COMPOSE, WHICH NOTHING HERE USED TO CONSIDER. Two DIFFERENT
+ * unrecognised messages carrying the SAME secret are two independent 16-bit
+ * fingerprints of it, and intersecting their candidate sets is 32 bits.
+ * Measured twice: of 400,000 candidates 4 survive the first digest and 1
+ * survives both; of the 124,800-name catalogue the tests use, a secret whose
+ * first oracle leaves 5 is named exactly by the second. It is NOT defended
+ * against, deliberately, and the reasoning is worth more than the shrug:
+ *
+ *   - salting the digest per report is the obvious fix and it destroys the only
+ *     thing the digest is for. `eventFor` groups on it, so a per-report salt
+ *     makes every occurrence of one unknown fault its own issue, which is the
+ *     failure this field exists to prevent;
+ *   - narrowing further does not close it, it only changes the arithmetic — two
+ *     8-bit oracles compose to 16 just as readily;
+ *   - it is inherent to ANY deterministic grouping key taken over the original
+ *     text, and an unknown-fault stream cannot be triaged without one.
+ *
+ * So the honest shape of the residual is: a guesser who holds a bounded
+ * candidate list AND can attribute two distinct unrecognised messages from one
+ * account to one secret can recover that secret. What shrinks it is the same
+ * lever as above — fewer unrecognised messages.
+ *
+ * NEARLY PURE, AND IN ITS OWN FILE, ON PURPOSE. Everything below is a function
+ * of its arguments — no `window`, no clock, no Sentry — because the one thing
+ * this repo cannot afford is for "what leaves the machine" to be an emergent
+ * property of an integration nobody can run in a test. The sink imports this;
+ * this imports one type and one constant list of names
+ * (lib/app-component-names.ts, which imports nothing at all and is data), and
+ * that list is the reason `component_trail` is list-checked rather than
+ * shape-checked.
  */
 
 /**
@@ -448,10 +551,35 @@ const SCRIPT_PATH = /^\/[A-Za-z0-9._@/-]{1,200}$/;
  * as the patterns below are concerned. Requiring an extension a bundler or a dev
  * server actually emits costs nothing and refuses that line.
  *
- * IT NARROWS, IT DOES NOT CLOSE: `/assets/Winter-Fig.js` would still pass, and no
- * shape check can tell that path from a real chunk. What makes the case remote is
- * that a path only gets here from a stack, and V8 writes those from real script
- * URLs — this is the belt, and `scrubMessage` is the braces.
+ * IT NARROWS, IT DOES NOT CLOSE, and the sentence that used to be here about why
+ * that was fine was wrong twice over. It said "a path only gets here from a
+ * stack, and V8 writes those from real script URLs — this is the belt, and
+ * scrubMessage is the braces". `scrubMessage` is not braces: it never sees this
+ * string. And a stack is not only what V8 wrote, because `error.stack` BEGINS
+ * with the message — so every line of a multi-line message is inside the stack,
+ * and one that parses as a frame gets its path read. Demonstrated: a report
+ * whose message contains `at go (/assets/Winter-Fig-and-Cassis-unlaunched.js:1:2)`
+ * put that name on the wire through `filename`, prefix and suffix and all.
+ *
+ * THE HEADER IS NOW CUT OFF BY CONSTRUCTION rather than left to fail the shape
+ * check — see `withoutHeader` in scrubStack, which removes exactly the run of
+ * text from the start of the stack through the end of the message we were
+ * given, however many lines that is. That closes the demonstrated route.
+ *
+ * WHAT IS LEFT, STATED RATHER THAN HIDDEN. A NESTED cause's message is still in
+ * the stack and this function does not know it: `ScreenNotLoaded` appends
+ * `caused by: ${cause.stack}`, and that cause's own header is text we cannot
+ * subtract. Today the only cause this app puts there is a chunk-load failure
+ * whose message the browser wrote, so the exposure is one path-shaped string
+ * from a message the runtime authored — but if a `throw new X(msg, { cause })`
+ * ever carries a maker's text as the CAUSE, this is where it would land. The
+ * fix would be to stop reading frames past the first `caused by:`; that is not
+ * done because those frames are the only ones a mid-deploy chunk failure has.
+ *
+ * And no shape check would close it anyway: `/assets/Winter-Fig.js` is a valid
+ * path and a plausible chunk name, and requiring Vite's own `name-HASH.ext`
+ * shape would mean an `entryFileNames` change silently redacting every frame in
+ * the app — a total, quiet loss of the field, which is worse than this.
  */
 const SCRIPT_SUFFIXES = ['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.css', '.map'];
 
@@ -491,24 +619,56 @@ function boundedPosition(raw: string): number | undefined {
 }
 
 /**
+ * The stack with its header removed — the whole run of it, not the first line.
+ *
+ * `error.stack` in V8 begins `${name}: ${message}` and the frames follow. When
+ * the message is one line that is one line; when the message contains newlines
+ * the header is as many lines as the message has, and a line of a MESSAGE that
+ * happens to parse as a frame is what carried an unlaunched product name through
+ * `filename`. See SCRIPT_SUFFIXES.
+ *
+ * So the cut is made from the message rather than from the shape of a line: find
+ * the message, insist it starts on the first line (which is what makes it a
+ * header rather than a coincidence), and drop everything through the end of it.
+ * Safari and Firefox write no header at all, so `indexOf` fails and nothing is
+ * cut, which is correct — their stacks are frames from the first character.
+ */
+function withoutHeader(stack: string, message: string): string {
+  if (message.length === 0) return stack;
+  const at = stack.indexOf(message);
+  if (at === -1) return stack;
+  // A '\n' before it means this is not the header; it is the message quoted
+  // somewhere further down, and cutting to there would eat real frames.
+  if (stack.lastIndexOf('\n', at) !== -1) return stack;
+  return stack.slice(at + message.length);
+}
+
+/**
  * The stack, rebuilt from the frames it contains rather than passed through.
  *
- * REBUILT IS THE LOAD-BEARING WORD. `error.stack` begins with a header line that
- * is the name and the whole unredacted message, and `ScreenNotLoaded` appends a
+ * REBUILT IS THE LOAD-BEARING WORD. `error.stack` begins with a header that is
+ * the name and the whole unredacted message, and `ScreenNotLoaded` appends a
  * `caused by:` line carrying a second one. Sending the stack as a string would
  * hand over the exact text scrubMessage exists to withhold, in a field nobody
  * was looking at. Only lines that parse as a frame survive; everything else —
- * headers, causes, blank lines, whatever a future Error subclass appends — is
- * dropped because it is not on the list.
+ * causes, blank lines, whatever a future Error subclass appends — is dropped
+ * because it is not on the list. The header is not left to that check: it is
+ * subtracted first, by `withoutHeader`, because "does not parse as a frame" was
+ * not true of every line of it.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * THE FUNCTION NAME IS PARSED AND THEN THROWN AWAY, AND THAT IS THE POINT
  * ─────────────────────────────────────────────────────────────────────────────
  *
- * It used to be sent, held to an identifier shape. That made it the ONE field in
- * this file whose default answer for a string nobody anticipated was SEND —
- * every neighbour here is checked against a list, and a shape check cannot be
- * one, because V8 INFERS FUNCTION NAMES FROM DATA. Run this and read the stack:
+ * It used to be sent, held to an identifier shape, so its default answer for a
+ * string nobody anticipated was SEND. THIS COMMENT USED TO CALL IT "THE ONE
+ * FIELD IN THIS FILE" LIKE THAT, AND THAT WAS NOT TRUE WHEN IT WAS WRITTEN:
+ * `components` was shape-checked in exactly the same way, in the function below,
+ * and went on to put a real batch code on the real wire. Both are list-checked
+ * now, and the rule that was missing is at the top of this file.
+ *
+ * A shape check cannot be a list here, because V8 INFERS FUNCTION NAMES FROM
+ * DATA. Run this and read the stack:
  *
  *     const handlers = { [batch.code]: function () { throw new Error('x') } };
  *     handlers[batch.code]();
@@ -526,10 +686,10 @@ function boundedPosition(raw: string): number | undefined {
  * In a production build the name would have been a mangled two-letter binding
  * anyway — except in the one case that leaked.
  */
-export function scrubStack(stack: string | undefined): ScrubbedFrame[] {
+export function scrubStack(stack: string | undefined, message = ''): ScrubbedFrame[] {
   if (typeof stack !== 'string' || stack.length === 0) return [];
   const frames: ScrubbedFrame[] = [];
-  for (const line of stack.split('\n')) {
+  for (const line of withoutHeader(stack, typeof message === 'string' ? message : '').split('\n')) {
     if (frames.length >= MAX_FRAMES) break;
     const match = V8_FRAME.exec(line) ?? AT_FRAME.exec(line);
     if (!match) continue;
@@ -549,13 +709,41 @@ export function scrubStack(stack: string | undefined): ScrubbedFrame[] {
 const COMPONENT_LINE = /^\s*(?:at|in)\s+([A-Za-z_$][A-Za-z0-9_$.]{0,63})/;
 
 /**
- * React's component trail, reduced to the component names.
+ * React's component trail, reduced to the component names WE SHIPPED.
  *
- * The names themselves are the useful half and are our own code — a component is
- * never named after a product. The REST of each line is a script URL, and in
- * some React builds the document URL, which is where the route and therefore a
- * product id lives. So the names are extracted and the lines are thrown away,
- * rather than the lines being cleaned up and kept.
+ * The REST of each line is a script URL, and in some React builds the document
+ * URL, which is where the route and therefore a product id lives. So the names
+ * are extracted and the lines are thrown away, rather than the lines being
+ * cleaned up and kept. That part was always right.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE NAME ITSELF WAS THE LEAK, AND IT WAS THE SAME LEAK AS `function`
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * This comment used to say "the names are our own code — a component is never
+ * named after a product", and hold them to `[A-Za-z_$][A-Za-z0-9_$.]{0,63}`.
+ * Both halves were wrong, and a REAL BATCH CODE WAS PUT ON THE REAL SENTRY WIRE
+ * through `extra.component_trail` to prove it:
+ *
+ *     const screens = { [batch.code]: function () { throw … } };
+ *     render(<ErrorBoundary><screens[batch.code] /></ErrorBoundary>);
+ *
+ * V8 names that function `BL240417A` from the computed key; React reads
+ * `type.displayName || type.name` to build the stack; the trail arrived as
+ * `["BL240417A", "ErrorBoundary"]` and went out in the envelope. It is the
+ * mechanism that had `frames[].function` deleted, one level up the tree, and it
+ * walked into the field next door because that field was shape-checked.
+ *
+ * So the name is now held to APP_COMPONENT_NAMES — a list scanned from this
+ * app's own source, the way SCREEN_NAMES and ROUTES are hand-copied from theirs.
+ * A name that is not on it is `[redacted]`: the trail keeps its DEPTH and its
+ * position, which is most of what it was read for, and loses a label.
+ *
+ * See lib/app-component-names.ts for how the list is produced, why it is
+ * deliberately over-inclusive, what it is worth in a minified build (measured:
+ * less than you think — our own names are mangled out of production, so the one
+ * name that would survive verbatim there is the inferred one), and the guard
+ * test that holds every entry to "this string occurs in our own source".
  */
 export function scrubComponentStack(componentStack: string | undefined): string[] {
   if (typeof componentStack !== 'string' || componentStack.length === 0) return [];
@@ -563,7 +751,7 @@ export function scrubComponentStack(componentStack: string | undefined): string[
   for (const line of componentStack.split('\n')) {
     if (names.length >= MAX_COMPONENTS) break;
     const match = COMPONENT_LINE.exec(line);
-    if (match) names.push(match[1]);
+    if (match) names.push(APP_COMPONENT_NAMES.has(match[1]) ? match[1] : REDACTED);
   }
   return names;
 }
@@ -755,7 +943,10 @@ export function scrubReport(report: ErrorReport, href: string | null): ScrubbedR
     messageDigest: message.recognised ? digest(message.text) : digest(rawMessage),
     at: shaped(report.at, ISO_TIMESTAMP, ''),
     route: scrubRoute(href),
-    frames: scrubStack(report.stack),
+    // The raw message is handed over so the stack's HEADER can be subtracted
+    // rather than left to fail a shape check — a multi-line message puts
+    // frame-shaped lines inside the stack. See withoutHeader.
+    frames: scrubStack(report.stack, rawMessage),
     components: scrubComponentStack(report.componentStack)
   };
 }
