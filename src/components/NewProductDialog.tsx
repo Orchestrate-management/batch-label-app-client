@@ -9,7 +9,7 @@ import { createProduct, type WriteFailure } from '../lib/products';
 import { useProducts } from '../lib/product-store';
 import { regimeById } from '../lib/regimes';
 import { CategoryId } from '../lib/model';
-import { ingredientById } from '../lib/catalog';
+import { ingredientById } from '../lib/material-index';
 import { useWorkspace } from '../lib/workspace';
 
 /**

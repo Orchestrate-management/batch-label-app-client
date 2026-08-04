@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ChevronUpIcon, RulerIcon } from 'lucide-react';
 import { ArtefactInstance, Market, Product } from '../../lib/model';
 import { Derivation, clpMinimumDimensions } from '../../lib/derive';
-import { packagingById } from '../../lib/catalog';
+import { packagingById } from '../../lib/material-index';
 import { Pill } from '../ui/Primitives';
 import { ArtefactRenderer, defaultArtefactOptions } from './ArtefactRenderer';
 
@@ -17,6 +17,10 @@ type RailProps = {
 function optionsFor(product: Product, identityCode: string) {
   const packaging = packagingById(product.spec.packagingId);
   const pictogramMm = product.regimes.includes('clp') ?
+  // A DRAWING DEFAULT, NOT A CHECK. With no pack chosen there is no capacity, so there is no
+  // Table 1.3 band — the preview has to draw the pictogram at some size and picks the smallest
+  // band's. What the maker is TOLD about the minimum comes from geometryRules, which now says
+  // it cannot be worked out rather than assuming 100 ml.
   clpMinimumDimensions(packaging?.capacityMl ?? 100).pictogram :
   8;
   return defaultArtefactOptions({ pictogramMm, identityCode });

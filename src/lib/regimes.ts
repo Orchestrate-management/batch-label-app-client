@@ -1,5 +1,8 @@
 import { ArtefactType, Market, Product, RecordedEvidence, RegimeId, formatDate } from './model';
-import { ingredientById } from './catalog';
+// `catalog.ts` is deleted. Ingredients are the maker's own rows now, published into the
+// synchronous index by MaterialsProvider — and `materialsSettled` is the reason a regime can
+// tell "the register has not answered yet" apart from "the register says no".
+import { ingredientById, materialsSettled } from './material-index';
 
 /**
  * A regime contributes exactly three things and nothing else: the artefact
@@ -118,8 +121,16 @@ export const REGIMES: Regime[] = [
     id: 'clp-classification',
     regimeId: 'clp',
     label: 'Classification complete',
-    doneText: 'Every component has a current classification from a document on file.',
-    missingText: 'One or more components have no classification on file.',
+    // Not "from a document on file". No document of the maker's is held — there is no storage
+    // bucket — and what this actually checks is that the fragrance oil on the composition
+    // carries hazard rows in the register.
+    doneText: 'The fragrance oil on this composition carries a hazard classification.',
+    missingText:
+    'The fragrance oil on this composition carries no hazard classification, so nothing has ' +
+    'been derived from it.',
+    untrackedText:
+    'Your materials register has not loaded, so this has not been checked. It is not a ' +
+    'finding about your product.',
     to: '/products/:id'
   },
   {
@@ -400,9 +411,24 @@ export const REGIMES: Regime[] = [
     id: 'rohs-component-declarations',
     regimeId: 'rohs',
     label: 'Material declaration for every component',
-    doneText: 'You recorded holding a material declaration for every component.',
+    /*
+     * RECORDABLE RATHER THAN NOT_TRACKED, and the wording had to change twice over.
+     *
+     * It used to read the RoHS status off five shipped COMPONENTS constants and report "one or
+     * more components have no material declaration" as an outstanding finding about the
+     * maker's own technical file — the survey's own example of a finding nothing checked. The
+     * catalogue is deleted (`materials_class_check` refuses the class), so there is nothing
+     * left to read it from.
+     *
+     * What remains is real: the bill of materials is what the MAKER typed, the duty is theirs,
+     * and the one thing Batchlabel can honestly hold is their own record of having the
+     * declarations. So this takes an evidence entry like its RoHS siblings, and both texts are
+     * facts about our log rather than about their filing cabinet. Nothing here inspects a
+     * declaration; the copy does not pretend otherwise.
+     */
+    doneText: 'You recorded holding a material declaration for every part on this product.',
     missingText:
-    'Batchlabel has no record of material declarations for the components on this product. It does not hold supplier declarations — record which ones you have and where they are kept.',
+    'Batchlabel holds no record of material declarations for this product, and it does not hold supplier declarations themselves. Record which ones you have and where they are kept.',
     recordable: true,
     to: '/products/:id'
   },
@@ -707,6 +733,21 @@ export function obligationState(product: Product, obligationId: string): Obligat
   if (NOT_TRACKED.has(obligationId)) return 'not-tracked';
 
   if (obligationId === 'clp-classification') {
+    /*
+     * THE REGISTER HAS TO HAVE ANSWERED BEFORE THIS ONE CAN.
+     *
+     * `classificationComplete` resolves the fragrance oil out of the materials register.
+     * Materials used to be a constant in the bundle, so the lookup could not fail and this
+     * obligation was always answerable. They are rows read from Supabase now, and before that
+     * read lands — or if it fails — the lookup misses and this obligation would report
+     * OUTSTANDING: a compliance finding, in a work queue, under the maker's own product name,
+     * produced by a read that had not finished.
+     *
+     * `not-tracked` is the state that already exists for exactly this — a duty that is real
+     * and that we are not the ones checking — and its copy says so rather than implying the
+     * maker owes work.
+     */
+    if (!materialsSettled()) return 'not-tracked';
     return classificationComplete(product) ? 'met' : 'outstanding';
   }
 

@@ -477,22 +477,26 @@ describe('the composition a new product starts from', () => {
   });
 
   /**
-   * THE ASSERTION TURNED ROUND, and it is a stronger one than the test it replaces.
+   * THE ASSERTION HERE IS THE OPPOSITE OF THE ONE IT REPLACES, and the reversal is the point.
    *
-   * This used to require each product type to arrive holding a specific base and a specific
-   * pack — `ing-dpg` for a diffuser, `ing-crw45` for a melt, `pkg-tumbler-250` for a candle —
-   * on the reasoning that a diffuser base in a candle is a product that cannot be made. True,
-   * but it argued for the wrong fix: the create form asks four questions and none of them is
-   * "which wax", so every one of those ids was Batchlabel choosing a named supplier's material
-   * on the maker's behalf and then rendering it as their own choice. The base is a component of
-   * the classification that goes on the label, and the pack fixes the CLP pictogram size the
-   * label is checked against.
+   * It used to require that each product type start in a specific base and a specific pack —
+   * 'ing-dpg' for a diffuser, 'ing-crw45' for a melt, 'pkg-tumbler-250' for a candle — on the
+   * reasoning that a diffuser base in a candle is a product that cannot be made. That
+   * reasoning was sound and the conclusion was still wrong: the maker was never asked. The
+   * new-product dialog collects a name, a code, a category and a type, and the INSERT behind
+   * it carried one particular wax from a supplier they may never have bought from, in one
+   * particular 250 ml amber tumbler, at 100 g. All three print: the wax into the
+   * classification, the tumbler's capacity into the CLP minimum label size, the 100 g onto the
+   * label itself.
    *
-   * Nothing is seeded now, so nothing can be wrong — and the composition stage raises each gap
-   * as outstanding work instead. What survives from the old test is the ban on plausible data,
-   * applied to the fields it used to exempt.
+   * Those defaults existed because there was nowhere else to point — materials were a shipped
+   * catalogue and an empty base derived silently to nothing. Materials are the maker's own
+   * rows now, an unresolved id is reported rather than skipped, and the pickers are populated
+   * from the register. So the composition starts empty and stays empty until somebody chooses,
+   * and the composition stage raises each gap as outstanding work instead. What survives from
+   * the old test is the ban on plausible data, applied to the fields it used to exempt.
    */
-  it('chooses no base, no dye and no packaging on the maker\'s behalf', () => {
+  it('seeds no base, no packaging, no dye and no quantity — nobody has chosen one', () => {
     for (const type of ['Container candle', 'Wax melt', 'Reed diffuser', 'Room spray']) {
       const spec = blankSpec(homeFragrance, type);
       expect(spec.packagingId).toBe('');
@@ -505,6 +509,25 @@ describe('the composition a new product starts from', () => {
         // Not "None", which is an answer about the formula rather than the absence of one.
         expect(spec.additive).toBe('');
       }
+    }
+  });
+
+  it('leaves a cosmetic and a device empty of packaging too', () => {
+    const cosmetic = blankSpec(categoryById('cosmetics'), 'Face oil');
+    const device = blankSpec(categoryById('electronics'), 'Wax warmer');
+    expect(cosmetic.packagingId).toBe('');
+    expect(device.packagingId).toBe('');
+    expect(cosmetic.netQuantity).toBe(0);
+    expect(device.netQuantity).toBe(0);
+  });
+
+  it('carries no id from the deleted catalogue anywhere in a new composition', () => {
+    // The catalogue's ids had a shape — 'ing-', 'pkg-', 'cmp-' — and the cheapest way for one
+    // to come back is a default somebody restores because a screen looked empty without it.
+    for (const category of ['home-fragrance', 'cosmetics', 'electronics'] as const) {
+      const pack = categoryById(category);
+      const json = JSON.stringify(blankSpec(pack, pack.productTypes[0]));
+      expect(json).not.toMatch(/"(ing|pkg|cmp)-/);
     }
   });
 

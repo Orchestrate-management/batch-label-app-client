@@ -757,10 +757,14 @@ function toSpec(spec: SpecificationRow, product: ProductRow, category: CategoryP
     baseId: str(spec.base_id),
     fragranceId: str(spec.fragrance_id),
     load: num(spec.load, 0),
-    // Both empty rather than 'ing-no-dye' / 'None'. A stored NULL means the maker has not said,
-    // and "No dye" and "None" are answers — the first of which is a component of the
-    // classification and the second of which a maker may be asked to justify.
+    // NOT 'ing-no-dye'. That was a sentinel row in the shipped catalogue — a material called
+    // "No dye", with a supplier of '—' — and every derivation had to know to skip it by id.
+    // The catalogue is gone; an absent dye is an absent dye, and an empty string is what the
+    // pickers and the derivation both now read as one.
     dyeId: str(spec.dye_id),
+    // Not 'None' either. A stored NULL means the maker has not said; "None" is them saying
+    // there is no additive, and a maker may be asked to justify that. The two print
+    // differently on a specification screen, so they are stored differently here.
     additive: str(spec.additive),
     ...pack
   };
@@ -1031,28 +1035,40 @@ productIds: string[])
  *
  * WHAT THIS USED TO SEED, AND WHY IT HAD TO STOP. The new-product form asks four questions —
  * name, code, category, product type. The composition it inserted answered nine. A container
- * candle arrived holding `ing-crw45` (one specific paraffin container wax, from one named
- * supplier, in Batchlabel's shipped catalogue), `pkg-tumbler-250`, 100 g net, `ing-no-dye` and
- * the additive "None". Every one of those is a fact about the maker's product that the maker
- * never stated, and three of them print: the net quantity is a CLP Article 17 label element,
- * the packaging fixes the pictogram size the label is checked against, and the base wax is a
- * component of the classification the label carries. A maker who created a soy candle and
- * printed a label got a paraffin wax's classification and a net weight nobody had weighed.
+ * candle arrived holding `ing-crw45` (one specific wax, from a supplier the maker has never
+ * bought from, in Batchlabel's shipped catalogue), `pkg-tumbler-250` (a particular 250 ml
+ * amber tumbler), 100 g net, `ing-no-dye` and the additive "None". Every one of those is a
+ * fact about the maker's product that the maker never stated, and three of them print: the
+ * net quantity is a CLP Article 17 label element, the capacity of that tumbler decided which
+ * row of CLP Annex I Table 1.3 the label was sized against, and the base wax is a component
+ * of the classification the label carries. A maker who created a soy candle, set a fragrance
+ * load and printed got a compliant-looking label describing somebody else's product.
  *
  * It was not even a harmless default in the ordinary sense, because it was invisible: the form
  * that "asked four questions" answered nine silently, and there was no screen anywhere saying
  * "we picked these for you". The composition screen then rendered them as the maker's own.
  *
+ * They existed because there was nothing else they could point at: materials were a shipped
+ * catalogue, so an empty base was an id that resolved to nothing and a derivation that
+ * silently produced no hazards. Materials are the maker's own rows now, the pickers on the
+ * specification screen are populated from them, and `derive` reports an id it cannot resolve
+ * instead of skipping it — so an empty composition is finally something the app can render
+ * honestly, and the maker fills it in themselves.
+ *
  * SO EVERY FIELD IS NOW GENUINELY EMPTY, and the screens say so. `''` for a material or a
  * packaging id means "not chosen yet" and the editors render a "Not chosen yet" option;
- * `deriveMixture` already skips components it cannot resolve, so an empty base contributes
- * nothing to the classification instead of contributing somebody else's; and the composition
- * pipeline stage raises the gap as outstanding work, which is the honest place for it.
+ * `deriveMixture` reports a component it cannot resolve instead of contributing somebody
+ * else's; and the composition pipeline stage raises the gap as outstanding work, which is the
+ * honest place for it.
  *
- * `netUnit` IS THE ONE EXCEPTION AND IT IS NOT A CLAIM. It is a unit, not a quantity, and it
- * follows from the product type the maker did pick: candles and melts are sold by weight and
- * everything else here by volume. `netQuantity` stays 0, so nothing is asserted about how much
- * is in the pack — a unit with no number beside it prints nothing.
+ * WHAT IS STILL SET, and why none of it is a claim about the product: the SHAPE of the
+ * composition (a mixture has a base and a fragrance; a cosmetic has phases) and the phase
+ * names, which are a starting structure the maker edits. `netUnit` IS THE ONE SCALAR AND IT
+ * IS NOT A CLAIM: it is a unit, not a quantity, and it follows from the product type the
+ * maker did pick — candles and melts are sold by weight and everything else here by volume.
+ * `netQuantity` stays 0, which packColumns writes as NULL rather than as a quantity, so
+ * nothing is asserted about how much is in the pack — a unit with no number beside it prints
+ * nothing.
  */
 export function blankSpec(
 category: CategoryPack,
@@ -1067,6 +1083,7 @@ fragranceId?: string)
       fragranceId: fragranceId ?? '',
       load: 0,
       dyeId: '',
+      // Not 'None'. "None" is an answer, and nobody has been asked the question yet.
       additive: '',
       netQuantity: 0,
       netUnit: productType === 'Container candle' || productType === 'Wax melt' ? 'g' : 'ml',

@@ -23,7 +23,9 @@ import { ArtefactRenderer, defaultArtefactOptions } from '../components/artefact
 import {
   ArtefactCurrency,
   BomSpec,
+  IngredientMaterial,
   Market,
+  Material,
   MixtureSpec,
   PhasedSpec,
   Product,
@@ -34,7 +36,13 @@ import { clpMinimumDimensions, derive, phasedTotal } from '../lib/derive';
 import { ProductPipeline } from '../components/ProductPipeline';
 import { StageId, stagesFor } from '../lib/pipeline';
 import { SdsDocumentModel, buildSds } from '../lib/sds';
-import { COMPONENTS, INGREDIENTS, PACKAGING, componentById, ingredientById, packagingById } from '../lib/catalog';
+import {
+  ingredientById,
+  materialById,
+  materialOrigin,
+  packagingById } from
+'../lib/material-index';
+import { useMaterials } from '../lib/materials-store';
 import { categoryById } from '../lib/categories';
 import { addressForMarket } from '../lib/identity';
 import { saveComposition } from '../lib/products';
@@ -945,42 +953,133 @@ function DiffRow({
 
 }
 
-/* --------------------------------------------------- mixture, fragrance */
+/* ------------------------------------------------------ material pickers */
 
 /**
- * The hint under a material select.
+ * The supplier document a material's figures came off, as a hint under a picker — or nothing.
  *
- * Three sentences, and the first is the one that was missing. `Reference library · ${supplier
- * ?? ''}, read from document v${version ?? ''}` rendered as "Reference library · , read from
- * document v" whenever nothing was selected — a supplier document reference with the supplier
- * and the version cut out of it. Now the unchosen state says it is unchosen.
+ * Nothing is the common case on a new account and it is the correct output: the maker has
+ * typed a classification off a sheet on their bench and has not recorded which sheet. A hint
+ * reading "read from document v" with nothing after it is what the interpolated version did.
  */
-function materialHint(id: string): string {
-  if (!id) return 'Nothing chosen yet. Nothing is assumed for you.';
-  const material = ingredientById(id);
-  if (!material) {
-    return 'This material is not in Batchlabel’s reference library, so nothing is known about it here.';
-  }
-  // "Read from", not "document v4.2" on its own: the version is the supplier document the
-  // reference library's data was taken from, and the bare phrasing read as a document held on
-  // this account's behalf. Nothing is held.
-  return `Reference library · ${material.supplier}, read from document v${material.document.version}`;
+function documentHint(material?: Material): string | undefined {
+  if (!material?.document) return undefined;
+  const { kind, version, date } = material.document;
+  return [kind, version ? `v${version}` : '', date ? formatDate(date) : ''].
+  filter(Boolean).
+  join(' · ');
 }
 
-function packagingHint(id: string): string {
-  if (!id) return 'Nothing chosen yet. The pictogram size check is waiting on this.';
-  const pack = packagingById(id);
-  if (!pack) return 'This pack is not in Batchlabel’s reference library.';
-  return `Capacity ${pack.capacityMl} ml`;
+
+/**
+ * A material chooser, backed by the account's own register.
+ *
+ * WHAT IT REPLACES: `INGREDIENTS.filter(i => i.role === 'Wax')` — a list of shipped constants,
+ * every option invented, and no way to add to it (the materials screen toasted "Saving a
+ * material is not built yet"). Every option here is a row the maker holds, or one Batchlabel
+ * publishes with a stated provenance.
+ *
+ * THREE THINGS IT HAS TO SAY THAT A `<select>` CANNOT SAY BY ITSELF:
+ *
+ *   AN EMPTY REGISTER IS NOT A BROKEN SCREEN. A new account holds no materials and the
+ *   catalogue ships empty, so the first maker to open this finds no options at all. That is
+ *   the honest state and it gets a sentence and a link, rather than an empty dropdown that
+ *   reads as a page that failed to load.
+ *
+ *   A REGISTER THAT HAS NOT LOADED IS NOT AN EMPTY ONE. While the read is in flight, or if it
+ *   failed, the control is disabled and says which — because a picker offering nothing is
+ *   indistinguishable from one whose options have not arrived, and a maker who picks nothing
+ *   because nothing was offered has a composition they did not choose.
+ *
+ *   A STORED MATERIAL THAT IS NO LONGER IN THE REGISTER STILL HAS TO SHOW. Archiving a
+ *   material leaves every composition that used it pointing at it. Dropping the id silently
+ *   would make the select show the first option instead — quietly re-classifying somebody's
+ *   product on render — so it is kept, marked, and the derivation reports it too.
+ */
+function MaterialSelect({
+  label,
+  hint,
+  value,
+  onChange,
+  options,
+  ariaLabel,
+  emptyHint,
+  className
+
+
+
+
+}: {label?: string;hint?: string;value: string;onChange: (id: string) => void;options: Material[];ariaLabel?: string;emptyHint: string;className?: string;}) {
+  const { status } = useMaterials();
+  const chosen = value ? materialById(value) : undefined;
+  const missing = Boolean(value) && !chosen;
+  const settled = status === 'ready';
+
+  const control =
+  <>
+      <Select
+      value={value}
+      aria-label={ariaLabel}
+      disabled={!settled}
+      onChange={(event) => onChange(event.target.value)}>
+      
+        <option value="">
+          {settled ? 'Not chosen' : status === 'error' ? 'Register unavailable' : 'Loading…'}
+        </option>
+        {missing &&
+      <option value={value}>{value} — no longer in your register</option>
+      }
+        {options.map((option) =>
+      <option key={option.id} value={option.id}>
+            {option.name}
+            {option.source === 'reference' ? ' (Batchlabel)' : ''}
+          </option>
+      )}
+      </Select>
+      {!settled &&
+    <p className="mt-1 text-2xs text-ink-tertiary">
+          {status === 'error' ?
+      'We could not read your materials, so nothing can be chosen here. This is us, not you.' :
+      'Reading your materials…'}
+        </p>
+    }
+      {settled && missing &&
+    <p className="mt-1 text-2xs text-clay-dark">
+          This composition names a material that is not in your register any more. Nothing has
+          been classified from it — pick one that is.
+        </p>
+    }
+      {settled && !missing && options.length === 0 &&
+    <p className="mt-1 text-2xs text-ink-tertiary">
+          {emptyHint} <Link to="/materials" className="underline">Add one in Materials</Link>.
+        </p>
+    }
+      {settled && chosen &&
+    <p className="mt-1 text-2xs text-ink-tertiary">{materialOrigin(chosen)}</p>
+    }
+    </>;
+
+
+  if (!label) return <div className={className}>{control}</div>;
+  return (
+    <Field label={label} hint={hint} className={className}>
+      {control}
+    </Field>);
+
 }
 
-/** Same rule for the cosmetics editor, whose hint printed "0 × 0 mm" with nothing selected. */
-function printableAreaHint(id: string): string {
-  if (!id) return 'Nothing chosen yet. The printable area check is waiting on this.';
-  const pack = packagingById(id);
-  if (!pack) return 'This pack is not in Batchlabel’s reference library.';
-  return `Printable area ${pack.labelAreaMm.width} × ${pack.labelAreaMm.height} mm`;
-}
+/* --------------------------------------------------- mixture, fragrance */
+
+/*
+ * THREE HINT HELPERS WERE DELETED HERE, not disabled.
+ *
+ * `materialHint`, `packagingHint` and `printableAreaHint` all read Batchlabel's shipped
+ * reference library — `Reference library · ${supplier}, read from document v${version}` — and
+ * that library no longer exists. Their honest replacements are `documentHint` above, which
+ * prints the supplier document reference THE MAKER recorded or nothing at all, and the two
+ * inline hints in the editors below, which say "No capacity recorded on this pack" rather
+ * than "Capacity 0 ml".
+ */
 
 function MixtureEditor({
   spec,
@@ -992,10 +1091,28 @@ function MixtureEditor({
   const set = <K extends keyof MixtureSpec,>(key: K, value: MixtureSpec[K]) =>
   onChange({ ...spec, [key]: value });
 
-  const bases = INGREDIENTS.filter((i) => i.role === 'Wax' || i.role === 'Carrier');
-  const oils = INGREDIENTS.filter((i) => i.role === 'Fragrance oil');
-  const dyes = INGREDIENTS.filter((i) => i.role === 'Dye');
+  /**
+   * The options, off the account's own register rather than off a shipped array.
+   *
+   * FILTERED BY ROLE, AND ROLE IS FREE TEXT the maker typed on the material. So a maker who
+   * calls their wax "Wax blend" will not see it under bases — which is why the fallback below
+   * the pickers offers every ingredient rather than nothing, and why the materials screen
+   * offers the standard roles as a list rather than a free field with no suggestions.
+   */
+  const { materials } = useMaterials();
+  const ingredients = materials.filter(
+    (material): material is IngredientMaterial => material.class === 'ingredient'
+  );
+  const bases = ingredients.filter((i) => i.role === 'Wax' || i.role === 'Carrier');
+  const oils = ingredients.filter((i) => i.role === 'Fragrance oil');
+  const dyes = ingredients.filter((i) => i.role === 'Dye');
+  const packs = materials.filter(
+    (material) => material.class === 'packaging' && material.categories.includes('home-fragrance')
+  );
   const fragrance = ingredientById(spec.fragranceId);
+  const base = ingredientById(spec.baseId);
+  const dye = ingredientById(spec.dyeId);
+  const pack = packagingById(spec.packagingId);
 
   return (
     <>
@@ -1020,38 +1137,36 @@ function MixtureEditor({
           </Select>
         </Field>
 
-        {/* EVERY MATERIAL SELECT NOW CARRIES AN EMPTY OPTION, and it is selected on a brand
-            new product rather than a wax nobody picked. `blankSpec` used to seed `ing-crw45`,
-            one specific paraffin container wax from Batchlabel's shipped catalogue, into every
-            candle the moment it was created — so this control rendered somebody else's material
-            as the maker's own choice, and its classification went onto the label. The four
-            questions the create form asks do not include this one, so the honest starting
-            state is unanswered. `materialHint` says nothing about a supplier document when no
-            material is chosen, rather than printing "read from document v". */}
-        <Field label="Base wax or carrier" hint={materialHint(spec.baseId)}>
-          <Select value={spec.baseId} onChange={(event) => set('baseId', event.target.value)}>
-            <option value="">Not chosen yet</option>
-            {bases.map((base) =>
-            <option key={base.id} value={base.id}>
-                {base.name}
-              </option>
-            )}
-          </Select>
-        </Field>
+        {/* EVERY MATERIAL SELECT CARRIES AN EMPTY OPTION, and it is what a brand new product
+            shows rather than a wax nobody picked. `blankSpec` used to seed `ing-crw45`, one
+            specific container wax from Batchlabel's shipped catalogue, into every candle the
+            moment it was created — so this control rendered somebody else's material as the
+            maker's own choice, and its classification went onto the label. The four questions
+            the create form asks do not include this one, so the honest starting state is
+            unanswered.
 
-        <Field label="Fragrance oil" hint={materialHint(spec.fragranceId)}>
-          <Select
-            value={spec.fragranceId}
-            onChange={(event) => set('fragranceId', event.target.value)}>
+            The hint is the SUPPLIER DOCUMENT REFERENCE the maker recorded, or nothing at all.
+            It used to read "Reference library · <supplier>, read from document v<version>",
+            interpolated from a shipped constant, and rendered as "Reference library · ,
+            read from document v" the moment either was absent. A citation is either real or
+            it is not shown. */}
+        <MaterialSelect
+          label="Base wax or carrier"
+          hint={documentHint(base)}
+          value={spec.baseId}
+          onChange={(id) => set('baseId', id)}
+          options={bases}
+          emptyHint="You hold no material with a role of Wax or Carrier." />
+        
 
-            <option value="">Not chosen yet</option>
-            {oils.map((oil) =>
-            <option key={oil.id} value={oil.id}>
-                {oil.name}
-              </option>
-            )}
-          </Select>
-        </Field>
+        <MaterialSelect
+          label="Fragrance oil"
+          hint={documentHint(fragrance)}
+          value={spec.fragranceId}
+          onChange={(id) => set('fragranceId', id)}
+          options={oils}
+          emptyHint="You hold no material with a role of Fragrance oil." />
+        
 
         <div>
           <div className="mb-1.5 flex items-baseline justify-between">
@@ -1068,41 +1183,39 @@ function MixtureEditor({
             aria-label="Fragrance load percentage"
             className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-paper-line accent-teal" />
           
-          {/* The IFRA figure is a fact about a NAMED oil. With no oil chosen there is no
-              maximum to state, and "100 percent" — which is what the old `?? 100` printed —
-              is a restriction limit for a material nobody selected. */}
+          {/* NOT "?? 100 percent". An IFRA maximum of 100 means the oil may be used neat,
+              which is a permission — and it was being shown for an oil with no IFRA data at
+              all, and for no oil at all. A limit nobody recorded is not a limit of 100. */}
           <p className="mt-2 text-2xs text-ink-tertiary">
-            {fragrance?.ifra[0] ?
-            <>
-                IFRA category 12 maximum for this oil is{' '}
+            {!fragrance ?
+          'No fragrance oil chosen, so no IFRA limit applies yet.' :
+          fragrance.ifra.length === 0 ?
+          `No IFRA limit is recorded for ${fragrance.name}. Add one from the supplier's IFRA certificate and it will be checked here.` :
+          <>
+                IFRA maximum for this oil, {fragrance.ifra[0].category}, is{' '}
                 <span className="tabular">{fragrance.ifra[0].max} percent</span>.
-              </> :
-            fragrance ?
-            'Batchlabel holds no IFRA limit for this oil, so there is no maximum to check the load against.' :
-            'Choose a fragrance oil and its IFRA limit will be shown here.'}
+              </>
+          }
           </p>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Dye">
-            <Select value={spec.dyeId} onChange={(event) => set('dyeId', event.target.value)}>
-              {/* "Not chosen yet" is not the same answer as "No dye", and the seeded default
-                  used to be the latter. One is silence and the other is a statement about the
-                  composition that feeds the classification. */}
-              <option value="">Not chosen yet</option>
-              {dyes.map((dye) =>
-              <option key={dye.id} value={dye.id}>
-                  {dye.name}
-                </option>
-              )}
-            </Select>
-          </Field>
+          {/* "Not chosen" is not the same answer as "No dye", and the seeded default used to
+              be the latter. One is silence and the other is a statement about the composition
+              that feeds the classification. */}
+          <MaterialSelect
+            label="Dye"
+            value={spec.dyeId}
+            onChange={(id) => set('dyeId', id)}
+            options={dyes}
+            emptyHint="You hold no material with a role of Dye." />
+          
           <Field label="Additives" hint="Leave empty if there are none.">
             <Input
               value={spec.additive}
               placeholder="None"
               onChange={(event) => set('additive', event.target.value)} />
-
+            
           </Field>
           <Field label={`Net ${spec.netUnit === 'g' ? 'weight' : 'volume'}`}>
             <div className="flex items-center gap-2">
@@ -1115,19 +1228,23 @@ function MixtureEditor({
               <span className="text-sm text-ink-tertiary">{spec.netUnit}</span>
             </div>
           </Field>
-          <Field label="Packaging" hint={packagingHint(spec.packagingId)}>
-            <Select
-              value={spec.packagingId}
-              onChange={(event) => set('packagingId', event.target.value)}>
-
-              <option value="">Not chosen yet</option>
-              {PACKAGING.filter((p) => p.categories.includes('home-fragrance')).map((item) =>
-              <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              )}
-            </Select>
-          </Field>
+          {/* Capacity decides which row of CLP Annex I Table 1.3 the label is sized against,
+              so "Capacity 0 ml" — which is what an absent pack used to render — is not a
+              harmless placeholder. Absent says absent. */}
+          <MaterialSelect
+            label="Packaging"
+            hint={
+            pack?.capacityMl != null ?
+            `Capacity ${pack.capacityMl} ml` :
+            pack ?
+            'No capacity recorded on this pack' :
+            undefined
+            }
+            value={spec.packagingId}
+            onChange={(id) => set('packagingId', id)}
+            options={packs}
+            emptyHint="You hold no packaging for home fragrance." />
+          
         </div>
       </Card>
 
@@ -1146,18 +1263,23 @@ function MixtureEditor({
               by whether the id happened to equal 'ing-no-dye'. Percentages beside empty names
               read as a rendering fault; worse, they read as a composition that totals. */}
           <tbody>
+            {/* An empty cell where a name should be is how this table used to render an
+                unchosen slot — a blank line with a percentage beside it, which reads as a
+                component whose name failed to load rather than as one nobody has picked.
+                CompositionRow prints an em dash instead: a share is a claim about how much of
+                the pack is a named thing, and there is no named thing. */}
             <CompositionRow
-              name={ingredientById(spec.baseId)?.name}
+              name={base?.name}
               missing="No base chosen yet"
-              pct={100 - spec.load - (spec.dyeId ? 0.5 : 0)} />
+              pct={100 - spec.load - (dye ? 0.5 : 0)} />
 
             <CompositionRow
               name={fragrance?.name}
-              missing="No fragrance chosen yet"
+              missing="No fragrance oil chosen yet"
               pct={spec.load} />
 
             <CompositionRow
-              name={ingredientById(spec.dyeId)?.name}
+              name={dye?.name}
               missing="No dye chosen yet"
               pct={0.5}
               quiet />
@@ -1232,7 +1354,15 @@ function PhasedEditor({
     onChange({ ...spec, phases });
   };
 
-  const cosmeticIngredients = INGREDIENTS.filter((i) => i.categories.includes('cosmetics'));
+  const { materials } = useMaterials();
+  const cosmeticIngredients = materials.filter(
+    (material): material is IngredientMaterial =>
+    material.class === 'ingredient' && material.categories.includes('cosmetics')
+  );
+  const packs = materials.filter(
+    (material) => material.class === 'packaging' && material.categories.includes('cosmetics')
+  );
+  const pack = packagingById(spec.packagingId);
 
   return (
     <>
@@ -1290,23 +1420,23 @@ function PhasedEditor({
               onChange={(event) => onChange({ ...spec, paoMonths: Number(event.target.value) })} />
 
           </Field>
-          <Field
+          {/* "Printable area 0 × 0 mm" is what an unrecorded area used to render as, next to
+              an artefact the designer then checked against it. */}
+          <MaterialSelect
             label="Packaging"
-            hint={printableAreaHint(spec.packagingId)}
-            className="sm:col-span-2">
-
-            <Select
-              value={spec.packagingId}
-              onChange={(event) => onChange({ ...spec, packagingId: event.target.value })}>
-
-              <option value="">Not chosen yet</option>
-              {PACKAGING.filter((p) => p.categories.includes('cosmetics')).map((item) =>
-              <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              )}
-            </Select>
-          </Field>
+            hint={
+            pack?.labelAreaMm ?
+            `Printable area ${pack.labelAreaMm.width} × ${pack.labelAreaMm.height} mm` :
+            pack ?
+            'No printable area recorded on this pack' :
+            undefined
+            }
+            className="sm:col-span-2"
+            value={spec.packagingId}
+            onChange={(id) => onChange({ ...spec, packagingId: id })}
+            options={packs}
+            emptyHint="You hold no packaging for cosmetics." />
+          
         </div>
       </Card>
 
@@ -1329,22 +1459,24 @@ function PhasedEditor({
                     className="grid grid-cols-[minmax(0,1fr)_96px] items-center gap-3">
                     
                     <div className="min-w-0">
-                      <Select
+                      <MaterialSelect
                         value={item.materialId}
-                        aria-label={`Ingredient ${itemIndex + 1} in ${phase.name}`}
-                        onChange={(event) =>
-                        setItemMaterial(phaseIndex, itemIndex, event.target.value)
-                        }>
-                        
-                        {cosmeticIngredients.map((option) =>
-                        <option key={option.id} value={option.id}>
-                            {option.name}
-                          </option>
-                        )}
-                      </Select>
+                        ariaLabel={`Ingredient ${itemIndex + 1} in ${phase.name}`}
+                        onChange={(id) => setItemMaterial(phaseIndex, itemIndex, id)}
+                        options={cosmeticIngredients}
+                        emptyHint="You hold no ingredient marked for cosmetics." />
+                      
                       <p className="mt-1 text-2xs text-ink-tertiary">
-                        {ingredient?.inci ?? 'No INCI name on file'}
-                        {ingredient?.inciFunction ? ` · ${ingredient.inciFunction}` : ''}
+                        {/* "No INCI name on file" was said for an ingredient that had one and
+                            for no ingredient at all. An INCI name is what prints in the
+                            ingredient list, so its absence is the maker's to fix and has to be
+                            told apart from nothing being chosen. */}
+                        {!ingredient ?
+                      'Nothing chosen for this line.' :
+                      ingredient.inci ?
+                      `${ingredient.inci}${ingredient.inciFunction ? ` · ${ingredient.inciFunction}` : ''}` :
+                      'No INCI name recorded on this material, so it cannot be declared in the ingredient list.'
+                      }
                       </p>
                     </div>
                     <Input
@@ -1382,6 +1514,10 @@ function PhasedEditor({
 /* --------------------------------------------- bill of materials, device */
 
 function BomEditor({ spec, onChange }: {spec: BomSpec;onChange: (next: BomSpec) => void;}) {
+  const { materials } = useMaterials();
+  const packs = materials.filter(
+    (material) => material.class === 'packaging' && material.categories.includes('electronics')
+  );
   const setItemMaterial = (index: number, materialId: string) =>
   onChange({
     ...spec,
@@ -1441,64 +1577,61 @@ function BomEditor({ spec, onChange }: {spec: BomSpec;onChange: (next: BomSpec) 
               } />
             
           </Field>
-          <Field label="Packaging" hint={packagingHint(spec.packagingId)}>
-            <Select
-              value={spec.packagingId}
-              onChange={(event) => onChange({ ...spec, packagingId: event.target.value })}>
-
-              <option value="">Not chosen yet</option>
-              {PACKAGING.filter((p) => p.categories.includes('electronics')).map((item) =>
-              <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              )}
-            </Select>
-          </Field>
+          <MaterialSelect
+            label="Packaging"
+            value={spec.packagingId}
+            onChange={(id) => onChange({ ...spec, packagingId: id })}
+            options={packs}
+            emptyHint="You hold no packaging for electronics." />
+          
         </div>
       </Card>
 
+      {/*
+        THE COMPONENT PICKER IS GONE, AND SO IS EVERYTHING IT ASSERTED.
+        
+        It offered five shipped components and rendered, per line, a RoHS pill ("Compliant with
+        exemption"), a part number, a supplier and a declaration-of-conformity version — all of
+        it constants in the bundle, identical for every account that picked the part, presented
+        as evidence about the maker's own device. Rhys's ruling deleted components; the
+        database refuses the class. What is left is what the maker typed, said as such.
+      */}
       <Card className="px-5 py-5">
-        <SectionTitle className="mb-3">Components</SectionTitle>
-        <div className="space-y-3">
-          {spec.items.map((item, index) => {
-            const component = componentById(item.materialId);
-            return (
-              <div key={item.position} className="rounded-control border border-paper-line px-4 py-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-2xs uppercase tracking-[0.1em] text-ink-tertiary">
-                    {item.position}
-                  </p>
-                  <Pill tone={component?.rohsStatus === 'Not declared' ? 'warn' : 'good'}>
-                    {component?.rohsStatus ?? 'Unknown'}
-                  </Pill>
-                </div>
+        <SectionTitle className="mb-3">Bill of materials</SectionTitle>
+        <Callout tone="info" title="Component materials are not built">
+          <p className="max-w-prose leading-relaxed">
+            You can name the parts on this device and their positions, and they are saved. What
+            Batchlabel cannot yet do is hold a component as a material — with its RoHS
+            declaration, its standards and its test evidence — so nothing on this list has been
+            checked, and the conformity file beside it says the same.
+          </p>
+        </Callout>
+        <div className="mt-4 space-y-3">
+          {spec.items.length === 0 ?
+          <p className="text-sm text-ink-secondary">
+              Nothing on the bill of materials yet.
+            </p> :
+
+          spec.items.map((item, index) =>
+          <div key={item.position} className="rounded-control border border-paper-line px-4 py-3">
+                <p className="text-2xs uppercase tracking-[0.1em] text-ink-tertiary">
+                  {item.position}
+                </p>
                 <div className="mt-2">
-                  <Select
-                    value={item.materialId}
-                    aria-label={`Component at ${item.position}`}
-                    onChange={(event) => setItemMaterial(index, event.target.value)}>
-                    
-                    {COMPONENTS.map((option) =>
-                    <option key={option.id} value={option.id}>
-                        {option.name}
-                      </option>
-                    )}
-                  </Select>
+                  <Input
+                value={item.materialId}
+                aria-label={`Part at ${item.position}`}
+                placeholder="Part name or number"
+                onChange={(event) => setItemMaterial(index, event.target.value)} />
+              
                 </div>
                 <p className="tabular mt-2 text-2xs text-ink-tertiary">
-                  {component?.partNumber} · {component?.supplier} ·{' '}
-                  {component?.document.kind ?? 'No document'}{' '}
-                  {component?.document.version !== '—' ? `v${component?.document.version}` : ''} ·
-                  quantity {item.quantity}
+                  Quantity {item.quantity}
                 </p>
-              </div>);
-
-          })}
+              </div>
+          )
+          }
         </div>
-        <p className="mt-4 max-w-prose text-2xs leading-relaxed text-ink-tertiary">
-          A device has no composition arithmetic. What makes the declaration supportable is evidence
-          per component, which is what the conformity file on the right assembles.
-        </p>
       </Card>
     </>);
 

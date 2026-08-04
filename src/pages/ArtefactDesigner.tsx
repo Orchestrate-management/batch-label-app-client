@@ -35,7 +35,7 @@ import {
   derive,
   geometryRules } from
 '../lib/derive';
-import { packagingById } from '../lib/catalog';
+import { packagingById } from '../lib/material-index';
 import { ARTEFACT_LABELS, STOCK, categoryById } from '../lib/categories';
 import { addressForMarket } from '../lib/identity';
 import { useProduct, useProducts } from '../lib/product-store';
@@ -179,6 +179,8 @@ function ArtefactDesignerView({ product }: {product: Product;}) {
   const blocks = blocksFor(product, artefact.type);
   const packaging = packagingById(product.spec.packagingId);
   const pictogramMm = product.regimes.includes('clp') ?
+  // A drawing default, not a check — see the same line in ArtefactRail. geometryRules is
+  // what states the minimum, and it declines to state one without a capacity.
   clpMinimumDimensions(packaging?.capacityMl ?? 100).pictogram :
   8;
 
