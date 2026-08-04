@@ -516,7 +516,10 @@ describe('frames[].filename, and the four ways text reached it', () => {
       LOADED
     );
     expect(JSON.stringify(frames)).not.toContain(SECRET);
-    expect(frames.map((frame) => frame.lineno)).toEqual([4, 1]);
+    // The loaded chunk keeps its position; the cause's own frame does not, because
+    // its path was refused and a position on a refused path is two numbers read
+    // off somebody else's string. This used to expect [4, 1].
+    expect(frames.map((frame) => frame.lineno)).toEqual([4, undefined]);
   });
 
   it('is the LIST that decides, not the shape: a perfect chunk name still fails', () => {
@@ -530,8 +533,15 @@ describe('frames[].filename, and the four ways text reached it', () => {
 
   it('redacts every filename when no list was passed, which is the default', () => {
     expect(scrubStack(real, '', NO_LOADED_SCRIPTS)[0].filename).toBe('[redacted]');
-    // And the position survives, so the frame is still a position.
-    expect(scrubStack(real, '', NO_LOADED_SCRIPTS)[0].lineno).toBe(9);
+    // AND THE POSITION GOES WITH IT. This used to assert `lineno` was 9, on the
+    // reasoning that "the frame is still a position" — which was the fourth field
+    // of the send-by-default class hiding behind a sentence that sounds obvious.
+    // A position is only a position relative to a path a source map can resolve;
+    // on `[redacted]` there is nothing to resolve it against, so all it can carry
+    // is whatever the runtime read off the line. A formulation percentage is two
+    // numbers.
+    expect(scrubStack(real, '', NO_LOADED_SCRIPTS)[0].lineno).toBeUndefined();
+    expect(scrubStack(real, '', NO_LOADED_SCRIPTS)[0].colno).toBeUndefined();
   });
 
   it('builds the list through the same gate a frame has to pass, so it can only narrow', () => {
@@ -778,6 +788,42 @@ describe('the fingerprint, and what a guesser can do with it', () => {
     const secondTag = shippedDigestFor(andAlso(secret));
     const afterTwo = afterOneOracle.filter((n) => shippedDigestFor(andAlso(n)) === secondTag);
     expect(afterTwo).toEqual([secret]);
+  });
+
+  it('two oracles, counted over the whole catalogue', () => {
+    // THE FIGURE IN THE HEADER, PINNED — because it has been wrong twice and the
+    // reason both times was that no version of the comment said which second
+    // message it was measured with. The number is genuinely sensitive to that:
+    // with `Could not price ${x} for this account` instead, it is 23 here and 4
+    // rather than 0 on the small catalogue. So the messages live in the test,
+    // and they are the same two the composition test above uses.
+    const asFreeText = (value: string) => `Failed to derive hazards for ${value}`;
+    const andAlso = (value: string) => `Could not price the batch for ${value}`;
+    expect(scrubMessage(asFreeText('x')).recognised).toBe(false);
+    expect(scrubMessage(andAlso('x')).recognised).toBe(false);
+
+    const buckets = new Map<string, string[]>();
+    for (const name of CATALOGUE) {
+      const tag = digest(asFreeText(name));
+      const bucket = buckets.get(tag);
+      if (bucket) bucket.push(name);else buckets.set(tag, [name]);
+    }
+    const ambiguous = [...buckets.values()].filter((names) => names.length > 1);
+
+    // "Resolved" is: inside one first-oracle tag, no two names share a second
+    // tag. Counted over TAGS, not names.
+    let unresolved = 0;
+    for (const names of ambiguous) {
+      const second = new Map<string, number>();
+      for (const name of names) {
+        const tag = digest(andAlso(name));
+        second.set(tag, (second.get(tag) ?? 0) + 1);
+      }
+      if ([...second.values()].some((count) => count > 1)) unresolved += 1;
+    }
+
+    expect(ambiguous).toHaveLength(37_124);
+    expect(unresolved).toBe(0);
   });
 
   it('still groups: same message, same fingerprint; different message, different bucket', () => {

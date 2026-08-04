@@ -110,10 +110,19 @@ import type { ErrorReport } from './report-error';
  *
  * WHERE EACH FIELD STANDS TODAY. List-checked: `source`, `name`, `message` (and
  * inside it the screen name and the provider-hook sentence), `route`, every
- * component name, and — new this round — `frames[].filename`. Shape-checked,
- * because for these the pattern IS the list: `reference`, `at`, and the three
- * bounded captures named above. Nothing in this file is now on a bare shape
- * check over a string a runtime wrote.
+ * component name, and `frames[].filename`. Shape-checked, because for these the
+ * pattern IS the list: `reference`, `at`, and the three bounded captures named
+ * above. Carried only alongside a field that passed its own list check:
+ * `frames[].lineno` and `frames[].colno`, which travel with the path or not at
+ * all — see scrubStack.
+ *
+ * That last clause is the fourth field, and it was found after the sentence that
+ * used to close this paragraph — "nothing in this file is now on a bare shape
+ * check over a string a runtime wrote" — was already written and already false.
+ * `lineno` and `colno` were on a bare 0..10,000,000 bound, read off the same
+ * line as the path, and nobody had counted them because they are numbers. The
+ * paragraph is now an inventory of four dispositions rather than a claim of
+ * completeness, because a claim of completeness is what went wrong four times.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * AND THE THING THAT IS SUPPOSED TO FIND THE FOURTH FIELD
@@ -123,14 +132,19 @@ import type { ErrorReport } from './report-error';
  * The rule above is what a reader applies; these two are what CI applies, and
  * they are the actual deliverable of this round:
  *
- *   scrub-report.canary.test.ts   One secret, pushed down every channel an
- *                                 ordinary line of app code has into a report —
- *                                 message, name, source, reference, route,
- *                                 stack header, multi-line message, adopted
- *                                 stack, nested cause, component name, thrown
- *                                 object — and asserted absent from the WHOLE
- *                                 serialised envelope. A field that starts
- *                                 carrying data fails it wherever that field is.
+ *   scrub-report.canary.test.ts   TWO secrets — one text, one numeric — pushed
+ *                                 down every channel an ordinary line of app
+ *                                 code has into a report: message, name, source,
+ *                                 reference, route, stack header, multi-line
+ *                                 message, adopted stack, nested cause,
+ *                                 component name, thrown object, and the three
+ *                                 routes where the header cut cannot fire — all
+ *                                 asserted absent from the WHOLE serialised
+ *                                 envelope. The numeric one exists because the
+ *                                 text one is a substring search, which made the
+ *                                 harness blind to exactly the field that leaked
+ *                                 next, and to the fact that a formulation
+ *                                 percentage is a number.
  *   error-sink.test.ts, "the wire key set"   Every key path that reaches the
  *                                 wire, pinned. A field ADDED anywhere — by us,
  *                                 by a scope, by an SDK upgrade — fails it, and
@@ -289,13 +303,27 @@ import type { ErrorReport } from './report-error';
  * AND TWO ORACLES COMPOSE, WHICH NOTHING HERE USED TO CONSIDER. Two DIFFERENT
  * unrecognised messages carrying the SAME secret are two independent 16-bit
  * fingerprints of it, and intersecting their candidate sets is 32 bits.
- * Re-measured over the whole catalogue rather than over one lucky secret: of the
- * 399,360 names, the first oracle leaves 7.10 on average and at most 19; the
- * second names the secret exactly for all but 7 of the 64,490 tags that were
- * ambiguous after the first. On the 124,800-name catalogue the suite uses, the
- * second oracle is decisive for every one of the 37,124 ambiguous tags. It is
- * NOT defended against, deliberately, and the reasoning is worth more than the
- * shrug:
+ * Measured over the whole catalogue rather than over one lucky secret: of the
+ * 399,360 names, the first oracle leaves 7.0958 on average; of the 64,490 tags
+ * still ambiguous after it, the second resolves all but 25. On the 124,800-name
+ * catalogue the suite runs, it resolves every one of the 37,124.
+ *
+ * THE 25 USED TO SAY 7, AND THE REASON IT COULD IS WORTH MORE THAN THE
+ * CORRECTION. The figure depends entirely on WHICH second message you pick, and
+ * no version of this comment ever named one. Measured with a different second
+ * message it is 23, and 4 rather than 0 at 124,800 — so three different numbers
+ * were all defensible and none was reproducible. The two messages are now fixed
+ * in the test that pins this ("two oracles, counted over the whole catalogue"),
+ * and they are the same two the composition test above it uses.
+ *
+ * The definition matters as much as the messages. "Resolved" means: within one
+ * first-oracle tag, no two names share a second-oracle tag. Count TAGS, not
+ * names — 25 tags is 50 names. And the second message must be genuinely
+ * UNRECOGNISED, because a recognised one digests the text we SEND and carries
+ * nothing about the secret at all.
+ *
+ * It is NOT defended against, deliberately, and the reasoning is worth more than
+ * the shrug:
  *
  *   - salting the digest per report is the obvious fix and it destroys the only
  *     thing the digest is for. `eventFor` groups on it, so a per-report salt
@@ -330,6 +358,13 @@ import type { ErrorReport } from './report-error';
 export interface ScrubbedFrame {
   /** A path this page actually fetched a script from, or a placeholder. Never an origin. */
   filename: string;
+  /**
+   * A position INSIDE a path that survived the list check, or absent.
+   *
+   * The pairing is the point and it is enforced in scrubStack: a position on a
+   * `[redacted]` path is not a position, it is two numbers read off a string
+   * somebody else wrote. See the note there.
+   */
   lineno?: number;
   colno?: number;
 }
@@ -937,11 +972,36 @@ loadedScripts: ReadonlySet<string> = NO_LOADED_SCRIPTS)
     if (!match) continue;
     // match[1] is the function name. It is matched so that the rest of the line
     // parses, and deliberately not read — see above.
-    frames.push({
-      filename: scrubScriptPath(match[2].trim(), loadedScripts),
-      lineno: boundedPosition(match[3]),
-      colno: boundedPosition(match[4])
-    });
+    const filename = scrubScriptPath(match[2].trim(), loadedScripts);
+    // THE POSITION TRAVELS WITH THE PATH OR NOT AT ALL, and this is the same
+    // defect as `function` and as `filename` before it, in its fourth costume.
+    //
+    // `lineno` and `colno` are read off the same line as the path — a line that,
+    // on every route where the header cut does not fire, was written by somebody
+    // else. Reproduced: a stack whose header is not our message (an adopted
+    // stack, a Safari/Firefox stack with no header, or an empty message) puts
+    //
+    //     at compute (/assets/Midnight-Fig-No7.js:12:43)
+    //
+    // through as `{filename: '[redacted]', lineno: 12, colno: 43}` — the path
+    // correctly refused, and the formulation percentage 12.43 on the wire beside
+    // it in two pieces. Two small integers look like the safest thing in the
+    // payload, which is exactly why they were the field nobody checked.
+    //
+    // The rule at the top of this file asks who wrote the string. For a position
+    // the honest answer is: the same author as the path next to it. So it gets
+    // the same answer — and the list is one we already have, because a position
+    // is only MEANINGFUL for a path a source map can resolve. On `[redacted]`
+    // there is nothing to resolve it against, so dropping it costs Sentry
+    // nothing it could have used and removes the channel entirely.
+    //
+    // Written as a pair rather than as two guards so the invariant is visible in
+    // one place: no path, no numbers.
+    frames.push(
+      filename === REDACTED ?
+      { filename } :
+      { filename, lineno: boundedPosition(match[3]), colno: boundedPosition(match[4]) }
+    );
   }
   return frames;
 }

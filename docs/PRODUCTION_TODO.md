@@ -528,6 +528,15 @@ Naming Sentry as a processor is done, on www.
 - *Retention* is 30 days on Developer and 90 on Team/Business, with stored data keeping the period
   it was collected under. Nothing to configure; something to state accurately on www.
 
+---
+
+*Everything below this line is the entry AS IT WAS WRITTEN, before any of the above existed. It
+described a seam with nothing behind it and asked Rhys to choose a vendor. He chose (a) and the
+payload decision that went with it, so the options are settled and the gap is closed — but the
+reasoning is kept because it is the argument the scrubber is built on, and the four leaks found
+since were all found by re-reading it. Read it as history, not as a to-do: `setErrorSink()` IS
+called now, there IS a vendor, and the answers are recorded above.*
+
 **The gap.** `src/lib/report-error.ts` is a seam, not an integration. `setErrorSink()` is exported
 and called by nothing, so today every report is a structured `console.error` on the maker's own
 machine. That is a real improvement on the previous state (not one `console.error` anywhere in
@@ -568,6 +577,7 @@ day this is decided; no call site moves. `hasErrorSink()` drives one sentence of
 are both on the coverage `include` list now, and both clear the per-file floor; `lazy-screen.ts`
 needed a test file of its own to get there (`lazyScreen` itself had none). The rest of this entry
 is untouched: no vendor, no dependency, no endpoint — that decision is Rhys's.
+*(Settled: Sentry, EU region, scrubbed payload. See the top of this entry.)*
 
 ### 7. Only render errors are caught; a failed promise in a handler is still invisible — DONE (listeners only)
 

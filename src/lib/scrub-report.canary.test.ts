@@ -274,6 +274,111 @@ describe('the canary: one token, every channel, the whole payload', () => {
   });
 });
 
+/* ────────────────────────────────────────────── the canary that is not text */
+
+/**
+ * A SECOND CANARY, BECAUSE THE FIRST ONE CANNOT SEE NUMBERS.
+ *
+ * `CANARY` is a string in four string encodings, so every assertion above is a
+ * substring search. That made the harness structurally blind to any channel
+ * carrying a number — and this app's most sensitive value, a formulation
+ * percentage, IS a number. The field that proved it was `lineno`/`colno`:
+ *
+ *     at compute (/assets/Midnight-Fig-No7.js:12:43)
+ *
+ * on a stack whose header is not our message arrived as `{filename:
+ * '[redacted]', lineno: 12, colno: 43}` — the path correctly refused, and 12.43
+ * on the wire beside it in two pieces.
+ *
+ * The digits below are deliberately implausible as real source positions, so a
+ * hit is a leak rather than a coincidence. A realistic percentage would be a
+ * worse test: `12` and `43` occur in honest stacks constantly, and an assertion
+ * that cannot distinguish a leak from a true positive is one somebody deletes.
+ */
+const NUMERIC_CANARY = { lineno: 9182736, colno: 4736251 };
+
+/**
+ * The routes where `withoutHeader` cannot fire, which is where the numbers came
+ * from. The cut needs the stack's header to be the message we hold; each of
+ * these breaks that in a different, ordinary way.
+ */
+const NUMERIC_CHANNELS: Array<{ channel: string; code: string; report: ErrorReport }> = [
+{
+  channel: 'an adopted stack — the header is somebody else\'s message',
+  code: 'error.stack = otherError.stack',
+  report: {
+    ...BASE,
+    message: 'a completely different message',
+    stack:
+    `SomeOtherError: unrelated header\n` +
+    `    at compute (/assets/${CANARY}.js:${NUMERIC_CANARY.lineno}:${NUMERIC_CANARY.colno})`
+  }
+},
+{
+  channel: 'a stack with no header at all (Safari, Firefox)',
+  code: 'the browser simply writes frames from the first character',
+  report: {
+    ...BASE,
+    stack: `compute@/assets/${CANARY}.js:${NUMERIC_CANARY.lineno}:${NUMERIC_CANARY.colno}`
+  }
+},
+{
+  channel: 'an empty message, so there is nothing to cut',
+  code: 'throw new Error()',
+  report: {
+    ...BASE,
+    message: '',
+    stack: `    at compute (/assets/${CANARY}.js:${NUMERIC_CANARY.lineno}:${NUMERIC_CANARY.colno})`
+  }
+}];
+
+
+function expectNumbersAbsent(payload: string, channel: string): void {
+  for (const [name, value] of Object.entries(NUMERIC_CANARY)) {
+    expect(
+      payload.includes(String(value)),
+      `${channel}: the numeric canary reached the wire as ${name}=${value}.\n` +
+      'A NUMBER read off a string somebody else wrote is on the payload. A formulation ' +
+      'percentage is a number, so this is not a lesser leak than a string one.\n' +
+      'Read "THE RULE INSIDE THE RULE" in lib/scrub-report.ts: the rule asks who wrote ' +
+      'the string, and a position is written by whoever wrote the path beside it. ' +
+      'Do not fix the channel — fix the field.\n' +
+      `payload: ${payload.slice(0, 1200)}`
+    ).toBe(false);
+  }
+}
+
+describe('the canary that is not text: a number is a channel too', () => {
+  it.each(NUMERIC_CHANNELS)('$channel', ({ channel, report }) => {
+    const scrubbed = scrubReport(report, null, LOADED);
+    expectNumbersAbsent(JSON.stringify(scrubbed), `${channel} (scrubbed report)`);
+    expectNumbersAbsent(JSON.stringify(eventFor(scrubbed)), `${channel} (Sentry event)`);
+  });
+
+  it('is a canary and not a tautology: the numbers DO survive unscrubbed', () => {
+    const carried = NUMERIC_CHANNELS.filter((entry) =>
+    JSON.stringify(entry.report).includes(String(NUMERIC_CANARY.lineno))
+    );
+    expect(carried).toHaveLength(NUMERIC_CHANNELS.length);
+  });
+
+  it('keeps the position on a path that survived the list check', () => {
+    // The counterpart the absence assertions cannot make: dropping every
+    // position would pass all of them and take Sentry's source-map resolution
+    // with it. A frame the page really fetched must still carry its position.
+    const real = '/assets/Specification-def.js';
+    const scrubbed = scrubReport(
+      {
+        ...BASE,
+        stack: `TypeError: Failed to fetch\n    at go (https://app.batchlabel.xyz${real}:99:7)`
+      },
+      null,
+      LOADED
+    );
+    expect(scrubbed.frames).toContainEqual({ filename: real, lineno: 99, colno: 7 });
+  });
+});
+
 /* ─────────────────────────────────────────── and now with the real thing */
 
 const UNROUTABLE_DSN = 'https://0000000000000000000000000000000@o0.ingest.sentry.invalid/0';

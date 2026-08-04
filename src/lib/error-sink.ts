@@ -214,9 +214,18 @@ export interface SentryLike {
  * else an SDK version decided to attach under `exception` would have gone
  * straight out with no diff to anything. It is pruned per key now, to the leaves,
  * by the same rule as the two bags — see EXCEPTION_VALUE_KEYS_THAT_MAY_LEAVE and
- * FRAME_KEYS_THAT_MAY_LEAVE below — and the whole transmitted key set is pinned
- * by a test, which is the thing that was actually missing. See error-sink.test.ts,
- * "pins the exact set of keys that reaches the wire".
+ * FRAME_KEYS_THAT_MAY_LEAVE below.
+ *
+ * AND IT IS STILL NOT TRUE OF `sdk`, WHICH THIS LIST PASSES WHOLE. The SDK writes
+ * that subtree itself, after `beforeSend` has returned — `settings.infer_ip` is in
+ * there, which is the single most important privacy switch in this file, and it
+ * arrives on the envelope without ever passing through anything here. Pruning it
+ * per key would be the consistent move and it is not the load-bearing one, so
+ * what actually guards it is the pin: the whole transmitted key set, including
+ * every path under `sdk`, is asserted off the serialised bytes, and a simulated
+ * upgrade attaching `sdk.settings.<anything>` fails it. That test is the thing
+ * that was missing, and it is what makes the sentence above true — not this list.
+ * See error-sink.test.ts, "pins the exact set of keys that reaches the wire".
  */
 const EVENT_FIELDS_THAT_MAY_LEAVE = [
 'event_id',
