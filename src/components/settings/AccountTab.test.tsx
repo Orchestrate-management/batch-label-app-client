@@ -18,6 +18,7 @@ const sendSetPasswordLink = vi.fn();
 const fetchConsentPreferences = vi.fn();
 const updateConsentPreference = vi.fn();
 const signOut = vi.fn();
+const changeEmail = vi.fn();
 
 let currentUser: unknown = {
   id: 'user-1',
@@ -35,6 +36,21 @@ let entitlement = {
   refresh: vi.fn()
 };
 
+const settings = {
+  status: 'ready',
+  accountId: 'acct-1111',
+  identity: null,
+  addresses: [],
+  preferences: null,
+  requests: [],
+  error: null,
+  reload: vi.fn(),
+  saveIdentity: vi.fn(),
+  saveAddress: vi.fn(),
+  savePreferences: vi.fn(),
+  requestData: vi.fn().mockResolvedValue({ error: null })
+};
+
 async function renderTab() {
   vi.resetModules();
 
@@ -50,12 +66,16 @@ async function renderTab() {
   vi.doMock('../../lib/entitlement', () => ({ useEntitlement: () => entitlement }));
   vi.doMock('../../lib/account', async () => {
     const actual = await vi.importActual<typeof import('../../lib/account')>('../../lib/account');
-    return { ...actual, changePassword, sendSetPasswordLink };
+    return { ...actual, changePassword, sendSetPasswordLink, changeEmail };
   });
   vi.doMock('../../lib/consent-preferences', () => ({
     fetchConsentPreferences,
     updateConsentPreference
   }));
+  // The data-rights card reads the settings store. Stubbed here rather than provided, because
+  // this file is about passwords and consent; the card's own behaviour — what it records, and
+  // what it refuses to claim — is tested in account-data-rights.test.tsx against the real one.
+  vi.doMock('../../lib/settings-store', () => ({ useSettings: () => settings }));
 
   const { AccountTab } = await import('./AccountTab');
   // AccountTab links to /billing with a router Link now — billing moved into this app, so
@@ -86,6 +106,7 @@ beforeEach(() => {
   };
   changePassword.mockReset().mockResolvedValue({ error: null, otherSessionsRemain: false });
   sendSetPasswordLink.mockReset().mockResolvedValue({ error: null });
+  changeEmail.mockReset().mockResolvedValue({ error: null, pending: 'new@example.com' });
   fetchConsentPreferences.
   mockReset().
   mockResolvedValue({ marketingEmail: false, advertising: true });
@@ -372,5 +393,54 @@ describe('the rest of the account', () => {
     await user.click(screen.getByRole('button', { name: /^sign out$/i }));
 
     expect(signOut).toHaveBeenCalled();
+  });
+});
+
+/* ------------------------------------------------------------------ email */
+
+describe('changing the sign-in address', () => {
+  it('sends the request and reports an email, not a change', async () => {
+    const user = userEvent.setup({ delay: null });
+    await renderTab();
+
+    await user.type(screen.getByLabelText(/Change your email address/i), 'new@example.com');
+    await user.click(screen.getByRole('button', { name: /Send a confirmation link/i }));
+
+    expect(changeEmail).toHaveBeenCalledWith({
+      currentEmail: 'maker@example.com',
+      nextEmail: 'new@example.com'
+    });
+    // The address has not moved. Anything on screen that reads as "changed" is a lie about
+    // how this person gets back into their account.
+    expect(await screen.findByText(/Nothing has changed yet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/email updated/i)).not.toBeInTheDocument();
+  });
+
+  it('says what a maker still signs in with while a change is waiting', async () => {
+    currentUser = {
+      id: 'user-1',
+      email: 'maker@example.com',
+      new_email: 'waiting@example.com',
+      identities: [{ provider: 'email' }]
+    };
+    await renderTab();
+
+    // Read off the session user rather than remembered from a form, so it survives a reload
+    // and disappears by itself when the change completes.
+    const notice = screen.getByText(/holding a request to move this account/i);
+    expect(notice.textContent).toMatch(/waiting@example\.com/);
+    expect(notice.textContent).toMatch(/You still sign in with maker@example\.com/);
+  });
+
+  it('does not claim an email was sent when the request was refused', async () => {
+    changeEmail.mockResolvedValue({ error: 'That address cannot be used for this account.' });
+    const user = userEvent.setup({ delay: null });
+    await renderTab();
+
+    await user.type(screen.getByLabelText(/Change your email address/i), 'taken@example.com');
+    await user.click(screen.getByRole('button', { name: /Send a confirmation link/i }));
+
+    expect(await screen.findByText(/cannot be used for this account/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Confirmation sent/i)).not.toBeInTheDocument();
   });
 });

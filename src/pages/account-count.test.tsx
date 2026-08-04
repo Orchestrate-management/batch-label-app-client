@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { Studio } from './Studio';
 import { Settings } from './Settings';
 import { WorkspaceProvider } from '../lib/workspace';
+import { SettingsProvider } from '../lib/settings-store';
 import { PRODUCTS } from '../lib/fixtures';
 import { mapEntitlement, type EntitlementRow } from '../lib/membership';
 import type { EntitlementValue } from '../lib/entitlement';
@@ -106,14 +107,25 @@ function drawStudio() {
   );
 }
 
+/**
+ * The identity tab reads a settings store now, and the sentence under test does not.
+ *
+ * `SettingsProvider` is mounted so the screen renders at all; with no Supabase configured in
+ * the test environment it resolves to `unconfigured` and the tab draws its "not connected"
+ * state under the sentence this file is about. That is the point — the product COUNT is a
+ * claim about the account and comes from the entitlement, whether or not the identity behind
+ * it could be read.
+ */
 function drawIdentityTab() {
   render(
     <MemoryRouter initialEntries={['/settings/identity']}>
-      <WorkspaceProvider>
-        <Routes>
-          <Route path="/settings/:tab" element={<Settings />} />
-        </Routes>
-      </WorkspaceProvider>
+      <SettingsProvider>
+        <WorkspaceProvider>
+          <Routes>
+            <Route path="/settings/:tab" element={<Settings />} />
+          </Routes>
+        </WorkspaceProvider>
+      </SettingsProvider>
     </MemoryRouter>
   );
 }

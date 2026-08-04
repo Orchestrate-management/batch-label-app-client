@@ -119,6 +119,16 @@ export default defineConfig({
         // failure reached us when it did not.
         'src/lib/scrub-report.ts',
         'src/lib/error-sink.ts',
+        // The settings rail. On this list under the third clause and hard: between them these
+        // three decide what a CLP label and sections 1 and 15 of a safety data sheet print as
+        // the supplier — the name, address and telephone a regulator reads — and whether a
+        // write that PostgREST answered with 204 and no rows is reported to a maker as a save.
+        // identity.ts is also the one module-level holder in the app that survives a route
+        // change, so getting its clearing wrong prints one account's registered address under
+        // another account's product.
+        'src/lib/identity.ts',
+        'src/lib/settings-data.ts',
+        'src/lib/settings-store.tsx',
       ],
       thresholds: {
         lines: 70,
