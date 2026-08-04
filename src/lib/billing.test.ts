@@ -17,7 +17,12 @@ vi.mock('./supabase', () => ({
   isSupabaseConfigured: true
 }));
 
-import { createCheckoutSession, createPortalSession } from './billing';
+import {
+  createCheckoutSession,
+  createPortalSession,
+  createRailTestSession,
+  leaveFor } from
+'./billing';
 
 const fetchMock = vi.fn();
 
@@ -145,5 +150,66 @@ describe('opening the billing portal', () => {
       status: 404,
       message: 'We could not find a billing record for this account yet.'
     });
+  });
+});
+
+/**
+ * THE 30p RAIL TEST, which buys a real thing with a real card on the live rail.
+ *
+ * It was the one call in this file with no test, which is how per-file coverage thresholds came
+ * to be blocked on the money module (docs/PRODUCTION_TODO.md, entry 2). What it must prove is
+ * not that it works — the server decides that — but that the penny price and a tier cannot
+ * reach each other from this side.
+ */
+describe('the payment rail test', () => {
+  it('asks by its own field and names no tier, so a penny can never buy a plan', async () => {
+    respondWith(200, { url: 'https://checkout.stripe.com/c/pay/cs_rail' });
+    const result = await createRailTestSession();
+
+    expect(result).toEqual({ ok: true, url: 'https://checkout.stripe.com/c/pay/cs_rail' });
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://www.batchlabel.xyz/api/create-checkout-session');
+
+    const body = lastBody();
+    expect(body.railTest).toBe(true);
+    // The pair is not expressible in either direction: a tier request cannot resolve to the
+    // penny price (checkout's test above forbids `railTest`), and this cannot resolve to a
+    // tier. The price id itself is server-only env either way.
+    for (const forbidden of ['tier', 'interval', 'price', 'price_id', 'priceId', 'amount', 'currency', 'plan', 'user_id', 'userId', 'email']) {
+      expect(body).not.toHaveProperty(forbidden);
+    }
+  });
+
+  it('comes back to this app, the same way a plan purchase does', async () => {
+    respondWith(200, { url: 'https://checkout.stripe.com/c/pay/cs_rail' });
+    await createRailTestSession();
+    const body = lastBody();
+    expect(body.success_path).toBe('/billing/success');
+    expect(body.cancel_path).toBe('/billing');
+  });
+
+  it('surfaces the 403 for an email that is not on the server\'s allow-list', async () => {
+    // THE GATE IS NOT THIS FUNCTION. www checks the email on the verified token against
+    // RAIL_TEST_ALLOWED_EMAILS, so anybody who finds the undocumented URL — or calls this from
+    // a console — gets the same answer, and the client's job is only to show it.
+    respondWith(403, { error: 'That is not available on this account.' });
+    expect(await createRailTestSession()).toEqual({
+      ok: false,
+      status: 403,
+      message: 'That is not available on this account.'
+    });
+  });
+});
+
+describe('leaving for Stripe', () => {
+  it('navigates the tab rather than opening a window a blocker can eat', () => {
+    // A popup that never appears looks to the customer like a button that does nothing, on the
+    // screen where they are trying to give us money. Both Checkout and the portal bring them
+    // back by URL, so there is nothing to preserve here.
+    const assign = vi.fn();
+    vi.stubGlobal('location', { assign });
+    leaveFor('https://checkout.stripe.com/c/pay/cs_test');
+    expect(assign).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay/cs_test');
   });
 });

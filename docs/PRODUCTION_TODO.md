@@ -62,7 +62,36 @@ PostgREST always returns an array, so this is unreachable today; it is only wort
 because the failure it would produce is the empty state on a non-answer, which is the exact thing
 the rest of the file is built to prevent.
 
-### 2. Coverage thresholds are pooled, not per file
+### 2. Coverage thresholds are pooled, not per file — DONE
+
+**DONE** (commit `test(2)`): option (a). `perFile: true` is on, at the same 70% bar, and the
+number is a floor rather than an average.
+
+**The entry named the wrong second function.** It says `createRailTestSession` (billing.ts:126)
+and `createPortalSession` (billing.ts:142) have no test; the portal call is in fact covered by
+`billing.test.ts` › "sends only a return path — never a user id" and "passes on the ordinary 'no
+billing record yet' answer". The two genuinely uncovered were `createRailTestSession` and
+`leaveFor` — the line that actually navigates the customer to Stripe. Both have tests now (4 new
+in `billing.test.ts`, including that the rail test names no tier, so a penny cannot buy a plan
+and a tier request cannot resolve to the penny price). `billing.ts` went 85.71/95/66.66/85.71 to
+**100/95.45/100/100**.
+
+**No second file failed** once `perFile` was on: every file on the list clears 70% on all four
+counters, the lowest being `auth-redirect.ts` at 77.41% branches. Nothing was excused and no
+per-file exception was written.
+
+**Entry 6's follow-up, which was addressed to this entry, is done too.** `report-error.ts` and
+`lazy-screen.ts` are now on the include list. Both meet the stated rule on its third clause
+rather than its first two — neither costs money or data, and both can make a screen state
+something untrue: `hasErrorSink()` drives the sentence about whether a failure reached us, and
+`lazyScreen`'s typed rejection is the only thing that tells "the file never arrived" apart from
+"this screen crashed". `report-error.ts` was already at 100/91.3/100/100; `lazy-screen.ts` was at
+55% statements with `lazyScreen` itself untested, so it gained `src/lib/lazy-screen.test.tsx`
+(5 tests) and is now 100/85.71/100/100.
+
+**Original entry follows.**
+
+### 2 (original). Coverage thresholds are pooled, not per file
 
 **The gap.** `vitest.config.ts` sets one 70% bar across the pooled total of the include list.
 A brand new module with no tests at all costs the pooled number a point or two and the gate stays
@@ -239,9 +268,10 @@ day this is decided; no call site moves. `hasErrorSink()` drives one sentence of
 ("This has not reached us automatically"), which disappears by itself once a sink exists — see
 `src/components/ErrorBoundary.test.tsx` › "stops saying it once reports go somewhere".
 
-**Small follow-up.** `src/lib/report-error.ts` and `src/lib/lazy-screen.ts` are not on the coverage
-`include` list in `vitest.config.ts` (both have tests; the list is curated). Whoever next opens
-that list — entry 2 above — should add them or decide they do not meet the bar stated there.
+**Small follow-up — DONE, see entry 2.** `src/lib/report-error.ts` and `src/lib/lazy-screen.ts`
+are both on the coverage `include` list now, and both clear the per-file floor; `lazy-screen.ts`
+needed a test file of its own to get there (`lazyScreen` itself had none). The rest of this entry
+is untouched: no vendor, no dependency, no endpoint — that decision is Rhys's.
 
 ### 7. Only render errors are caught; a failed promise in a handler is still invisible
 

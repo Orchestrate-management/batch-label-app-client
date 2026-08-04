@@ -85,21 +85,40 @@ export default defineConfig({
         // SKUs it reads as data loss.
         'src/lib/products.ts',
         'src/lib/product-store.tsx',
+        // The two the shell stream left for whoever next opened this list (TODO entry 6's
+        // follow-up). Both meet the rule above on the third clause rather than the first two:
+        // `hasErrorSink()` drives a sentence the crash screen says to a customer about whether
+        // their failure reached us, and `lazyScreen`'s typed rejection is the only thing that
+        // tells "the file never arrived" apart from "this screen crashed" — opposite
+        // instructions to give somebody who was about to print a label. Neither costs money or
+        // data; both can make a screen state something untrue.
+        'src/lib/report-error.ts',
+        'src/lib/lazy-screen.ts',
       ],
       thresholds: {
         lines: 70,
         functions: 70,
         statements: 70,
         branches: 70,
-        // STILL POOLED, AND THAT IS A KNOWN HOLE — see docs/PRODUCTION_TODO.md,
-        // "Coverage thresholds are pooled, not per file". A pooled average is
-        // the same trick the include list was: a new module with no tests at
-        // all costs the total a point or two and the gate stays green. Turning
-        // `perFile: true` on today fails the build on src/lib/billing.ts
-        // (functions 66.66%: createRailTestSession and createPortalSession have
-        // no test), and billing is a live money rail this stream was told not
-        // to touch. It is two small tests away, not a threshold change away,
-        // and the TODO says which two.
+        // PER FILE, WHICH TURNS THE NUMBER FROM AN AVERAGE INTO A FLOOR.
+        //
+        // Pooled was the same trick the include list was: a new module with no
+        // tests at all cost the total a point or two and the gate stayed green.
+        // Every file on the list above is one where being wrong costs a customer
+        // money, data, or a true sentence about their compliance, and an average
+        // lets one of them be uncovered as long as the others carry it.
+        //
+        // It was blocked on src/lib/billing.ts, at 66.66% functions. The TODO
+        // named createRailTestSession and createPortalSession; the portal call
+        // was in fact already covered, and the two without a test were
+        // createRailTestSession — the 30p live-rail purchase — and leaveFor, the
+        // line that actually navigates the customer to Stripe. Both have one now.
+        //
+        // WHEN THIS FAILS ON A FILE, the fix is a test. Lowering the bar, or
+        // writing a per-file exception, puts the number back to being an average
+        // with extra steps — and it would do it in whichever file was hardest to
+        // cover, which is not the one you want excused.
+        perFile: true
       },
     },
   },
