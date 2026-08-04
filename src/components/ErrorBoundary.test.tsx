@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { ErrorBoundary, crashCopy } from './ErrorBoundary';
+import { ErrorBoundary, crashCopy, type CrashKind, type CrashScope } from './ErrorBoundary';
 import { ScreenNotLoaded } from '../lib/lazy-screen';
 import { setErrorSink, type ErrorReport } from '../lib/report-error';
 
@@ -38,6 +38,18 @@ function renderCrash(error: unknown) {
   setErrorSink((report) => reports.push(report));
   render(
     <ErrorBoundary>
+      <Boom error={error} />
+    </ErrorBoundary>
+  );
+  return reports;
+}
+
+/** The inner mount: inside AppShell, so the navigation is still on screen beside it. */
+function renderScreenCrash(error: unknown) {
+  const reports: ErrorReport[] = [];
+  setErrorSink((report) => reports.push(report));
+  render(
+    <ErrorBoundary scope="screen" resetKey="/products">
       <Boom error={error} />
     </ErrorBoundary>
   );
@@ -148,12 +160,141 @@ describe('when a split-out screen never arrives', () => {
   });
 });
 
+/* ------------------------------------------ the second mount, inside the shell */
+
+/**
+ * The route-level boundary is a different product, not a smaller version of the same one, and
+ * the difference is entirely in what the maker is left holding. A screen crash leaves them a
+ * working sidebar — which is genuinely useful, and which quietly asserts something we cannot
+ * establish. These tests are mostly about that assertion being made out loud instead.
+ */
+describe('when one screen throws and the shell is still standing', () => {
+  it('does not use the words written for the app stopping whole', () => {
+    // Two boundaries with one sentence between them is the failure this whole entry is
+    // about: "Batchlabel stopped" is false when Batchlabel plainly has not.
+    expect(crashCopy('render', null, 'screen').title).not.toBe(crashCopy('render', null).title);
+  });
+
+  it('tells the maker the navigation is there and is not a verdict', () => {
+    renderScreenCrash(new Error('the derivation blew up'));
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent(/the navigation is still here/i);
+    // The load-bearing half. A working sidebar reads as "the rest is fine" unless something
+    // says otherwise, and a caught render error cannot support that.
+    expect(alert).toHaveTextContent(/not us telling you the rest of Batchlabel is sound/i);
+  });
+
+  it('still says do not trust what was on this screen', () => {
+    // The one thing that must survive being made softer: the failure mode of a gentler
+    // screen-level message is that it reads as a hiccup on a screen someone was reading a
+    // declaration off.
+    renderScreenCrash(new Error('nope'));
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent(/treat all of it as unchecked/i);
+    expect(alert).toHaveTextContent(/do not copy it onto a label/i);
+    expect(alert).toHaveTextContent(/not a compliance warning/i);
+  });
+
+  it('offers the reload and does not duplicate the sidebar', () => {
+    // "Go to Studio" here would sit inches from a Studio link that behaves differently — one
+    // a full document load, one a client-side navigation — with nothing to tell them apart.
+    renderScreenCrash(new Error('nope'));
+    expect(screen.getByRole('button', { name: /reload this page/i })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /go to studio/i })).not.toBeInTheDocument();
+  });
+
+  it('files under its own source, so the two mounts are one apart in a log', () => {
+    const reports = renderScreenCrash(new Error('nope'));
+    expect(reports).toHaveLength(1);
+    expect(reports[0].source).toBe('screen-render');
+  });
+
+  it('warns that a stale tab will fail the same way on every screen it has not opened', () => {
+    // Only sayable here: at app scope there is no navigation left to press. Vite fingerprints
+    // every chunk, so if the cause is a deploy this is a fact rather than a hedge.
+    renderScreenCrash(new ScreenNotLoaded('Materials', new TypeError('Failed to fetch')));
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /any other screen it has not already opened will fail the same way/i
+    );
+  });
+});
+
+describe('the navigation the shell keeps', () => {
+  function Screen({ crash }: {crash: boolean;}) {
+    if (crash) throw new Error('this screen threw');
+    return <p>the products list</p>;
+  }
+
+  it('actually navigates: a new path clears the crash', () => {
+    // Without this the sidebar stays lit and goes nowhere for the rest of the session, which
+    // is worse than the app stopping — it looks like the app works and does not.
+    const { rerender } = render(
+      <ErrorBoundary scope="screen" resetKey="/products/1">
+        <Screen crash />
+      </ErrorBoundary>
+    );
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+
+    rerender(
+      <ErrorBoundary scope="screen" resetKey="/materials">
+        <Screen crash={false} />
+      </ErrorBoundary>
+    );
+    expect(screen.getByText('the products list')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('does not clear itself on a re-render that is not a navigation', () => {
+    // A parent re-rendering for any other reason must not flash the broken screen back in
+    // and out; a screen that flickers back looks like a recovery that did not happen.
+    const { rerender } = render(
+      <ErrorBoundary scope="screen" resetKey="/products/1">
+        <Screen crash />
+      </ErrorBoundary>
+    );
+    rerender(
+      <ErrorBoundary scope="screen" resetKey="/products/1">
+        <Screen crash={false} />
+      </ErrorBoundary>
+    );
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(screen.queryByText('the products list')).not.toBeInTheDocument();
+  });
+
+  it('crashes again rather than looping when the next screen throws too', () => {
+    const { rerender } = render(
+      <ErrorBoundary scope="screen" resetKey="/products/1">
+        <Screen crash />
+      </ErrorBoundary>
+    );
+    rerender(
+      <ErrorBoundary scope="screen" resetKey="/products/2">
+        <Screen crash />
+      </ErrorBoundary>
+    );
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+  });
+});
+
 /* -------------------------------------------------------- the honesty scan */
 
-const EVERY_COPY = [
-crashCopy('render', null),
-crashCopy('screen-not-loaded', 'Materials'),
-crashCopy('screen-not-loaded', null)];
+/**
+ * Every string this component can put in front of a customer, generated rather than listed.
+ *
+ * The scan is only worth what it covers, and a hand-kept list goes stale the first time
+ * somebody adds a third failure kind or a third scope: the new copy escapes the register
+ * silently, which is exactly how a soothing sentence gets back in. These two records are
+ * typed by the unions themselves, so adding a member without adding it here is a typecheck
+ * error rather than a quiet gap.
+ */
+const KINDS: Record<CrashKind, true> = { 'render': true, 'screen-not-loaded': true };
+const SCOPES: Record<CrashScope, true> = { app: true, screen: true };
+
+const EVERY_COPY = (Object.keys(KINDS) as CrashKind[]).flatMap((kind) =>
+(Object.keys(SCOPES) as CrashScope[]).flatMap((scope) =>
+[null, 'Materials'].map((named) => crashCopy(kind, named, scope))
+)
+);
 
 
 /** Sentences that would make this screen worse than the white one it replaced. */

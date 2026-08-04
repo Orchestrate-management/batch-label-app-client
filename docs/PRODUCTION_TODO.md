@@ -254,7 +254,56 @@ become assertions about the RPC's single result rather than about a sequence.
 
 ## Shell and resilience (stream: error boundary, reporting seam, code splitting)
 
-### 5. There is one error boundary and it is at the very top, so any crash replaces the whole app
+### 5. There is one error boundary and it is at the very top, so any crash replaces the whole app — DONE
+
+**DONE** (commit `feat(5)`): option (b). The same class is mounted twice, told apart by a new
+`scope` prop — `app` (the default, outside every provider, copy and behaviour unchanged) and
+`screen` (inside `AppShell`, around `<Suspense><Routes>`, in a new `RoutedScreens` component in
+`App.tsx`).
+
+**The copy is the whole of the work, and it says the thing the entry warned about out loud.**
+The screen-scoped crash reads *"The navigation is still here, so you can open something else
+from it. That is not us telling you the rest of Batchlabel is sound: we cannot tell from here
+whether the fault was in this screen or in the working-out behind it, and the same working-out
+feeds other screens."* The entry's worry was the unspoken implication of a surviving sidebar;
+the answer is to state the limit rather than to hide the sidebar. Everything that must survive
+being made gentler does — "treat all of it as unchecked", "do not copy it onto a label", "not a
+compliance warning" are all asserted at screen scope too. Title differs (`This screen stopped
+part-way through` vs today's `Batchlabel stopped part-way through this screen`) and a test pins
+that they differ, because one sentence shared between the two mounts is the regression.
+
+**Two things the entry did not specify, both decided against the obvious version.**
+
+- **`resetKey`, not `key`.** The entry says "keyed on the pathname so it clears on navigation".
+  A literal `key={pathname}` also remounts the whole routed subtree on *every* navigation,
+  including between two products, where React Router deliberately keeps the same element
+  mounted and the screen keeps its working state. So the reset is a prop compared in
+  `componentDidUpdate`, which only runs when there is a crash to clear and changes nothing on
+  the healthy path. Without it the maker keeps a sidebar that lights up and goes nowhere for
+  the rest of the session, which is worse than the app stopping.
+- **No second "Go to Studio".** At screen scope it would sit inches from the sidebar's own
+  Studio link, same words, one a full document load and one a client-side navigation, with
+  nothing to tell them apart. The reload button stays; the copy names the navigation as the
+  soft way out.
+
+**Failed chunk fetches now land inside the shell**, which is what the entry wanted from (b):
+`ScreenNotLoaded` is thrown by the lazy screens, all of which are inside the inner boundary, so
+a mid-deploy navigation is a message in the content area. Its screen-scoped copy gains one
+clause the app-scoped one cannot honestly carry — that if the cause is a deploy, *any other
+screen this tab has not already opened will fail the same way* — because Vite fingerprints
+every chunk, so that is a fact and not a hedge, and it saves the maker discovering it one
+screen at a time.
+
+**The banned-register scan is extended, and is now generated rather than listed.** `EVERY_COPY`
+is a cross product of `Record<CrashKind, true>` × `Record<CrashScope, true>` × (named screen /
+not), so a third kind or a third scope added without adding it to the scan is a typecheck
+error. A hand-kept list was the thing that would have gone stale on exactly this change.
+
++13 tests in `ErrorBoundary.test.tsx` (18 → 31), +2 source assertions in `App.split.test.ts`.
+
+**Original entry follows.**
+
+### 5 (original). There is one error boundary and it is at the very top, so any crash replaces the whole app
 
 **The gap.** `App.tsx` now wraps everything — providers, shell, router, toaster — in a single
 `ErrorBoundary`. That guarantees the app can never go blank again, which is the thing that was

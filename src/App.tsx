@@ -1,5 +1,5 @@
 import { Suspense } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { AppShell } from './components/AppShell';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -87,9 +87,12 @@ import('./pages/Billing').then((module) => ({ default: module.Billing }))
  *
  * ErrorBoundary is OUTSIDE all of it — not around the routes, around the whole thing,
  * providers and shell and toaster included. A render error anywhere used to leave a blank
- * white document; from here there is no arrangement of failures that can do that again. The
- * reasoning, and the case for a second boundary further in, is in components/ErrorBoundary.tsx
- * and docs/PRODUCTION_TODO.md.
+ * white document; from here there is no arrangement of failures that can do that again.
+ *
+ * There is a SECOND boundary further in, around the routed screens only (see RoutedScreens
+ * below), and this outer one is not weakened by it: everything the inner one cannot reach —
+ * the providers, the shell, the toaster — still lands here. The two say different things
+ * because they know different things, which is argued in components/ErrorBoundary.tsx.
  */
 export function App() {
   return (
@@ -114,41 +117,7 @@ function AppRoutes() {
     <WorkspaceProvider>
       <BrowserRouter>
         <AppShell>
-          {/*
-            The Suspense boundary is INSIDE AppShell, so the navigation stays put while a
-            screen's code is fetched. Above the shell it would blank the sidebar on every
-            first visit to a screen, and the app would feel like it reloads on every click.
-           */}
-          <Suspense fallback={<ScreenLoading />}>
-            <Routes>
-              <Route path="/" element={<Studio />} />
-              <Route path="/materials" element={<Navigate to="/materials/ingredient" replace />} />
-              <Route path="/materials/:materialClass" element={<Materials />} />
-              <Route path="/materials/:materialClass/:materialId" element={<Materials />} />
-              <Route path="/products" element={<Products />} />
-              <Route path="/products/:productId" element={<Specification />} />
-              <Route path="/outputs" element={<Navigate to="/products" replace />} />
-              <Route path="/artefacts" element={<Navigate to="/products" replace />} />
-              <Route
-                path="/products/:productId/artefacts/:artefactType"
-                element={<ArtefactDesigner />} />
-
-              <Route path="/records" element={<Records />} />
-              <Route path="/records/:recordCode" element={<Records />} />
-              <Route path="/compliance" element={<Navigate to="/" replace />} />
-              {/* Both paths are load-bearing rather than chosen: the marketing repo's checkout
-                  endpoint defaults its success and cancel URLs to `${APP_URL}/billing/success`
-                  and `${APP_URL}/billing`, and the portal returns to `/billing`. Renaming
-                  either of these strands a customer on a 404 immediately after paying. */}
-              <Route path="/billing" element={<Billing />} />
-              <Route path="/billing/success" element={<BillingReturn />} />
-              {/* Billing used to be a Settings tab. Old bookmarks and links land here. */}
-              <Route path="/settings/billing" element={<Navigate to="/billing" replace />} />
-              <Route path="/settings" element={<Navigate to="/settings/identity" replace />} />
-              <Route path="/settings/:tab" element={<Settings />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </Suspense>
+          <RoutedScreens />
         </AppShell>
         <Toaster
           position="bottom-right"
@@ -164,5 +133,62 @@ function AppRoutes() {
 
       </BrowserRouter>
     </WorkspaceProvider>);
+
+}
+
+/**
+ * The routed content, and the boundary that keeps a screen's crash inside it.
+ *
+ * This mount is what stops one screen throwing from taking the sidebar with it. It is inside
+ * AppShell — so the navigation is drawn by a component the boundary cannot unmount — and
+ * inside BrowserRouter, so it can read the pathname.
+ *
+ * `resetKey={pathname}` is the other half. Without it the maker keeps a navigation that
+ * navigates nowhere: the URL would change, the link would go blue, and the crash fallback
+ * would sit there for the rest of the session. With it, pressing a link renders the screen
+ * that link points at — see componentDidUpdate in components/ErrorBoundary.tsx for why it is
+ * a prop rather than a `key`.
+ *
+ * The Suspense boundary is inside the shell for the same reason it always was: above it, the
+ * sidebar would blank on every first visit to a screen and the app would feel like it reloads
+ * on every click. It is inside the error boundary rather than outside so that a chunk that
+ * never arrives — the mid-deploy case in lib/lazy-screen.ts — is a message in the content
+ * area rather than a crash screen where the whole app used to be.
+ */
+function RoutedScreens() {
+  const { pathname } = useLocation();
+  return (
+    <ErrorBoundary scope="screen" resetKey={pathname}>
+      <Suspense fallback={<ScreenLoading />}>
+        <Routes>
+          <Route path="/" element={<Studio />} />
+          <Route path="/materials" element={<Navigate to="/materials/ingredient" replace />} />
+          <Route path="/materials/:materialClass" element={<Materials />} />
+          <Route path="/materials/:materialClass/:materialId" element={<Materials />} />
+          <Route path="/products" element={<Products />} />
+          <Route path="/products/:productId" element={<Specification />} />
+          <Route path="/outputs" element={<Navigate to="/products" replace />} />
+          <Route path="/artefacts" element={<Navigate to="/products" replace />} />
+          <Route
+            path="/products/:productId/artefacts/:artefactType"
+            element={<ArtefactDesigner />} />
+
+          <Route path="/records" element={<Records />} />
+          <Route path="/records/:recordCode" element={<Records />} />
+          <Route path="/compliance" element={<Navigate to="/" replace />} />
+          {/* Both paths are load-bearing rather than chosen: the marketing repo's checkout
+              endpoint defaults its success and cancel URLs to `${APP_URL}/billing/success`
+              and `${APP_URL}/billing`, and the portal returns to `/billing`. Renaming
+              either of these strands a customer on a 404 immediately after paying. */}
+          <Route path="/billing" element={<Billing />} />
+          <Route path="/billing/success" element={<BillingReturn />} />
+          {/* Billing used to be a Settings tab. Old bookmarks and links land here. */}
+          <Route path="/settings/billing" element={<Navigate to="/billing" replace />} />
+          <Route path="/settings" element={<Navigate to="/settings/identity" replace />} />
+          <Route path="/settings/:tab" element={<Settings />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
+    </ErrorBoundary>);
 
 }

@@ -77,8 +77,24 @@ describe('App.tsx', () => {
   it('keeps the whole app inside the error boundary', () => {
     // Outside the providers, not just around the routes: a crash in AuthProvider,
     // ProductsProvider or AppShell has to be caught too, or the blank document is still
-    // reachable. See components/ErrorBoundary.tsx.
+    // reachable. The second, screen-scoped boundary below does NOT relieve this one — it
+    // covers the routed content and nothing else. See components/ErrorBoundary.tsx.
     expect(source).toMatch(/<ErrorBoundary>\s*<AuthProvider>/);
+  });
+
+  it('puts a second boundary around the routed screens, inside the shell', () => {
+    // Inside AppShell is the whole point: the navigation is drawn by a component this
+    // boundary cannot unmount, so a screen crashing leaves the maker somewhere to go. Moved
+    // outside the shell it silently becomes a worse copy of the outer one.
+    expect(source).toMatch(/<AppShell>\s*<RoutedScreens \/>\s*<\/AppShell>/);
+    expect(source).toMatch(/<ErrorBoundary scope="screen"[^>]*>\s*<Suspense/);
+  });
+
+  it('gives that boundary the pathname, so the surviving navigation navigates', () => {
+    // Without a resetKey the maker keeps a sidebar that lights up and changes nothing: the
+    // URL moves, the crash fallback stays, and it stays for the rest of the session.
+    expect(source).toMatch(/<ErrorBoundary scope="screen" resetKey=\{pathname\}>/);
+    expect(source).toMatch(/const \{ pathname \} = useLocation\(\);/);
   });
 
   it('is a check that can actually fail', () => {
