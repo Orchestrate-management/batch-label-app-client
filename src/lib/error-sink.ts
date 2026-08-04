@@ -1,6 +1,6 @@
 import type { BrowserOptions, ErrorEvent } from '@sentry/react';
 import { setErrorSink, type ErrorReport } from './report-error';
-import { scrubReport, type ScrubbedReport } from './scrub-report';
+import { loadedScriptPaths, scrubReport, type ScrubbedReport } from './scrub-report';
 
 /**
  * The one screw entry 6 of docs/PRODUCTION_TODO.md left to turn.
@@ -207,6 +207,16 @@ export interface SentryLike {
  * SDK adds without being asked is exactly the thing the list is for: turning an
  * integration back on by accident, or an upgrade that adds a key, cannot post
  * something new without a diff to this line.
+ *
+ * THAT LAST CLAIM USED TO BE FALSE FOR THE SUBTREE MOST LIKELY TO GROW. `tags`
+ * and `extra` were pruned per key and `exception` was passed through WHOLE — so
+ * a `mechanism`, a `thread_id`, a `module`, a `vars` bag on a frame, or anything
+ * else an SDK version decided to attach under `exception` would have gone
+ * straight out with no diff to anything. It is pruned per key now, to the leaves,
+ * by the same rule as the two bags — see EXCEPTION_VALUE_KEYS_THAT_MAY_LEAVE and
+ * FRAME_KEYS_THAT_MAY_LEAVE below — and the whole transmitted key set is pinned
+ * by a test, which is the thing that was actually missing. See error-sink.test.ts,
+ * "pins the exact set of keys that reaches the wire".
  */
 const EVENT_FIELDS_THAT_MAY_LEAVE = [
 'event_id',
@@ -234,6 +244,21 @@ const EVENT_FIELDS_THAT_MAY_LEAVE = [
 const TAG_KEYS_THAT_MAY_LEAVE = [SCRUBBED_TAG, 'reference', 'source', 'route', 'message_recognised'];
 const EXTRA_KEYS_THAT_MAY_LEAVE = ['message_digest', 'component_trail'];
 
+/**
+ * The keys inside `exception`, all the way down to a frame.
+ *
+ * Every one of these is written by `eventFor` below out of a `ScrubbedReport`,
+ * so today this removes nothing — the same thing the top-level list said about
+ * itself before it was read out of a real prepared event, which is why it is
+ * written down as a list rather than trusted as a fact. What it defends against
+ * is an SDK that starts adding to the subtree it owns most of: `mechanism` and
+ * `stacktrace.frames[].vars` (the local variables at the throw site, which on
+ * this app is a formulation) are both real Sentry event fields that nothing here
+ * asks for.
+ */
+const EXCEPTION_VALUE_KEYS_THAT_MAY_LEAVE = ['type', 'value', 'stacktrace'];
+const FRAME_KEYS_THAT_MAY_LEAVE = ['filename', 'lineno', 'colno', 'in_app'];
+
 function pick(value: unknown, keys: string[]): Record<string, unknown> | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
   const source = value as Record<string, unknown>;
@@ -244,8 +269,29 @@ function pick(value: unknown, keys: string[]): Record<string, unknown> | undefin
   return kept;
 }
 
+/** `exception`, rebuilt key by key rather than passed through. See above. */
+function pickException(value: unknown): Record<string, unknown> | undefined {
+  const exception = pick(value, ['values']);
+  if (!exception) return undefined;
+  if (!Array.isArray(exception.values)) return exception;
+  exception.values = exception.values.map((entry) => {
+    const kept = pick(entry, EXCEPTION_VALUE_KEYS_THAT_MAY_LEAVE);
+    if (!kept) return kept;
+    if (kept.stacktrace !== undefined) {
+      const stacktrace = pick(kept.stacktrace, ['frames']);
+      if (stacktrace && Array.isArray(stacktrace.frames)) {
+        stacktrace.frames = stacktrace.frames.map((frame) => pick(frame, FRAME_KEYS_THAT_MAY_LEAVE));
+      }
+      kept.stacktrace = stacktrace;
+    }
+    return kept;
+  });
+  return exception;
+}
+
 /**
- * Everything not named above, removed — at the top level and inside the two bags.
+ * Everything not named above, removed — at the top level, inside the two bags,
+ * and inside `exception` down to a frame.
  *
  * Generic so that the real `ErrorEvent` can go through it without a cast at the
  * call site: the shape that comes out is the shape that went in, minus fields.
@@ -259,6 +305,7 @@ export function keepOnlyAllowedEventFields<T extends object>(event: T): T {
   }
   if (kept.tags !== undefined) kept.tags = pick(kept.tags, TAG_KEYS_THAT_MAY_LEAVE);
   if (kept.extra !== undefined) kept.extra = pick(kept.extra, EXTRA_KEYS_THAT_MAY_LEAVE);
+  if (kept.exception !== undefined) kept.exception = pickException(kept.exception);
   return kept as T;
 }
 
@@ -372,14 +419,33 @@ type DataCollection = NonNullable<BrowserOptions['dataCollection']>;
  * would arrive switched ON — fails `npm run typecheck` with "property missing"
  * rather than shipping quietly, and so does a bag added inside one.
  *
+ * AND ONE SHAPE IT STILL CANNOT REQUIRE THE CONTENTS OF, which is why there is a
+ * third arm. An INDEX SIGNATURE — `websocket?: Record<string, boolean>` — has no
+ * known keys, so `{[K in keyof T]-?: …}` maps it to the same index signature and
+ * `{}` satisfies it. The type cannot express "every key of a bag whose keys are
+ * not known", because there is no such finite set. What it CAN do is refuse to
+ * be quiet about it: an index signature is mapped to a marker no object literal
+ * satisfies, so a category of that shape fails `npm run typecheck` with a
+ * missing property named `__an_index_signature_cannot_be_exhausted_by_a_type…`,
+ * and the person who sees that has to decide what "collect nothing" means for
+ * that bag and write it out by hand. Fail-closed and loud, rather than a `{}`
+ * that the SDK resolver reads as "collect everything".
+ *
  * `queryParams` is excluded deliberately: it is the SDK's deprecated alias for
  * `urlQueryParams`, which is set below, and the resolver reads it only when
  * `urlQueryParams` is unset.
  */
-type EveryKeyRequired<T> =
+type IndexSignatureNeedsAHuman = {
+  __an_index_signature_cannot_be_exhausted_by_a_type_see_EveryKeyRequired: never;
+};
+
+export type EveryKeyRequired<T> =
 T extends readonly unknown[] ? T :
 T extends (...args: never[]) => unknown ? T :
-T extends object ? {[K in keyof T]-?: EveryKeyRequired<NonNullable<T[K]>>} :
+T extends object ?
+string extends keyof T ? IndexSignatureNeedsAHuman :
+number extends keyof T ? IndexSignatureNeedsAHuman :
+{[K in keyof T]-?: EveryKeyRequired<NonNullable<T[K]>>} :
 T;
 
 type EveryDataCollectionCategory = EveryKeyRequired<Omit<DataCollection, 'queryParams'>>;
@@ -534,6 +600,65 @@ function currentHref(): string | null {
 }
 
 /**
+ * Every place this page actually fetched a script from — the list `frames[].filename`
+ * is held to. See LOADED SCRIPTS in lib/scrub-report.ts for why this is the list
+ * and what a missing entry costs.
+ *
+ * THE IMPURE HALF, ON PURPOSE. `scrub-report.ts` is a function of its arguments
+ * so that "what leaves the machine" is readable in one file rather than emergent
+ * from an integration; the DOM reads therefore live here, next to `currentHref`,
+ * and the filtering lives there.
+ *
+ * THREE SOURCES, IN THIS ORDER, BECAUSE THEY FAIL DIFFERENTLY:
+ *
+ *   document.scripts   The entry chunk. A real element in index.html that never
+ *                      expires.
+ *   link[href]         Vite emits `<link rel="modulepreload">` for every chunk in
+ *                      the entry graph, and its `__vitePreload` helper appends one
+ *                      to `document.head` for each chunk a dynamic `import()`
+ *                      pulls in — so a lazily-loaded route is in the DOM before
+ *                      code in it can throw. Also never expires.
+ *   resource timing    Everything else the page fetched, which is what covers a
+ *                      dev server's `/src/` and `/node_modules/` modules. Its
+ *                      buffer holds 250 entries by default and can be cleared by
+ *                      anybody, which is exactly why it is read last rather than
+ *                      alone.
+ *
+ * Never throws: this runs inside a crash handler, and a reporter that dies on the
+ * report it was handed leaves the white screen the whole seam exists to remove.
+ * On any failure the list is short or empty, and a short list redacts filenames
+ * rather than inventing them.
+ */
+export function scriptsThePageFetched(): ReadonlySet<string> {
+  const locations: string[] = [];
+  try {
+    if (typeof document !== 'undefined') {
+      for (const script of Array.from(document.scripts ?? [])) {
+        if (script.src) locations.push(script.src);
+      }
+      for (const link of Array.from(document.querySelectorAll('link[href]'))) {
+        const href = (link as HTMLLinkElement).href;
+        if (href) locations.push(href);
+      }
+    }
+  } catch {
+    // No document, or a hostile one. The next source may still answer.
+  }
+  try {
+    const timing = (globalThis as {performance?: {getEntriesByType?: (type: string) => {name?: string;}[];};}).
+    performance;
+    if (timing?.getEntriesByType) {
+      for (const entry of timing.getEntriesByType('resource')) {
+        if (typeof entry.name === 'string') locations.push(entry.name);
+      }
+    }
+  } catch {
+    // No resource timing. The DOM sources above already cover a production build.
+  }
+  return loadedScriptPaths(locations);
+}
+
+/**
  * Install the transport, if there is one to install.
  *
  * Both arguments are defaulted so the call site in `src/index.tsx` is one word,
@@ -568,7 +693,9 @@ load: () => Promise<SentryLike> = loadSentry)
     const client = sentry.init(sentryOptionsFor(dsn));
     if (!client) return false;
     setErrorSink((report: ErrorReport) => {
-      sentry.captureEvent(eventFor(scrubReport(report, currentHref())));
+      sentry.captureEvent(
+        eventFor(scrubReport(report, currentHref(), scriptsThePageFetched()))
+      );
     });
     return true;
   } catch {

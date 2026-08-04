@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   digest,
+  loadedScriptPaths,
+  NO_LOADED_SCRIPTS,
   scrubComponentStack,
   scrubMessage,
   scrubReport,
@@ -43,9 +45,29 @@ const REALISTIC: ErrorReport = {
   at: '2026-08-04T09:15:22.481Z'
 };
 
+/**
+ * The scripts this page fetched, which is the list `frames[].filename` is held to.
+ *
+ * In a browser this comes from `document.scripts`, the modulepreload links and
+ * resource timing — see `scriptsThePageFetched` in error-sink.ts. Here it is
+ * written out, because the property every test below turns on is that a path
+ * NOT in this list is redacted however plausible it looks.
+ */
+const LOADED = loadedScriptPaths([
+'https://app.batchlabel.xyz/assets/Specification-C6POi-On.js',
+'https://app.batchlabel.xyz/assets/react-2p8jeSLm.js',
+'https://app.batchlabel.xyz/assets/index-CQDYjleZ.js',
+'https://app.batchlabel.xyz/assets/index-abc.js',
+'https://app.batchlabel.xyz/assets/index-a1b2c3.js',
+'https://app.batchlabel.xyz/assets/index.js',
+'https://app.batchlabel.xyz/assets/x.js',
+'https://app.batchlabel.xyz/assets/a.js',
+'https://app.batchlabel.xyz/src/lib/derive.ts']);
+
+
 /** Everything that left, as one string, so nothing can hide in a field nobody checked. */
 function everythingSent(report: ErrorReport, href: string | null): string {
-  return JSON.stringify(scrubReport(report, href));
+  return JSON.stringify(scrubReport(report, href, LOADED));
 }
 
 describe('what a real crash on a real product sends', () => {
@@ -67,7 +89,8 @@ describe('what a real crash on a real product sends', () => {
     // observability, not for silence.
     const scrubbed = scrubReport(
       REALISTIC,
-      'https://app.batchlabel.xyz/products/8f3c2d1a-4b5e-4c7d-9a1f-2e6b8c0d4f37'
+      'https://app.batchlabel.xyz/products/8f3c2d1a-4b5e-4c7d-9a1f-2e6b8c0d4f37',
+      LOADED
     );
     expect(scrubbed.name).toBe('TypeError');
     expect(scrubbed.message).toMatch(/^Cannot read properties of undefined \(reading/);
@@ -82,7 +105,7 @@ describe('what a real crash on a real product sends', () => {
   });
 
   it('keeps the reference, which is the only thing a customer can quote back', () => {
-    expect(scrubReport(REALISTIC, null).reference).toBe('K7QP-3MTX');
+    expect(scrubReport(REALISTIC, null, LOADED).reference).toBe('K7QP-3MTX');
   });
 });
 
@@ -276,7 +299,7 @@ describe('the stack', () => {
   it('drops the header line, which is the whole unredacted message', () => {
     // The mistake this exists to prevent: scrubbing `message` and then shipping
     // `stack`, whose first line is `Name: <that same message>`.
-    const frames = scrubStack(REALISTIC.stack);
+    const frames = scrubStack(REALISTIC.stack, '', LOADED);
     expect(JSON.stringify(frames)).not.toContain('Firmenich');
     expect(frames).toHaveLength(2);
   });
@@ -286,14 +309,16 @@ describe('the stack', () => {
       'ScreenNotLoaded: The code for the Materials screen could not be downloaded.\n' +
       '    at loadMaterials (https://app.batchlabel.xyz/assets/index-CQDYjleZ.js:4:9)\n' +
       'caused by: TypeError: Failed to fetch Winter Fig & Cassis\n' +
-      '    at fetchChunk (https://app.batchlabel.xyz/assets/index-CQDYjleZ.js:2:1)'
+      '    at fetchChunk (https://app.batchlabel.xyz/assets/index-CQDYjleZ.js:2:1)',
+      '',
+      LOADED
     );
     expect(JSON.stringify(frames)).not.toContain('Winter Fig');
     expect(frames.map((frame) => frame.lineno)).toEqual([4, 2]);
   });
 
   it('keeps the path and drops the origin', () => {
-    const [frame] = scrubStack('    at go (https://app.batchlabel.xyz/assets/index-abc.js:1:2)');
+    const [frame] = scrubStack('    at go (https://app.batchlabel.xyz/assets/index-abc.js:1:2)', '', LOADED);
     expect(frame.filename).toBe('/assets/index-abc.js');
     expect(frame.filename).not.toContain('batchlabel');
   });
@@ -302,7 +327,9 @@ describe('the stack', () => {
     // A frame whose file is the page itself carries the page's path, and the
     // page's path is /products/<a customer's product>.
     const [frame] = scrubStack(
-      '    at onClick (https://app.batchlabel.xyz/products/8f3c2d1a-4b5e-4c7d-9a1f-2e6b8c0d4f37:1:2)'
+      '    at onClick (https://app.batchlabel.xyz/products/8f3c2d1a-4b5e-4c7d-9a1f-2e6b8c0d4f37:1:2)',
+      '',
+      LOADED
     );
     expect(frame.filename).toBe('[redacted]');
     expect(JSON.stringify(frame)).not.toContain('8f3c2d1a');
@@ -310,18 +337,20 @@ describe('the stack', () => {
 
   it('drops the query string on a script path rather than reading it', () => {
     const [frame] = scrubStack(
-      '    at go (https://app.batchlabel.xyz/assets/index.js?product=Winter%20Fig:1:2)'
+      '    at go (https://app.batchlabel.xyz/assets/index.js?product=Winter%20Fig:1:2)',
+      '',
+      LOADED
     );
     expect(frame.filename).not.toContain('Winter');
   });
 
   it('keeps a frame with no function at all, because it is still a position', () => {
-    const [frame] = scrubStack('    at https://app.batchlabel.xyz/assets/index-abc.js:5:7');
+    const [frame] = scrubStack('    at https://app.batchlabel.xyz/assets/index-abc.js:5:7', '', LOADED);
     expect(frame).toEqual({ filename: '/assets/index-abc.js', lineno: 5, colno: 7 });
   });
 
   it('reads Safari and Firefox frames too', () => {
-    const [frame] = scrubStack('deriveHazards@https://app.batchlabel.xyz/assets/x.js:9:4');
+    const [frame] = scrubStack('deriveHazards@https://app.batchlabel.xyz/assets/x.js:9:4', '', LOADED);
     expect(frame).toEqual({ filename: '/assets/x.js', lineno: 9, colno: 4 });
   });
 
@@ -337,7 +366,9 @@ describe('the stack', () => {
     const frames = scrubStack(
       'Error: recompute failed\n' +
       '    at Object.BL240417A (/assets/index-a1b2c3.js:2:53)\n' +
-      '    at deriveHazards (/assets/index-a1b2c3.js:9:1)'
+      '    at deriveHazards (/assets/index-a1b2c3.js:9:1)',
+      '',
+      LOADED
     );
     expect(JSON.stringify(frames)).not.toContain('BL240417A');
     expect(frames).toEqual([
@@ -351,7 +382,7 @@ describe('the stack', () => {
   it('will not let a message line masquerade as a frame', () => {
     // A message that happens to end in :line:col parses as a frame. When it
     // does, the file is not one of ours and the whole frame says so.
-    const [frame] = scrubStack('    at Lavender (Ambrox 12.5%:3:1)');
+    const [frame] = scrubStack('    at Lavender (Ambrox 12.5%:3:1)', '', LOADED);
     expect(frame.filename).toBe('[redacted]');
     expect(JSON.stringify(frame)).not.toContain('Lavender');
   });
@@ -359,13 +390,15 @@ describe('the stack', () => {
   it('wants a script extension as well as an allow-listed prefix', () => {
     // The prefix on its own said "anything, as long as it starts with /assets/",
     // and the way arbitrary text reaches here is a message line that parses.
-    expect(scrubStack('    at go (/assets/WinterFigAndCassis-unlaunched:1:2)')[0].filename).toBe(
-      '[redacted]'
-    );
-    expect(scrubStack('    at go (/assets/index-abc.js:1:2)')[0].filename).toBe(
+    expect(
+      scrubStack('    at go (/assets/WinterFigAndCassis-unlaunched:1:2)', '', LOADED)[0].filename
+    ).toBe('[redacted]');
+    expect(scrubStack('    at go (/assets/index-abc.js:1:2)', '', LOADED)[0].filename).toBe(
       '/assets/index-abc.js'
     );
-    expect(scrubStack('    at go (/src/lib/derive.ts:1:2)')[0].filename).toBe('/src/lib/derive.ts');
+    expect(scrubStack('    at go (/src/lib/derive.ts:1:2)', '', LOADED)[0].filename).toBe(
+      '/src/lib/derive.ts'
+    );
   });
 
   it('cuts the WHOLE header, so a multi-line message cannot smuggle a frame', () => {
@@ -384,7 +417,7 @@ describe('the stack', () => {
       componentStack: undefined
     };
 
-    expect(scrubReport(report, null).frames).toEqual([
+    expect(scrubReport(report, null, LOADED).frames).toEqual([
     { filename: '/assets/index-abc.js', lineno: 9, colno: 1 }]
     );
     expect(everythingSent(report, null)).not.toContain('Winter-Fig');
@@ -393,15 +426,128 @@ describe('the stack', () => {
   it('cuts nothing when there is no header, which is Safari and Firefox', () => {
     // Their stacks are frames from the first character, so `indexOf` finds
     // nothing and the frames survive. Cutting on a guess would lose all of them.
-    expect(scrubStack('deriveHazards@/assets/x.js:9:4', 'Failed to fetch')).toEqual([
+    expect(scrubStack('deriveHazards@/assets/x.js:9:4', 'Failed to fetch', LOADED)).toEqual([
     { filename: '/assets/x.js', lineno: 9, colno: 4 }]
     );
   });
 
   it('has a floor and a ceiling: no stack is empty, no stack is unbounded', () => {
-    expect(scrubStack(undefined)).toEqual([]);
+    expect(scrubStack(undefined, '', LOADED)).toEqual([]);
     const huge = Array.from({ length: 200 }, (_, i) => `    at f${i} (/assets/a.js:1:2)`).join('\n');
-    expect(scrubStack(huge).length).toBeLessThanOrEqual(30);
+    expect(scrubStack(huge, '', LOADED).length).toBeLessThanOrEqual(30);
+  });
+});
+
+/**
+ * THE THIRD FIELD OF THE SEND-BY-DEFAULT CLASS, AND THE FOUR ROUTES INTO IT.
+ *
+ * `frames[].function` was deleted, `extra.component_trail` was list-checked, and
+ * `filename` was left on a shape check with a comment saying the demonstrated
+ * route was closed. It was not, and it was not the only one. Every route below
+ * was run against the shipped code before it was changed and every one of them
+ * put a path-shaped, unlaunched product name through `filename`; the first put
+ * it into a real serialised Sentry envelope with `in_app: true` on it.
+ *
+ * They are four different ways of arriving at ONE fault — the stack's header is
+ * not always the message we hold — which is why the fix is not four patches. The
+ * path is now held to the list of scripts the page actually fetched, so how the
+ * text got into the stack stops mattering.
+ */
+describe('frames[].filename, and the four ways text reached it', () => {
+  const SECRET = 'Winter-Fig-and-Cassis-unlaunched-2027';
+  const asFrame = `    at go (/assets/${SECRET}.js:1:2)`;
+  const real = '    at deriveHazards (/assets/index-abc.js:9:1)';
+
+  it('1: a message that BEGINS WITH A NEWLINE, which defeated the header cut entirely', () => {
+    // THE OFF-BY-ONE. The guard asked `stack.lastIndexOf('\n', at) !== -1`, and
+    // lastIndexOf searches from `at` INCLUSIVE — so a message whose first
+    // character is a newline found its own newline, concluded it was not the
+    // header, and skipped the subtraction. This is a real V8 stack: `new
+    // Error(message).stack` is `Error: ` + message + the frames.
+    const message = `\n${asFrame}`;
+    const error = new Error(message);
+    expect(error.stack?.startsWith(`Error: ${message}`)).toBe(true);
+
+    expect(JSON.stringify(scrubStack(error.stack, message, LOADED))).not.toContain(SECRET);
+    // …and the cut itself now happens, rather than being carried by the list.
+    expect(JSON.stringify(scrubStack(error.stack, message, loadedScriptPaths([
+    `/assets/${SECRET}.js`]
+    )))).not.toContain(SECRET);
+  });
+
+  it('2: a stack ADOPTED from another error, so the header is somebody else\'s message', () => {
+    // Ordinary rethrow hygiene: keep the original stack, say something friendlier.
+    const original = new Error(`\n${asFrame}`);
+    const rethrown = new Error('Could not load the safety data sheet');
+    rethrown.stack = original.stack;
+    expect(JSON.stringify(scrubStack(rethrown.stack, rethrown.message, LOADED))).
+    not.toContain(SECRET);
+  });
+
+  it('3: a report whose message is simply not the one in the header', () => {
+    // describe() in report-error.ts falls back to String(error) for an Error with
+    // an empty message, and an Error whose .stack was read before .message was
+    // reassigned keeps the old header. Either way there is nothing to subtract.
+    const report: ErrorReport = {
+      ...REALISTIC,
+      message: 'something else entirely',
+      stack: `Error: \n${asFrame}\n${real}`,
+      componentStack: undefined
+    };
+    expect(everythingSent(report, null)).not.toContain(SECRET);
+    // The frame that IS one of ours still arrives, so this is not a test of
+    // "redact everything and call it safe".
+    expect(scrubReport(report, null, LOADED).frames).toContainEqual({
+      filename: '/assets/index-abc.js',
+      lineno: 9,
+      colno: 1
+    });
+  });
+
+  it('4: the nested cause, whose header is a second message nothing can subtract', () => {
+    // ScreenNotLoaded appends `caused by: ${cause.stack}`. Those frames are the
+    // only ones a mid-deploy chunk failure has, so they are still read — and the
+    // cause's own message lines can no longer name a file.
+    const frames = scrubStack(
+      'ScreenNotLoaded: The code for the Materials screen could not be downloaded.\n' +
+      '    at loadMaterials (/assets/index-abc.js:4:9)\n' +
+      `caused by: TypeError: broke\n${asFrame}`,
+      'The code for the Materials screen could not be downloaded.',
+      LOADED
+    );
+    expect(JSON.stringify(frames)).not.toContain(SECRET);
+    expect(frames.map((frame) => frame.lineno)).toEqual([4, 1]);
+  });
+
+  it('is the LIST that decides, not the shape: a perfect chunk name still fails', () => {
+    // The whole point. `/assets/Winter-Fig-and-Cassis-unlaunched-2027.js` passes
+    // every shape, prefix and suffix check this file has ever had. It is
+    // redacted because the browser never fetched it.
+    expect(scrubStack(asFrame, '', LOADED)[0].filename).toBe('[redacted]');
+    expect(scrubStack(asFrame, '', loadedScriptPaths([`/assets/${SECRET}.js`]))[0].filename).
+    toBe(`/assets/${SECRET}.js`);
+  });
+
+  it('redacts every filename when no list was passed, which is the default', () => {
+    expect(scrubStack(real, '', NO_LOADED_SCRIPTS)[0].filename).toBe('[redacted]');
+    // And the position survives, so the frame is still a position.
+    expect(scrubStack(real, '', NO_LOADED_SCRIPTS)[0].lineno).toBe(9);
+  });
+
+  it('builds the list through the same gate a frame has to pass, so it can only narrow', () => {
+    // A resource entry is any URL the page fetched, including a Supabase REST
+    // call. Nothing enters the list that a frame would not have been allowed to
+    // name anyway, which is why adding the list cannot widen what leaves.
+    const paths = loadedScriptPaths([
+    'https://xyz.supabase.co/rest/v1/products?name=eq.Winter%20Fig',
+    'https://app.batchlabel.xyz/products/8f3c2d1a-4b5e-4c7d',
+    'https://app.batchlabel.xyz/assets/hero-Winter-Fig.png',
+    'https://app.batchlabel.xyz/assets/index-abc.js?t=1',
+    'chrome-extension://abcdef/inject.js']);
+
+    expect([...paths]).toEqual(['/assets/index-abc.js']);
+    expect(JSON.stringify([...paths])).not.toContain('Winter');
+    expect(JSON.stringify([...paths])).not.toContain('8f3c2d1a');
   });
 });
 
@@ -437,17 +583,31 @@ describe('the fingerprint, and what a guesser can do with it', () => {
 
   const SIZES = ['20cl', '30cl', '35cl', '50cl'];
 
-  /** 60 × 52 × 10 × 4 = 124,800 names in the shape a real maker uses. */
-  const CATALOGUE: string[] = [];
-  for (const first of FIRST) {
-    for (const second of SECOND) {
-      for (let number = 1; number <= 10; number += 1) {
-        for (const size of SIZES) {
-          CATALOGUE.push(`${first} ${second} No. ${number} Candle ${size}`);
+  /**
+   * 60 × 52 × N × 4 names in the shape a real maker uses.
+   *
+   * ONE GENERATOR WITH ONE PARAMETER, because the header of scrub-report.ts
+   * quotes figures at four catalogue sizes and every one of them has to be
+   * reproducible from this file rather than from a note about how somebody once
+   * generated a list. N = 10 is 124,800 (what the suite runs, so it costs a
+   * second rather than half a minute), 15 is 187,200, 25 is 312,000 and 32 is
+   * 399,360.
+   */
+  function catalogueOf(numbers: number): string[] {
+    const names: string[] = [];
+    for (const first of FIRST) {
+      for (const second of SECOND) {
+        for (let number = 1; number <= numbers; number += 1) {
+          for (const size of SIZES) {
+            names.push(`${first} ${second} No. ${number} Candle ${size}`);
+          }
         }
       }
     }
+    return names;
   }
+
+  const CATALOGUE = catalogueOf(10);
 
   /** What a V8 null-read puts on the wire when the property key is a product. */
   const messageFor = (name: string) =>
@@ -493,7 +653,8 @@ describe('the fingerprint, and what a guesser can do with it', () => {
       message,
       at: '2026-08-04T09:15:22.481Z'
     },
-    null
+    null,
+    NO_LOADED_SCRIPTS
   ).messageDigest;
 
   it('is sixteen bits, and says so in four hex characters', () => {
@@ -559,7 +720,14 @@ describe('the fingerprint, and what a guesser can do with it', () => {
     expect(before.meanSurvivors).toBeLessThan(1.01);
     // 16 bits: a tag no longer names a product, and most names share theirs.
     expect(after.uniqueShare).toBeLessThan(0.25);
-    expect(after.meanSurvivors).toBeGreaterThan(2);
+    // PINNED TO THE MEASURED VALUE, NOT TO "MORE THAN 2". The header of
+    // scrub-report.ts quotes 2.91 here, and it used to quote 4 at 400,000 —
+    // which is not a possible number, because mean survivors under a B-bucket
+    // digest is ~N/B + 1 and 400,000/65,536 is already 6.10. A loose assertion
+    // is what let an impossible figure sit next to a correct one for three
+    // rounds. 124,800/65,536 + 1 = 2.904.
+    expect(after.meanSurvivors).toBeCloseTo(2.906, 2);
+    expect(after.meanSurvivors).toBeCloseTo(CATALOGUE.length / 65_536 + 1, 1);
   });
 
   it('names one candidate from a bounded list when the message was NOT recognised', () => {
@@ -706,7 +874,8 @@ describe('the fields themselves', () => {
     // working on. `product-8f3c…` is a perfectly good slug.
     const scrubbed = scrubReport(
       { ...REALISTIC, source: 'product-8f3c2d1a-4b5e-4c7d' },
-      null
+      null,
+      LOADED
     );
     expect(scrubbed.source).toBe('[redacted]');
   });
@@ -714,16 +883,16 @@ describe('the fields themselves', () => {
   it('redacts an error name that was assigned rather than declared', () => {
     // `error.name` is a writable property. An identifier-shaped check would send
     // "Lavender" without hesitating.
-    expect(scrubReport({ ...REALISTIC, name: 'Lavender' }, null).name).toBe('[redacted]');
-    expect(scrubReport({ ...REALISTIC, name: 'ScreenNotLoaded' }, null).name).toBe(
+    expect(scrubReport({ ...REALISTIC, name: 'Lavender' }, null, LOADED).name).toBe('[redacted]');
+    expect(scrubReport({ ...REALISTIC, name: 'ScreenNotLoaded' }, null, LOADED).name).toBe(
       'ScreenNotLoaded'
     );
   });
 
   it('drops a reference that is not the shape report-error.ts generates', () => {
-    expect(scrubReport({ ...REALISTIC, reference: 'Winter Fig & Cassis' }, null).reference).toBe(
-      '[redacted]'
-    );
+    expect(
+      scrubReport({ ...REALISTIC, reference: 'Winter Fig & Cassis' }, null, LOADED).reference
+    ).toBe('[redacted]');
   });
 
   it('does not carry a field that was added to ErrorReport and not to the scrubber', () => {

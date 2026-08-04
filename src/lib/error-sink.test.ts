@@ -10,11 +10,13 @@ import {
   installErrorSink,
   keepOnlyAllowedEventFields,
   looksLikeDsn,
+  scriptsThePageFetched,
   sentryOptionsFor,
+  type EveryKeyRequired,
   type SentryLike } from
 './error-sink';
 import { hasErrorSink, reportError, setErrorSink } from './report-error';
-import { scrubReport } from './scrub-report';
+import { loadedScriptPaths, NO_LOADED_SCRIPTS, scrubReport } from './scrub-report';
 
 /**
  * Two questions, and the first one is the one Rhys cannot answer from a Sentry
@@ -38,6 +40,20 @@ import { scrubReport } from './scrub-report';
  * this repo.
  */
 const DSN = 'https://a1b2c3d4e5f6@o4507000000000000.ingest.de.sentry.invalid/4508000000000000';
+
+/**
+ * The scripts the page fetched, which is the list `frames[].filename` is held to.
+ *
+ * In the browser `scriptsThePageFetched()` reads this off `document.scripts`, the
+ * modulepreload links and resource timing. Here it is written out so that the
+ * assertions below are about a frame whose script the page really did load —
+ * see lib/scrub-report.ts, LOADED SCRIPTS.
+ */
+const LOADED = loadedScriptPaths([
+'https://app.batchlabel.xyz/assets/Specification-C6.js',
+'https://app.batchlabel.xyz/assets/react-2p8.js',
+'https://app.batchlabel.xyz/assets/index-a1b2c3.js']);
+
 
 /** A stand-in for @sentry/react that records rather than posts. */
 function recordingSentry() {
@@ -212,6 +228,35 @@ describe('what Sentry is allowed to collect on its own account', () => {
     expect(options.enhanceFetchErrorMessages).toBe(false);
   });
 
+  it('requires every category to any depth, and refuses a bag it cannot exhaust', () => {
+    // A COMPILE-TIME ASSERTION IN A RUNTIME TEST, because there is no other
+    // place to put it: the property is that `npm run typecheck` FAILS, and
+    // `@ts-expect-error` is the only way to assert that a line does not compile.
+    // Delete the type's third arm and this file stops typechecking.
+    //
+    // The claim being checked is the one the comment on EveryKeyRequired makes.
+    // It used to overstate itself: it said `{}` fails for a bag at any depth,
+    // and that was true only of a bag with KNOWN keys. A category shaped
+    // `Record<string, boolean>` has no known keys, so the mapped type produced
+    // the same index signature and `{}` satisfied it — while @sentry/core's
+    // resolver reads an unset sub-key as TRUE. It now maps to a marker no object
+    // literal satisfies, so that shape fails loudly instead of silently.
+
+    // @ts-expect-error `{}` is not every key of a nested bag with known keys.
+    const nested: EveryKeyRequired<{websocket?: {frames?: boolean;};}> = { websocket: {} };
+    // @ts-expect-error an index signature cannot be exhausted by a type, so it must not pass.
+    const indexed: EveryKeyRequired<{websocket?: Record<string, boolean>;}> = { websocket: {} };
+    expect(nested).toBeDefined();
+    expect(indexed).toBeDefined();
+
+    // …and the shape that CAN be exhausted still compiles, so this is not a type
+    // that refuses everything.
+    const written: EveryKeyRequired<{websocket?: {frames?: boolean;};}> = {
+      websocket: { frames: false }
+    };
+    expect(written.websocket.frames).toBe(false);
+  });
+
   it('cannot be switched back on by a caller, at any depth', () => {
     // THE REGRESSION THIS EXISTS FOR. `dataCollection` was a module-level object
     // handed out by reference, and the negative control further down this file
@@ -294,7 +339,8 @@ describe('beforeSend, the last gate before the network', () => {
             message: 'Failed to fetch',
             at: '2026-08-04T09:15:22.481Z'
           },
-          null
+          null,
+          NO_LOADED_SCRIPTS
         )
       )
     );
@@ -346,7 +392,8 @@ describe('beforeSend, the last gate before the network', () => {
           message: 'Failed to fetch',
           at: '2026-08-04T09:15:22.481Z'
         },
-        'https://app.batchlabel.xyz/products/8f3c2d1a-4b5e'
+        'https://app.batchlabel.xyz/products/8f3c2d1a-4b5e',
+        NO_LOADED_SCRIPTS
       )
     );
     const kept = beforeSend(event);
@@ -371,7 +418,8 @@ describe('the event a scrubbed report becomes', () => {
         componentStack: '\n    at Specification (https://app.batchlabel.xyz/assets/S.js:1:2)',
         at: '2026-08-04T09:15:22.481Z'
       },
-      'https://app.batchlabel.xyz/products/8f3c2d1a-4b5e-4c7d-9a1f-2e6b8c0d4f37'
+      'https://app.batchlabel.xyz/products/8f3c2d1a-4b5e-4c7d-9a1f-2e6b8c0d4f37',
+      LOADED
     )
   );
 
@@ -422,7 +470,8 @@ describe('the event a scrubbed report becomes', () => {
           '    at Object.BL240417A (https://app.batchlabel.xyz/assets/index-a1b2c3.js:2:53)',
           at: '2026-08-04T09:15:22.481Z'
         },
-        null
+        null,
+        LOADED
       )
     );
     expect(JSON.stringify(withABatchCode)).not.toContain('BL240417A');
@@ -444,7 +493,8 @@ describe('the event a scrubbed report becomes', () => {
           message: 'Save failed for BL-2026-0417',
           at: '2026-08-04T09:15:22.481Z'
         },
-        null
+        null,
+        NO_LOADED_SCRIPTS
       )
     );
     const two = eventFor(
@@ -456,7 +506,8 @@ describe('the event a scrubbed report becomes', () => {
           message: 'Save failed for BL-2026-0417',
           at: '2026-08-04T10:00:00.000Z'
         },
-        null
+        null,
+        NO_LOADED_SCRIPTS
       )
     );
     expect(one.fingerprint).toEqual(two.fingerprint);
@@ -697,6 +748,178 @@ describe('against the real @sentry/react, with the wire replaced', () => {
     await realSentry.flush(2000);
 
     expect(eventOnTheWire().tags.scrubbed).toBe('yes');
+  });
+
+  /**
+   * THE PIN. NOTHING ELSE IN EITHER REPO FAILS WHEN A FIELD IS ADDED TO WHAT WE
+   * SEND, AND THE PRIVACY NOTICE HAS NOW BEEN MADE FALSE TWICE BY EXACTLY THAT.
+   *
+   * `keepOnlyAllowedEventFields` is an allow-list, but an allow-list only stops
+   * a field somebody ELSE adds. It does nothing about a field WE add: one line
+   * in `eventFor` and the notice in the www repo — which names, field by field,
+   * what leaves a maker's machine — is quietly wrong, and nobody finds out.
+   *
+   * So this asserts the exact set of key paths in the transmitted bytes, taken
+   * off the envelope the SDK serialised rather than off the object we built, so
+   * that an SDK upgrade adding `sdk.settings.something` fails here too. Array
+   * indices collapse to `[]` so a second frame is not a new key; VALUES are not
+   * asserted, only the shape, so this does not redden on a different reference.
+   */
+  function keyPathsOf(value: unknown, prefix: string): string[] {
+    if (Array.isArray(value)) {
+      if (value.length === 0) return [`${prefix}[]`];
+      return [...new Set(value.flatMap((entry) => keyPathsOf(entry, `${prefix}[]`)))];
+    }
+    if (value !== null && typeof value === 'object') {
+      return Object.keys(value as object).
+      sort().
+      flatMap((key) => keyPathsOf((value as Record<string, unknown>)[key], `${prefix}.${key}`));
+    }
+    return [prefix];
+  }
+
+  /**
+   * Every key path in the transmitted envelope, and nothing else may appear.
+   *
+   * ADDING A LINE HERE IS THE POINT — it is meant to be a diff somebody has to
+   * write on purpose, next to the one in the www repo.
+   */
+  const WIRE_KEY_SET = [
+  'envelope.event_id',
+  'envelope.sdk.name',
+  'envelope.sdk.version',
+  'envelope.sent_at',
+  'item.type',
+  'event.environment',
+  'event.event_id',
+  'event.exception.values[].stacktrace.frames[].colno',
+  'event.exception.values[].stacktrace.frames[].filename',
+  'event.exception.values[].stacktrace.frames[].in_app',
+  'event.exception.values[].stacktrace.frames[].lineno',
+  'event.exception.values[].type',
+  'event.exception.values[].value',
+  'event.extra.component_trail[]',
+  'event.extra.message_digest',
+  'event.fingerprint[]',
+  'event.level',
+  'event.platform',
+  'event.sdk.integrations[]',
+  'event.sdk.name',
+  'event.sdk.packages[].name',
+  'event.sdk.packages[].version',
+  'event.sdk.settings.infer_ip',
+  'event.sdk.version',
+  'event.tags.message_recognised',
+  'event.tags.reference',
+  'event.tags.route',
+  'event.tags.scrubbed',
+  'event.tags.source',
+  'event.timestamp'];
+
+
+  const WHY_THIS_FAILED =
+  'The set of fields that leaves a maker\'s machine has changed. If you are ' +
+  'adding a field, the privacy notice in the www repo (batch-label-www, the ' +
+  'section that names what an error report contains) names what we send, and it ' +
+  'has to change too — in the same change, not afterwards. If you are REMOVING ' +
+  'one, the notice still has to change. Update this list last, and only once the ' +
+  'notice says the same thing.';
+
+  it('pins the exact set of keys that reaches the wire', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    // A real <script> in the document, so the frames carry a real filename and
+    // the frame key paths are exercised rather than being absent by accident.
+    const script = document.createElement('script');
+    script.src = 'https://app.batchlabel.xyz/assets/index-abc.js';
+    document.head.appendChild(script);
+    await installErrorSink(UNROUTABLE_DSN, () => Promise.resolve(realSentryWithStubTransport()));
+
+    reportError(
+      Object.assign(new Error('Failed to fetch'), {
+        stack: 'Error: Failed to fetch\n    at go (/assets/index-abc.js:1:2)'
+      }),
+      'render',
+      { componentStack: '\n    at ErrorBoundary' }
+    );
+    await realSentry.flush(2000);
+    document.head.removeChild(script);
+
+    expect(envelopes).toHaveLength(1);
+    const envelope = envelopes[0] as [object, Array<[object, object]>];
+    const paths = [
+    ...keyPathsOf(envelope[0], 'envelope'),
+    ...keyPathsOf(envelope[1][0][0], 'item'),
+    ...keyPathsOf(envelope[1][0][1], 'event')].
+    sort();
+
+    expect(paths, WHY_THIS_FAILED).toEqual([...WIRE_KEY_SET].sort());
+    // The frame really did carry a path, so `filename` above is a live key and
+    // not one that happened to be `[redacted]` in a stack with no frames.
+    const wire = eventOnTheWire();
+    expect(wire.exception.values[0].stacktrace.frames[0].filename).toBe('/assets/index-abc.js');
+  });
+
+  it('prunes the exception subtree too, which the gate used to pass through whole', () => {
+    // `tags` and `extra` were pruned per key and `exception` was not, so the
+    // comment claiming an upgrade "cannot post something new without a diff to
+    // this line" was false for the subtree the SDK is likeliest to add to.
+    // `vars` is a real Sentry frame field: the locals at the throw site, which
+    // on this app is a formulation.
+    const kept: Record<string, any> = keepOnlyAllowedEventFields({
+      tags: { scrubbed: 'yes' },
+      exception: {
+        values: [
+        {
+          type: 'TypeError',
+          value: '[unrecognised:1a2b]',
+          mechanism: { type: 'onerror', handled: false },
+          module: 'Winter Fig & Cassis',
+          stacktrace: {
+            frames: [
+            {
+              filename: '/assets/index-abc.js',
+              lineno: 1,
+              colno: 2,
+              in_app: true,
+              vars: { supplier: 'Robertet', fraction: 0.085 },
+              pre_context: ['const fraction = 0.085 // Robertet']
+            }]
+
+          }
+        }]
+
+      }
+    });
+    const values = kept.exception.values[0];
+    expect(Object.keys(values).sort()).toEqual(['stacktrace', 'type', 'value']);
+    expect(Object.keys(values.stacktrace.frames[0]).sort()).toEqual([
+    'colno', 'filename', 'in_app', 'lineno']);
+    expect(JSON.stringify(kept)).not.toContain('Robertet');
+    expect(JSON.stringify(kept)).not.toContain('Winter Fig');
+    expect(JSON.stringify(kept)).not.toContain('0.085');
+  });
+
+  it('reads the page\'s own scripts, so a real frame keeps its filename', async () => {
+    // The other half of `scriptsThePageFetched`: it has to actually FIND the
+    // page's scripts, or the field is quietly lost on every report. jsdom serves
+    // this suite from https://app.batchlabel.xyz/, so a <script src> and a
+    // modulepreload <link> here are the same two sources index.html has.
+    const script = document.createElement('script');
+    script.src = 'https://app.batchlabel.xyz/assets/index-mAj7fPxR.js';
+    const link = document.createElement('link');
+    link.rel = 'modulepreload';
+    link.href = 'https://app.batchlabel.xyz/assets/react-2p8jeSLm.js';
+    document.head.append(script, link);
+    try {
+      const found = scriptsThePageFetched();
+      expect(found.has('/assets/index-mAj7fPxR.js')).toBe(true);
+      expect(found.has('/assets/react-2p8jeSLm.js')).toBe(true);
+      // The favicon links in index.html are fetched too and are not scripts.
+      expect(found.has('/brand/batchlabel-favicon.svg')).toBe(false);
+    } finally {
+      document.head.removeChild(script);
+      document.head.removeChild(link);
+    }
   });
 
   it('sends nothing at all for a capture that did not come through the seam', async () => {

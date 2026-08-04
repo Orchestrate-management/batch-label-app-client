@@ -39,19 +39,47 @@ import type { ErrorReport } from './report-error';
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * "Allow-list" is not enough said on its own, because a regex is an allow-list
- * too and TWO FIELDS IN A ROW have now leaked through one. `frames[].function`
+ * too and THREE FIELDS IN A ROW have now leaked through one. `frames[].function`
  * was deleted after a batch code was shown arriving in it. `extra.component_trail`
  * then did the same thing, by the same mechanism, in the field next door — and
  * that one was not a demonstration, a real batch code went out on the real
- * Sentry wire before anybody noticed. Deleting a second field is not a rule. So:
+ * Sentry wire before anybody noticed. Then `frames[].filename` — the field this
+ * header used to name as "the one place this file still owes an answer" — put an
+ * unlaunched product name into a real serialised envelope by FOUR separate
+ * routes, one of which was the route the round before had claimed to close.
+ * Deleting or patching a third field is not a rule either. So:
  *
  * FOR EVERY FIELD THAT LEAVES, ASK WHO WROTE THE STRING.
  *
  *   WE DID, FROM AN ALPHABET WE FIXED — `reference` (report-error.ts's own
  *   alphabet, minus the characters that misread down a phone) and `at` (a
- *   clock). Here a shape check IS a list: the pattern enumerates the entire
- *   space of values the field can hold, and no input can add to it. These two
- *   are the ONLY fields in this file entitled to a bare shape check.
+ *   clock). Here a shape check IS a list, and the test for that is exact: THE
+ *   PATTERN ENUMERATES THE ENTIRE SPACE OF VALUES THE FIELD CAN HOLD, and no
+ *   input can add to it. `reference` is 30^8 strings from our own alphabet and
+ *   `at` is a clock, so both qualify.
+ *
+ *   SO DO SOME CAPTURES INSIDE `RECOGNISED`, WHICH THIS HEADER USED TO DENY. It
+ *   said `reference` and `at` were "the ONLY fields in this file entitled to a
+ *   bare shape check" while seven renderers below echo a capture verbatim. They
+ *   are two kinds, and both meet the rule as stated — the header was wrong, not
+ *   the code:
+ *
+ *     FOUR ARE ALTERNATIONS OF LITERALS, which is a list written as a pattern
+ *     and not a shape at all: `(undefined|null)` in three entries, and
+ *     `(completed with undelivered notifications\.|limit exceeded)` in the
+ *     ResizeObserver one. Two values each. Nothing else can match.
+ *
+ *     THREE ARE BOUNDED SPACES THE PATTERN ITSELF FIXES: `plan catalogue request
+ *     failed (\d{3})` (1,000 values), `Minified React error #(\d{1,4})` (11,110)
+ *     and `Unexpected token '(.)'` (one character). What they cost is written
+ *     down rather than waved at: at most log2(11,110) ≈ 13.4 bits of
+ *     attacker-chosen text per report, and only for a message that already
+ *     matched one of our templates whole.
+ *
+ *   Every OTHER capture in that table is replaced by `REDACTED` or held to a
+ *   list — `SCREEN_NAMES` and `PROVIDER_HOOK_MESSAGES`. Read the table with that
+ *   in mind: a `render` that interpolates `m[n]` is making one of the two claims
+ *   above and has to be able to say which.
  *
  *   THE RUNTIME DID — and then ask what the runtime READ in order to write it.
  *   V8 and React both name things after values: a computed object key becomes a
@@ -70,12 +98,48 @@ import type { ErrorReport } from './report-error';
  * own code today" is not an answer — that is a property of the call sites, and
  * the check is what runs.
  *
+ * THE MINUTE, ACTUALLY SPENT ON `filename`, WHICH IS WHAT THE LAST THREE ROUNDS
+ * DID NOT DO. The rule was written down and then `filename` was exempted from it
+ * without being tested against it. Run: `throw new Error('\n' + text)` where
+ * `text` is anything a maker typed and one line of it reads `at f (/assets/X.js:1:2)`.
+ * V8 writes the stack as `${name}: ${message}` followed by frames, so every line
+ * of a multi-line message is INSIDE the stack, and a line that parses as a frame
+ * has its path read. That is one line of ordinary code. The answer is therefore
+ * the same as for the other two: `filename` is list-checked or it does not go.
+ * See LOADED SCRIPTS below for the list it is held to and what that costs.
+ *
  * WHERE EACH FIELD STANDS TODAY. List-checked: `source`, `name`, `message` (and
- * inside it the screen name and the provider-hook sentence), `route`, and now
- * every component name. Shape-checked, for the reason above: `reference`, `at`.
- * Neither, and the one place this file still owes an answer: `frames[].filename`
- * — see SCRIPT_SUFFIXES, which says what it costs and why nothing better is
- * available at runtime.
+ * inside it the screen name and the provider-hook sentence), `route`, every
+ * component name, and — new this round — `frames[].filename`. Shape-checked,
+ * because for these the pattern IS the list: `reference`, `at`, and the three
+ * bounded captures named above. Nothing in this file is now on a bare shape
+ * check over a string a runtime wrote.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * AND THE THING THAT IS SUPPOSED TO FIND THE FOURTH FIELD
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * Three rounds have each found the next leaking field by hand, after it shipped.
+ * The rule above is what a reader applies; these two are what CI applies, and
+ * they are the actual deliverable of this round:
+ *
+ *   scrub-report.canary.test.ts   One secret, pushed down every channel an
+ *                                 ordinary line of app code has into a report —
+ *                                 message, name, source, reference, route,
+ *                                 stack header, multi-line message, adopted
+ *                                 stack, nested cause, component name, thrown
+ *                                 object — and asserted absent from the WHOLE
+ *                                 serialised envelope. A field that starts
+ *                                 carrying data fails it wherever that field is.
+ *   error-sink.test.ts, "the wire key set"   Every key path that reaches the
+ *                                 wire, pinned. A field ADDED anywhere — by us,
+ *                                 by a scope, by an SDK upgrade — fails it, and
+ *                                 the failure message says the privacy notice in
+ *                                 the www repo has to change too.
+ *
+ * Neither is a substitute for the rule. Both fail loudly on the two things the
+ * last three rounds only noticed afterwards: a new field, and an old field that
+ * started carrying something new.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * WHAT LEAVES, AND WHY EACH ONE IS SAFE
@@ -98,9 +162,9 @@ import type { ErrorReport } from './report-error';
  *               See scrubRoute: a product id in a path segment identifies a
  *               customer's product, and a query string can hold anything at all.
  *   frames      Script path, line and column — reconstructed from the stack
- *               rather than passed through, with the header cut off by
- *               construction and deliberately WITHOUT the function name. See
- *               scrubStack.
+ *               rather than passed through, deliberately WITHOUT the function
+ *               name, and with the path held to the LIST of scripts this page
+ *               actually fetched. See scrubStack and LOADED SCRIPTS.
  *   components  React component names from the componentStack, each held to the
  *               list in lib/app-component-names.ts. Anything else is
  *               `[redacted]`, so the trail keeps its depth and loses a label.
@@ -116,6 +180,15 @@ import type { ErrorReport } from './report-error';
  * THE ONE FINGERPRINT THAT LEAVES, AND WHAT IT IS AND IS NOT
  * ─────────────────────────────────────────────────────────────────────────────
  *
+ * EVERY NUMBER IN THIS SECTION WAS RE-MEASURED THIS ROUND rather than read, and
+ * one of them was arithmetically impossible when it was checked. The catalogue
+ * they are measured on is one generator with one parameter, so any of them can
+ * be reproduced: 60 first words × 52 second words × N × 4 sizes, rendered
+ * `${first} ${second} No. ${n} Candle ${size}`, which is the shape a real maker
+ * uses. The lists are in scrub-report.test.ts; N = 10 gives 124,800 names (what
+ * the suite runs, because it costs a second rather than half a minute), N = 15
+ * gives 187,200, N = 25 gives 312,000 and N = 32 gives 399,360.
+ *
  * Removed text is replaced by `[redacted]` AND NOTHING ELSE. It used to carry a
  * per-value tag — `[redacted:d311c481]`, a 32-bit FNV-1a of the removed text —
  * and the comment here used to say that tag was "useless as a way to recover the
@@ -124,14 +197,20 @@ import type { ErrorReport } from './report-error';
  *
  *   - the formulation percentage `12.43` was recovered UNIQUELY from all 10,001
  *     candidates between 0.00 and 100.00;
- *   - the supplier `Aromatica Fragrances Europe Ltd` was recovered UNIQUELY from
- *     4,096 plausible supplier names;
- *   - across a generated 312,000-name candle catalogue, 311,984 names — 99.995%
- *     — were recovered UNIQUELY from their tag.
+ *   - the supplier `Aromatica Fragrances Europe Ltd` hashes to `09ce5a4a`, and
+ *     one supplier out of a bounded list of 4,096 (`Supplier <i> Fragrances
+ *     Europe Ltd`, which is the list the suite uses) comes back UNIQUELY — under
+ *     16 bits, and therefore under 32, since the fold is a function of the wider
+ *     hash;
+ *   - across the 312,000-name catalogue, 311,976 names — 99.992% — were
+ *     recovered UNIQUELY from their tag. (Re-measured: this line used to say
+ *     311,984 and 99.995%. At 124,800 it is 124,792 and at 399,360 it is
+ *     399,334, both 99.994%; the share does not move with the catalogue because
+ *     32 bits is 4.3 billion buckets.)
  *
- * The same attack is in scrub-report.test.ts, run over 124,800 names so it costs
- * the suite a second rather than half a minute, and it is run against the OLD
- * function and the new one side by side so the numbers below stay checkable.
+ * The same attack is in scrub-report.test.ts, run over 124,800 names, and it is
+ * run against the OLD function and the new one side by side so the numbers below
+ * stay checkable.
  *
  * A 32-bit hash only collides freely when the candidate space approaches 2^32. A
  * maker's catalogue is a few hundred names, and the template around the tag is
@@ -152,17 +231,17 @@ import type { ErrorReport } from './report-error';
  * template — and the removed value never enters a fingerprint at all. Width does
  * not fix that case and narrowing alone would not have: a formulation percentage
  * lives in a space of 10,001 candidates, and 16 bits over the whole message
- * still names it uniquely (measured). Digesting the template instead means all
- * 10,001 produce the SAME tag, which is no information at all. Same for the
- * 312,000-name catalogue below: every name now yields one identical tag.
+ * still names it uniquely (re-measured: 1 survivor). Digesting the template
+ * instead means all 10,001 produce the SAME tag, which is no information at all.
+ * Same for the catalogue: every name now yields one identical tag.
  *
  * SECOND, IT IS SIXTEEN BITS, which is what protects the case where there IS
  * nothing else — an unrecognised message, where the original text is the only
  * thing separating two unknown faults, so the digest has to be taken over it.
- * Measured on a generated 312,000-name catalogue put into free-text messages:
- * 32 bits named one candidate per tag (99.995% of the catalogue uniquely), 16
- * bits leaves 5.8 candidates on average and 0.85% uniquely. And 16 bits is still
- * 65,536 issue buckets — at ~200 distinct unknown messages, 0.3 expected
+ * Re-measured on the 312,000-name catalogue put into free-text messages: 32 bits
+ * named one candidate per tag (99.992% of the catalogue uniquely), 16 bits
+ * leaves 5.76 candidates on average and 0.84% uniquely. And 16 bits is still
+ * 65,536 issue buckets — at ~200 distinct unknown messages, 0.30 expected
  * collided pairs over the life of the project, which is far more separation than
  * an unknown-fault stream needs.
  *
@@ -174,26 +253,31 @@ import type { ErrorReport } from './report-error';
  * goes first. For a message this file recognises, NOTHING that varies with the
  * removed value reaches the wire in any field — not the exception value, not the
  * type, not `fingerprint`, not `extra.message_digest`, not a tag, not a frame.
- * Measured by running the shipped chain — `eventFor(scrubReport(…))`, the actual
- * bytes, every field, mark excluded because it is random per page load — over a
- * generated 187,200-name candle catalogue, over all 10,001 percentages from 0.00
- * to 100.00, and over 65,536 supplier names: ONE distinct wire signature each, in
- * every case. The 32-bit per-value tag this replaced recovered 99.995% of that
- * same space uniquely.
+ * Re-measured by running the shipped chain — `eventFor(scrubReport(…))`, the
+ * actual bytes, every field, mark excluded because it is random per page load —
+ * over the 399,360-name catalogue, over all 10,001 percentages from 0.00 to
+ * 100.00, and over 65,536 supplier names: ONE distinct wire signature each, in
+ * every case. The 32-bit per-value tag this replaced recovered 99.994% of that
+ * same catalogue uniquely.
  *
  * UNRECOGNISED FREE TEXT CARRIES A 16-BIT FINGERPRINT OF THE ORIGINAL, AND
  * AGAINST A BOUNDED CANDIDATE LIST A GUESSER ALREADY HOLDS, THAT IS NOT
  * ANONYMITY. This comment used to close by saying a match "would still leave
  * several thousand other messages that produce it". That is true of the space of
  * all strings and false of the space anybody actually enumerates — which is the
- * same bounded catalogue this header calls realistic three paragraphs up. On the
+ * same bounded catalogue this header calls realistic above. On the
  * shipped function, with the message `Failed to derive hazards for <x>`:
  *
  *   - the percentage 12.43 comes back UNIQUELY from all 10,001 candidates
  *     between 0.00 and 100.00;
  *   - one supplier comes back UNIQUELY from a bounded list of 4,096;
  *   - it takes a big catalogue before 16 bits leaves more than a handful: over
- *     124,800 names the mean survivor count is 2.91, and over 400,000 it is 4.
+ *     124,800 names the mean survivor count is 2.91, and over 399,360 it is
+ *     7.10. (THIS LINE USED TO SAY 4 AT 400,000, WHICH IS NOT A POSSIBLE
+ *     NUMBER. Mean survivors under a B-bucket digest is ~N/B + 1, so at
+ *     N = 400,000 and B = 65,536 it cannot be below 400,000/65,536 = 6.10 —
+ *     and the 2.91 sitting next to it, which is 124,800/65,536 + 1, was
+ *     produced by the arithmetic the 4 contradicted. Re-measured: 7.0958.)
  *
  * 16 bits is still a real improvement on 32: it is the difference between "any
  * catalogue at all" and "a catalogue smaller than 65,536". It is not anonymity
@@ -205,10 +289,13 @@ import type { ErrorReport } from './report-error';
  * AND TWO ORACLES COMPOSE, WHICH NOTHING HERE USED TO CONSIDER. Two DIFFERENT
  * unrecognised messages carrying the SAME secret are two independent 16-bit
  * fingerprints of it, and intersecting their candidate sets is 32 bits.
- * Measured twice: of 400,000 candidates 4 survive the first digest and 1
- * survives both; of the 124,800-name catalogue the tests use, a secret whose
- * first oracle leaves 5 is named exactly by the second. It is NOT defended
- * against, deliberately, and the reasoning is worth more than the shrug:
+ * Re-measured over the whole catalogue rather than over one lucky secret: of the
+ * 399,360 names, the first oracle leaves 7.10 on average and at most 19; the
+ * second names the secret exactly for all but 7 of the 64,490 tags that were
+ * ambiguous after the first. On the 124,800-name catalogue the suite uses, the
+ * second oracle is decisive for every one of the 37,124 ambiguous tags. It is
+ * NOT defended against, deliberately, and the reasoning is worth more than the
+ * shrug:
  *
  *   - salting the digest per report is the obvious fix and it destroys the only
  *     thing the digest is for. `eventFor` groups on it, so a per-report salt
@@ -241,7 +328,7 @@ import type { ErrorReport } from './report-error';
  * scrubStack.
  */
 export interface ScrubbedFrame {
-  /** A script path under an allow-listed prefix, or a placeholder. Never an origin. */
+  /** A path this page actually fetched a script from, or a placeholder. Never an origin. */
   filename: string;
   lineno?: number;
   colno?: number;
@@ -279,11 +366,11 @@ const MAX_MESSAGE = 200;
  *
  * THE WIDTH IS THE WHOLE POINT AND IT IS NOT A ROUND NUMBER BY ACCIDENT. Thirty-
  * two bits made this function a lookup table for anything a guesser could
- * enumerate — measured, 99.995% of a 312,000-name catalogue came back uniquely.
- * Sixteen leaves 5.8 candidates on that same space while keeping 65,536 issue
- * buckets, which is more separation than a stream of unknown faults has ever
- * needed. It is a DELIBERATE loss of precision; do not widen it back to make
- * grouping tidier without measuring what it hands out.
+ * enumerate — re-measured, 99.992% of a 312,000-name catalogue came back
+ * uniquely. Sixteen leaves 5.76 candidates on that same space while keeping
+ * 65,536 issue buckets, which is more separation than a stream of unknown faults
+ * has ever needed. It is a DELIBERATE loss of precision; do not widen it back to
+ * make grouping tidier without measuring what it hands out.
  *
  * Folded rather than truncated (`(h >>> 16) ^ (h & 0xffff)`) because that is
  * FNV's own prescription for a shorter tag: every input bit still reaches the
@@ -401,7 +488,9 @@ const RECOGNISED: Array<{pattern: RegExp;render: (match: RegExpExecArray) => str
   render: () => 'plan catalogue is missing currency or tax behaviour'
 },
 {
-  // An HTTP status is not a customer's data.
+  // An HTTP status is not a customer's data. One of the three captures in this
+  // table echoed verbatim: the pattern fixes the space at 1,000 values, which is
+  // the "a shape check IS a list" case the header names.
   pattern: /^plan catalogue request failed \((\d{3})\)$/,
   render: (m) => `plan catalogue request failed (${m[1]})`
 },
@@ -449,6 +538,9 @@ const RECOGNISED: Array<{pattern: RegExp;render: (match: RegExpExecArray) => str
   // EVERY React invariant in a production build arrives looking like this, so
   // without it the most common class of fault in this app would be unreadable.
   //
+  // The second of the three captures echoed verbatim, and the space the pattern
+  // fixes is 11,110 values. See the header.
+  //
   // THE TAIL IS DROPPED AND THAT IS THE WHOLE POINT OF THE ENTRY. React appends
   // `; visit https://react.dev/errors/418?args[]=…`, and those args are the
   // values interpolated into the real message — which for a hydration or a
@@ -493,7 +585,8 @@ const RECOGNISED: Array<{pattern: RegExp;render: (match: RegExpExecArray) => str
 {
   // ONE character, and it is the one that matters: '<' means the origin served
   // index.html for a request for a script, which is the signature of a stale
-  // tab after a deploy. A single character cannot carry a supplier name.
+  // tab after a deploy. A single character cannot carry a supplier name — the
+  // third and last capture in this table echoed verbatim. See the header.
   pattern: /^Unexpected token '(.)'$/,
   render: (m) => `Unexpected token '${m[1]}'`
 }];
@@ -539,9 +632,6 @@ export function scrubMessage(message: string): {text: string;recognised: boolean
  */
 const ALLOWED_SCRIPT_PREFIXES = ['/assets/', '/src/', '/node_modules/'];
 
-/** A path that is ours to send: no query, no fragment, no surprises. */
-const SCRIPT_PATH = /^\/[A-Za-z0-9._@/-]{1,200}$/;
-
 /**
  * What a script's path may END in, which is the other half of the prefix check.
  *
@@ -551,37 +641,169 @@ const SCRIPT_PATH = /^\/[A-Za-z0-9._@/-]{1,200}$/;
  * as the patterns below are concerned. Requiring an extension a bundler or a dev
  * server actually emits costs nothing and refuses that line.
  *
- * IT NARROWS, IT DOES NOT CLOSE, and the sentence that used to be here about why
- * that was fine was wrong twice over. It said "a path only gets here from a
- * stack, and V8 writes those from real script URLs — this is the belt, and
- * scrubMessage is the braces". `scrubMessage` is not braces: it never sees this
- * string. And a stack is not only what V8 wrote, because `error.stack` BEGINS
- * with the message — so every line of a multi-line message is inside the stack,
- * and one that parses as a frame gets its path read. Demonstrated: a report
- * whose message contains `at go (/assets/Winter-Fig-and-Cassis-unlaunched.js:1:2)`
- * put that name on the wire through `filename`, prefix and suffix and all.
+ * IT NARROWS, IT DOES NOT CLOSE, AND THE ROUND THAT SAID IT DID WAS WRONG. The
+ * sentence that used to end this comment read "the header is now cut off by
+ * construction … that closes the demonstrated route". It did not close it, and
+ * it was not the only route. Four were run against the shipped code before it
+ * was touched this round, each of them putting a path-shaped product name into a
+ * real serialised envelope through `filename`:
  *
- * THE HEADER IS NOW CUT OFF BY CONSTRUCTION rather than left to fail the shape
- * check — see `withoutHeader` in scrubStack, which removes exactly the run of
- * text from the start of the stack through the end of the message we were
- * given, however many lines that is. That closes the demonstrated route.
+ *   1. A MESSAGE THAT BEGINS WITH A NEWLINE. `withoutHeader` refused to cut when
+ *      it found a '\n' at or before the start of the message — `lastIndexOf('\n',
+ *      at)` is inclusive of `at` — so a message whose first character is a
+ *      newline defeated the subtraction entirely. `new Error('\n    at go
+ *      (/assets/Winter-Fig-and-Cassis-unlaunched-2027.js:1:2)')` went out with
+ *      that filename and `in_app: true` on it. Off by one, in the guard.
+ *   2. A STACK ADOPTED FROM ANOTHER ERROR. `err.stack = original.stack` is
+ *      ordinary rethrow hygiene, and then the header is not the message we hold,
+ *      `indexOf` fails, and nothing is cut.
+ *   3. A REPORT WHOSE MESSAGE IS NOT THE ONE IN THE HEADER for any other reason
+ *      — `describe()` in report-error.ts falls back to `String(error)`, and an
+ *      Error whose `.stack` was formatted before `.message` was reassigned keeps
+ *      the old header. Same failure: nothing to subtract, nothing subtracted.
+ *   4. THE NESTED CAUSE. `ScreenNotLoaded` appends `caused by: ${cause.stack}`,
+ *      whose header is a second message this function cannot subtract.
  *
- * WHAT IS LEFT, STATED RATHER THAN HIDDEN. A NESTED cause's message is still in
- * the stack and this function does not know it: `ScreenNotLoaded` appends
- * `caused by: ${cause.stack}`, and that cause's own header is text we cannot
- * subtract. Today the only cause this app puts there is a chunk-load failure
- * whose message the browser wrote, so the exposure is one path-shaped string
- * from a message the runtime authored — but if a `throw new X(msg, { cause })`
- * ever carries a maker's text as the CAUSE, this is where it would land. The
- * fix would be to stop reading frames past the first `caused by:`; that is not
- * done because those frames are the only ones a mid-deploy chunk failure has.
+ * All four are the same fault: the subtraction is CONDITIONAL on the stack's
+ * header being the message we were handed, and there are ordinary reasons for it
+ * not to be. `withoutHeader`'s own comment only ever considered one of them.
  *
- * And no shape check would close it anyway: `/assets/Winter-Fig.js` is a valid
- * path and a plausible chunk name, and requiring Vite's own `name-HASH.ext`
- * shape would mean an `entryFileNames` change silently redacting every frame in
- * the app — a total, quiet loss of the field, which is worse than this.
+ * SO THE SUFFIX AND PREFIX CHECKS ARE NO LONGER WHAT STANDS THERE. They still
+ * run — they are what a path must pass to be ELIGIBLE — but the thing that
+ * decides is the list of scripts the page actually fetched. See LOADED SCRIPTS.
+ * The header cut is fixed (off-by-one gone) and kept as a second layer, because
+ * two independent reasons to drop a line is the shape of the rest of this file.
  */
 const SCRIPT_SUFFIXES = ['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.css', '.map'];
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LOADED SCRIPTS: THE LIST `filename` IS HELD TO, AND WHAT IT COSTS
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * The rule at the top of this file says a string the RUNTIME wrote gets a list
+ * of strings we can vouch for. `filename` was exempted from that rule for three
+ * rounds on the argument that no list was available at runtime. There is one,
+ * and it is better than a list of names in our source, because it is a list of
+ * paths THE BROWSER ITSELF FETCHED A SCRIPT FROM on this page:
+ *
+ *   - `document.scripts` — in a production build the entry chunk is a real
+ *     `<script type="module" src="/assets/index-HASH.js">` in index.html;
+ *   - `<link rel="modulepreload">` — Vite emits one per entry-graph chunk in
+ *     index.html, and its `__vitePreload` helper APPENDS one to `document.head`
+ *     for every chunk a dynamic `import()` pulls in, so a lazily-loaded route's
+ *     chunk is in the DOM by the time code in it can throw;
+ *   - `performance.getEntriesByType('resource')` — everything else the page
+ *     fetched, including what a dev server serves out of `/src/` and
+ *     `/node_modules/`.
+ *
+ * WHY THIS IS A LIST AND NOT A SECOND SHAPE CHECK. The question the rule asks is
+ * who wrote the string. Every entry in this list was written by our build or by
+ * the dev server and then FETCHED BY THE BROWSER, which is a fact about the
+ * network rather than about the text: a product name cannot get into it unless
+ * this app fetches a script whose URL it built out of a product, and nothing
+ * does, and that would be the leak rather than a way of hiding one.
+ *
+ * IT CAN ONLY EVER REMOVE. The list is built by `loadedScriptPaths` below, which
+ * puts every candidate through the SAME shape, prefix and suffix gate a frame
+ * has to pass. So the set of values `filename` can take is a SUBSET of what the
+ * old check allowed. Adding this cannot widen anything; it is not itself a
+ * channel.
+ *
+ * WHAT IT COSTS, STATED RATHER THAN HOPED. A frame whose script the page did not
+ * fetch is `[redacted]`, keeping its line and column. Three cases:
+ *
+ *   - A CALLER THAT PASSES NO LIST gets every filename redacted. That is the
+ *     default and it is deliberate — this file's whole argument is that the
+ *     default answer for anything nobody thought about is DROP — but it means a
+ *     new call site that forgets the argument quietly loses the field. That is
+ *     the direction this file chooses to fail in, and `scrubReport`'s signature
+ *     makes the argument required rather than optional so a new call site has to
+ *     say something.
+ *   - A BROWSER WITH NO RESOURCE TIMING still has `document.scripts` and the
+ *     modulepreload links, which between them cover every chunk in a production
+ *     build. Resource timing's buffer (250 entries by default) can fill on a
+ *     long session; the DOM sources do not expire, which is why they are read
+ *     first rather than instead.
+ *   - A FRAME FROM SOMEBODY ELSE'S SCRIPT — an extension, an injected tag — was
+ *     already redacted by the prefix check and still is.
+ *
+ * The alternative considered and rejected is still worth writing down: requiring
+ * Vite's own `name-HASH.ext` shape. It is a shape check, so it would have
+ * refused nothing that this file's own tests could not defeat, and an
+ * `entryFileNames` change would have silently redacted every frame in the app.
+ * The list has the opposite failure mode: it goes wrong when the browser did not
+ * fetch the file, which is exactly when the path is not one of ours.
+ *
+ * WHAT IS LEFT ON THIS FIELD, since the last three rounds each said "closed" and
+ * were each wrong. Two things, and both are small and stated rather than hidden:
+ *
+ *   - A CHUNK NAME IS A CHUNK NAME. `/assets/Specification-CXsyFQtt.js` says
+ *     which screen the maker was on, which is the same fact `route` already
+ *     sends deliberately. It is ours, not the customer's.
+ *   - THE LIST WOULD CARRY A PRODUCT IF THE APP EVER FETCHED A SCRIPT NAMED
+ *     AFTER ONE. `import(`/assets/${product.slug}.js`)` would put that path in
+ *     the browser's own resource timing and therefore in the list. Nothing in
+ *     this app builds a script URL from data, and a change that did would be the
+ *     leak rather than a way past this check — but it is the one input that can
+ *     widen what this field may say, so it is the thing to look at if the
+ *     canary in scrub-report.canary.test.ts ever goes off on a frame.
+ */
+
+/** A path that is ours to send: no query, no fragment, no surprises. */
+const SCRIPT_PATH = /^\/[A-Za-z0-9._@/-]{1,200}$/;
+
+/** No list at all, which redacts every filename. The deliberate default. */
+export const NO_LOADED_SCRIPTS: ReadonlySet<string> = new Set<string>();
+
+/** How many locations `loadedScriptPaths` will read, so a hostile page cannot make it the payload. */
+const MAX_LOADED_SCRIPTS = 500;
+
+/**
+ * A URL or a bare path, reduced to a path, or null if it is neither.
+ *
+ * Shared by the list builder and the frame reader on purpose: a path that is
+ * normalised one way going into the list and another way coming out of a frame
+ * would be a list that never matches, which is the quiet total loss of the field
+ * this file says it will not accept.
+ */
+function pathOf(location: string): string | null {
+  if (typeof location !== 'string' || location.length === 0) return null;
+  try {
+    return new URL(location).pathname;
+  } catch {
+    // Not an absolute URL. A bare absolute path is the only other form worth
+    // reading; anything else (`blob:`, `eval at …`, a Windows path) is dropped.
+    if (!location.startsWith('/')) return null;
+    return location.split('?')[0].split('#')[0];
+  }
+}
+
+/** Is this a path we would be willing to name at all, before asking whether it was loaded? */
+function sendableShape(path: string): boolean {
+  if (!SCRIPT_PATH.test(path)) return false;
+  if (!ALLOWED_SCRIPT_PREFIXES.some((prefix) => path.startsWith(prefix))) return false;
+  return SCRIPT_SUFFIXES.some((suffix) => path.endsWith(suffix));
+}
+
+/**
+ * The list, built from whatever the caller could find out about the page.
+ *
+ * Pure, and takes the raw locations rather than reading the DOM itself, so this
+ * file stays a function of its arguments and a test can hand it anything. The
+ * impure half — reading `document.scripts`, the modulepreload links and resource
+ * timing — is `scriptsThePageFetched` in lib/error-sink.ts, next to the other
+ * thing that has to touch `window`.
+ */
+export function loadedScriptPaths(locations: Iterable<string>): ReadonlySet<string> {
+  const paths = new Set<string>();
+  for (const location of locations) {
+    if (paths.size >= MAX_LOADED_SCRIPTS) break;
+    const path = pathOf(location);
+    if (path !== null && sendableShape(path)) paths.add(path);
+  }
+  return paths;
+}
 
 /** V8: `    at fn (url:1:2)`, and `    at url:1:2` with no function at all. */
 const V8_FRAME = /^\s*at\s+(?:(.+?)\s+\()?(.+?):(\d+):(\d+)\)?\s*$/;
@@ -595,20 +817,17 @@ const AT_FRAME = /^([^@]*)@(.+?):(\d+):(\d+)$/;
  * either way and then asks only about the path. Comparing origins would need the
  * page's origin passed in, and would make a frame's safety depend on where the
  * app happens to be deployed.
+ *
+ * THE LAST LINE IS THE ONE THAT MATTERS. Shape, prefix and suffix say the path
+ * is eligible; `loaded` says the browser actually fetched a script from it. See
+ * LOADED SCRIPTS above for why the second question is a list and the first three
+ * are not.
  */
-function scrubScriptPath(location: string): string {
-  let path: string;
-  try {
-    path = new URL(location).pathname;
-  } catch {
-    // Not an absolute URL. A bare absolute path is the only other form worth
-    // reading; anything else (`blob:`, `eval at …`, a Windows path) is dropped.
-    if (!location.startsWith('/')) return REDACTED;
-    path = location.split('?')[0].split('#')[0];
-  }
-  if (!SCRIPT_PATH.test(path)) return REDACTED;
-  if (!ALLOWED_SCRIPT_PREFIXES.some((prefix) => path.startsWith(prefix))) return REDACTED;
-  if (!SCRIPT_SUFFIXES.some((suffix) => path.endsWith(suffix))) return REDACTED;
+function scrubScriptPath(location: string, loaded: ReadonlySet<string>): string {
+  const path = pathOf(location);
+  if (path === null) return REDACTED;
+  if (!sendableShape(path)) return REDACTED;
+  if (!loaded.has(path)) return REDACTED;
   return path;
 }
 
@@ -632,6 +851,20 @@ function boundedPosition(raw: string): number | undefined {
  * header rather than a coincidence), and drop everything through the end of it.
  * Safari and Firefox write no header at all, so `indexOf` fails and nothing is
  * cut, which is correct — their stacks are frames from the first character.
+ *
+ * IT IS A SECOND LAYER AND NOT THE DEFENCE, and the reason is written where it
+ * can be checked: this cut only happens when the header IS the message we were
+ * handed, and SCRIPT_SUFFIXES lists four ordinary reasons for it not to be —
+ * three of which this function cannot do anything about from inside. What stands
+ * between `filename` and a maker's product is the loaded-script list. This makes
+ * the frame list tidier and takes one route off the board; it is not the answer.
+ *
+ * THE GUARD BELOW WAS OFF BY ONE, WHICH IS THE ROUTE THAT SHIPPED. It read
+ * `stack.lastIndexOf('\n', at) !== -1`, and `lastIndexOf` searches from `at`
+ * INCLUSIVE — so a message whose first character is a newline found itself, and
+ * every multi-line message beginning with '\n' skipped the subtraction
+ * completely. The question being asked is "is there a line break BEFORE this",
+ * so it is now asked about the text before it and nothing else.
  */
 function withoutHeader(stack: string, message: string): string {
   if (message.length === 0) return stack;
@@ -639,7 +872,7 @@ function withoutHeader(stack: string, message: string): string {
   if (at === -1) return stack;
   // A '\n' before it means this is not the header; it is the message quoted
   // somewhere further down, and cutting to there would eat real frames.
-  if (stack.lastIndexOf('\n', at) !== -1) return stack;
+  if (stack.slice(0, at).includes('\n')) return stack;
   return stack.slice(at + message.length);
 }
 
@@ -655,6 +888,11 @@ function withoutHeader(stack: string, message: string): string {
  * because it is not on the list. The header is not left to that check: it is
  * subtracted first, by `withoutHeader`, because "does not parse as a frame" was
  * not true of every line of it.
+ *
+ * AND THE PATH ON A LINE THAT DOES PARSE IS HELD TO `loadedScripts`, which is
+ * the fix that closes the class rather than the instance: it does not matter
+ * which of the four ways a message line got into the stack, because a line the
+ * runtime did not fetch a script from cannot name one. See LOADED SCRIPTS.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * THE FUNCTION NAME IS PARSED AND THEN THROWN AWAY, AND THAT IS THE POINT
@@ -686,7 +924,11 @@ function withoutHeader(stack: string, message: string): string {
  * In a production build the name would have been a mangled two-letter binding
  * anyway — except in the one case that leaked.
  */
-export function scrubStack(stack: string | undefined, message = ''): ScrubbedFrame[] {
+export function scrubStack(
+stack: string | undefined,
+message = '',
+loadedScripts: ReadonlySet<string> = NO_LOADED_SCRIPTS)
+: ScrubbedFrame[] {
   if (typeof stack !== 'string' || stack.length === 0) return [];
   const frames: ScrubbedFrame[] = [];
   for (const line of withoutHeader(stack, typeof message === 'string' ? message : '').split('\n')) {
@@ -696,7 +938,7 @@ export function scrubStack(stack: string | undefined, message = ''): ScrubbedFra
     // match[1] is the function name. It is matched so that the rest of the line
     // parses, and deliberately not read — see above.
     frames.push({
-      filename: scrubScriptPath(match[2].trim()),
+      filename: scrubScriptPath(match[2].trim(), loadedScripts),
       lineno: boundedPosition(match[3]),
       colno: boundedPosition(match[4])
     });
@@ -910,8 +1152,15 @@ function oneOf(value: string | undefined, known: string[], fallback: string): st
  * The one function the sink calls, and the only thing in this app that decides
  * what a third party is told.
  *
- * `href` is passed in rather than read off `window` so this stays pure and so a
- * test can put a real product URL through it. Null is fine and means "no route".
+ * `href` and `loadedScripts` are passed in rather than read off `window` and
+ * `document` so this stays pure and so a test can put a real product URL and a
+ * real script list through it. Null `href` is fine and means "no route".
+ *
+ * `loadedScripts` IS REQUIRED RATHER THAN DEFAULTED, and that is the one place
+ * this signature is deliberately awkward. An omitted list redacts every
+ * `filename`, which is the safe direction but also a silent loss of the field —
+ * so a new call site has to write `NO_LOADED_SCRIPTS` and mean it rather than
+ * getting it by forgetting. See LOADED SCRIPTS.
  *
  * FIELD BY FIELD, NOT SPREAD. `{ ...report }` would be shorter and would mean
  * that the next field added to `ErrorReport` — by somebody working on something
@@ -931,7 +1180,11 @@ function oneOf(value: string | undefined, known: string[], fallback: string): st
  * different unknown faults, so the digest is taken over it and that residual is
  * named in the header rather than hidden.
  */
-export function scrubReport(report: ErrorReport, href: string | null): ScrubbedReport {
+export function scrubReport(
+report: ErrorReport,
+href: string | null,
+loadedScripts: ReadonlySet<string>)
+: ScrubbedReport {
   const rawMessage = typeof report.message === 'string' ? report.message : '';
   const message = scrubMessage(rawMessage);
   return {
@@ -945,8 +1198,9 @@ export function scrubReport(report: ErrorReport, href: string | null): ScrubbedR
     route: scrubRoute(href),
     // The raw message is handed over so the stack's HEADER can be subtracted
     // rather than left to fail a shape check — a multi-line message puts
-    // frame-shaped lines inside the stack. See withoutHeader.
-    frames: scrubStack(report.stack, rawMessage),
+    // frame-shaped lines inside the stack. See withoutHeader. The list is what
+    // actually decides each `filename`; see LOADED SCRIPTS.
+    frames: scrubStack(report.stack, rawMessage, loadedScripts),
     components: scrubComponentStack(report.componentStack)
   };
 }

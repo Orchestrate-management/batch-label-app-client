@@ -21,11 +21,42 @@
  *
  * THE PROPERTY THAT MAKES THIS SAFE IS NOT THAT THE LIST IS COMPLETE. It is
  * that every string in it is an identifier that occurs in THIS REPOSITORY'S OWN
- * SOURCE, so it cannot be a value read from a customer's product — a batch
- * code, a supplier, an unlaunched product name — unless somebody typed that
- * value into our source, in which case it was ours to say. `app-component-
- * names.guard.test.ts` asserts exactly that property, name by name, against the
- * real source tree.
+ * SOURCE. `app-component-names.guard.test.ts` asserts exactly that property,
+ * name by name, against the real source tree.
+ *
+ * AND THAT IS NOT THE SAME AS "CANNOT BE A VALUE READ FROM A CUSTOMER PRODUCT",
+ * WHICH IS WHAT THIS COMMENT USED TO CLAIM. It can be, in exactly one case: when
+ * the customer's value HAPPENS TO EQUAL one of the 179 identifiers shipped
+ * below. The check is string equality and it has no idea where the string it is
+ * comparing came from, so a maker whose product is called `Studio` gets `Studio`
+ * echoed, and the guard test cannot help — `Studio` is in our source.
+ *
+ * COUNTED RATHER THAN WAVED AT. Of the 166 names in `OURS`, 24 are ordinary
+ * English words a product could plausibly be called:
+ *
+ *   Button, Canvas, Card, Check, Dialog, Divider, Field, Icon, Input, Link,
+ *   Logo, Market, Pill, Row, Ruler, Section, Select, Session, Skeleton, Spec,
+ *   State, Studio, Surface, Why
+ *
+ * and 5 more are the nouns this app's own screens are named after, which a
+ * maker's range might equally use: Materials, Products, Records, Settings,
+ * Billing. Twenty-nine of 166. They are enumerated rather than counted by a
+ * rule, because "ordinary English word" is a judgement and a reader should be
+ * able to check the judgement rather than the arithmetic.
+ *
+ * WHAT IT ACTUALLY COSTS is ONE WORD of a product name, in a component trail,
+ * for a product whose whole name is exactly one of those twenty-nine, and only
+ * when that word reached the trail as a component label. That is a small
+ * residual and it is written down because the sentence it replaces said the
+ * residual was zero — and in a privacy comment, overstating a protection is the
+ * same class of error as understating a residual.
+ *
+ * NOT FIXED, AND THE REASON RATHER THAN THE SHRUG. Dropping the ordinary words
+ * would cost the trail its most common labels (`Section`, `Field`, `Row`,
+ * `Card`) to close a one-word leak against a product named `Row`. The trade that
+ * WOULD be worth making is a shorter list containing only names that are
+ * distinctively ours — and the measurement below says the trail is worth very
+ * little in a production build, so that work has not been done.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * HOW IT WAS PRODUCED, AND WHY IT IS DELIBERATELY OVER-INCLUSIVE
@@ -72,20 +103,62 @@
  * WHAT THE TRAIL IS WORTH IN THE BUILD THAT ACTUALLY REPORTS — MEASURED
  * ─────────────────────────────────────────────────────────────────────────────
  *
- * Do not read a rich trail into a production issue. esbuild mangles top-level
- * bindings, so our own component names are GONE from a production bundle:
- * `npm run build` on this branch emits no `CandleSafetySymbols`, no `PlanLadder`,
- * no `CrashScreen`, no `DerivationPanel` anywhere in `dist/assets/*.js`. What
- * React puts in a production component stack for those is a two-letter binding,
- * which is not on this list and is reported as `[redacted]`.
+ * THE EVIDENCE THIS PARAGRAPH USED TO CITE WAS DESTROYED BY THE THING IT WAS
+ * DEFENDING, AND NOBODY RE-RAN IT. It said: "`npm run build` on this branch
+ * emits no `CandleSafetySymbols`, no `PlanLadder`, no `CrashScreen`, no
+ * `DerivationPanel` anywhere in `dist/assets/*.js`". Re-run today, that grep
+ * finds ALL FOUR — because THIS FILE PUTS THEM THERE. The allow-list is a string
+ * array in the entry chunk, so every name it protects is now shipped verbatim in
+ * the bundle by the check that protects it. A grep is the wrong instrument once
+ * the list exists.
  *
- * AND IT IS NOT FREE. `scrub-report.ts` is reached statically from
- * `src/index.tsx`, so this list is in the entry graph — the set a maker must
- * download before route `/` draws anything. Measured on this branch with the
- * plugin that prints it: 572.25 kB → 575.04 kB raw, 169.01 kB → 170.17 kB gzip.
- * 1.16 kB gzip is what the check costs on first paint, which is worth it for a
- * field that was putting batch codes in a third party's database and would not
- * be worth it for much else.
+ * WHAT IS ACTUALLY TRUE, RE-MEASURED, on `npm run build` at this head:
+ *
+ *   - each of those four names occurs EXACTLY ONCE across `dist/assets/*.js`,
+ *     and the one occurrence is the string literal in the array below —
+ *     `grep -o '.\{60\}CrashScreen.\{60\}' dist/assets/index-*.js` prints
+ *     `…"ConsentSection","CosmeticLabel","CrashScreen","CreditCardIcon"…`;
+ *   - the BINDINGS are gone: `CandleSafetySymbols` does not appear in
+ *     `ArtefactRenderer-*.js`, `PlanLadder` does not appear in `Billing-*.js`,
+ *     `DerivationPanel` does not appear in `Specification-*.js` — which are the
+ *     chunks that define them. Zero occurrences each. So the underlying claim —
+ *     esbuild mangles our component names out of production — holds; the
+ *     evidence for it is "not in the chunk that defines it", not "not in the
+ *     bundle".
+ *   - of the 166 names in `OURS`, 23 occur in the bundle somewhere OTHER than
+ *     this array (word-boundary match across `dist/assets/*.js`): ArtefactDesigner,
+ *     ArtefactRenderer, AuthProvider, Billing, Canvas, Check, EntitlementProvider,
+ *     ErrorBoundary, Link, Market, Materials, Products, ProductsProvider, Records,
+ *     Route, Section, Session, Settings, Specification, Studio, Surface, Why,
+ *     WorkspaceProvider. The other 143 ship only as an entry in this list.
+ *     Spot-checked rather than exhaustively classified, and every one looked at
+ *     was a STRING and not a binding: a navigation label (`{label:"Studio"}`), an
+ *     `aria-label` (`"Canvas"`), a piece of UI copy (`"Why"`), a chunk filename
+ *     in an import (`./ArtefactRenderer-BGC0JkHv.js`), a provider-hook throw
+ *     message, or a library's own property name (react-router has an
+ *     `ErrorBoundary` route field). That is consistent with esbuild mangling
+ *     bindings and not string literals — but it is a spot check, so read it as
+ *     "no counterexample found", not as a proof.
+ *
+ * WHAT SHIPPING THE LIST COSTS AND REVEALS. `scrub-report.ts` is reached
+ * statically from `src/index.tsx`, so this list is in the entry graph — the set
+ * a maker must download before route `/` draws anything. Re-measured at this
+ * head with the plugin that prints it, by emptying both arrays and rebuilding:
+ * 573.66 kB → 576.12 kB raw, 169.55 kB → 170.53 kB gzip. So the check costs
+ * 2.46 kB raw and 0.98 kB gzip on first paint. (The figures this replaces were
+ * 572.25 → 575.04 and 169.01 → 170.17, quoting a 1.16 kB gzip delta. The delta
+ * is the number that matters and it did not reproduce; the absolutes move with
+ * every change to the entry graph, so they are only meaningful with the head
+ * they were taken at, which is why this one says so.)
+ *
+ * AND WHAT IT REVEALS is worth saying out loud, because it is a cost of a
+ * different kind: the production bundle of this app now contains a list of 179
+ * identifiers naming most of its internal components and screens. That is
+ * readable by anyone who loads the app. It is not customer data and this app has
+ * no security that depends on the names of its components — the bundle already
+ * contains its whole client-side behaviour — but it is a more complete map of
+ * the app than the minified code alone was, and it is the kind of thing worth
+ * knowing before deciding to grow this list.
  *
  * So in production this list mostly REDACTS, and the trail degrades to a depth
  * plus the handful of labels React hardcodes (`Suspense`, `Lazy`, `Memo`). That

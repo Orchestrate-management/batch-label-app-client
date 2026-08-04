@@ -440,10 +440,24 @@ reached us automatically", which on that build is true. **A production build of 
 install the sink and start sending.** There is still no DSN in this repo and no placeholder that
 could be mistaken for one; the value lives only in Vercel.
 
-Read that as the merge condition it is. The gate on shipping this is not the code — it is the
-Sentry DPA, which is not signed. Merging starts personal data flowing to a processor with no
-Article 28 contract in place. See the www privacy notice work, which lands first for the same
-reason.
+**THE MERGE GATE IS CLEARED. IT WAS THE DPA AND THE REGION, AND BOTH ARE DONE.** This paragraph
+used to read "the gate on shipping this is not the code — it is the Sentry DPA, which is not
+signed". Rhys has now **signed Sentry's DPA**, and has **confirmed the region is EU on the
+organisation** (in Sentry the region is fixed when the org is created and cannot be changed
+afterwards, so confirming it on the org — not on the project — was the check that mattered; the
+www privacy notice asserts Frankfurt on the strength of it). So merging no longer starts personal
+data flowing to a processor with no Article 28 contract in place.
+
+What remains before merge is one thing and it is in the other repo: **the www privacy notice has to
+name what an error report contains and be true of this branch's head.** It lands first, and it has
+to land with any change here that alters the transmitted field set — `error-sink.test.ts` pins that
+set and its failure message says so.
+
+**Retention, now known rather than open:** Sentry keeps error events **30 days on the Developer
+plan and 90 days on Team and Business**. It is a plan property, not a setting, and **data already
+stored keeps the retention period it was collected under** — so moving up a plan does not
+retroactively lengthen retention on old events, and moving down does not shorten it. The privacy
+notice should say the period that applies to the plan we are actually on.
 
 The DSN is checked for shape before anything is installed, and the client `init` returns is checked
 after, because the failure that matters is silent: a half-installed sink makes that sentence a lie.
@@ -497,15 +511,22 @@ in `index.html`, and the marketing repo sets no headers either. So nothing block
 **If a CSP is ever added to this app, `connect-src` must include the DSN's host** — and it is the
 DSN's host, not `*.sentry.io`, because the region lives there.
 
-**Still Rhys's, and not doable here — and the first one now BLOCKS MERGE rather than blocking
-launch.** Enter into Sentry's DPA: it is not automatic, it binds whoever accepts it, and with the
-DSN already live in Vercel the only thing standing between customer error data and an unsigned
-Article 28 relationship is that this branch is not merged. Confirm too that the region is set on
-the **organisation** — in Sentry it is fixed when the org is created and cannot be changed
-afterwards, and the privacy notice now asserts Frankfurt. Naming Sentry as a processor is done, on
-www. Source maps are not uploaded, so frames arrive
-as `/assets/<chunk>.js:line:col` until a release step exists — that needs `@sentry/vite-plugin` and
-an auth token, which is its own decision.
+**Still Rhys's, and not doable here — but no longer blocking merge, because both of these are
+DONE.** The DPA is signed (it is not automatic and it binds whoever accepts it, which is why it was
+the gate), and the region is confirmed EU on the **organisation** rather than only on the project.
+Naming Sentry as a processor is done, on www.
+
+**What is genuinely left, and none of it blocks merge:**
+
+- *Source maps are not uploaded,* so frames arrive as `/assets/<chunk>.js:line:col` and stay
+  unresolved. That needs `@sentry/vite-plugin` and an auth token, which is its own decision — and
+  note that `frames[].filename` is now held to the list of scripts the page actually fetched (see
+  `LOADED SCRIPTS` in `src/lib/scrub-report.ts`), so a release step changing `entryFileNames`
+  changes nothing about what may be sent.
+- *The www privacy notice* has to name the transmitted field set and match this head. That is the
+  one remaining pre-merge item and it is in the other repo.
+- *Retention* is 30 days on Developer and 90 on Team/Business, with stored data keeping the period
+  it was collected under. Nothing to configure; something to state accurately on www.
 
 **The gap.** `src/lib/report-error.ts` is a seam, not an integration. `setErrorSink()` is exported
 and called by nothing, so today every report is a structured `console.error` on the maker's own
