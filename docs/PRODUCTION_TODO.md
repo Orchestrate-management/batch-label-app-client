@@ -385,13 +385,22 @@ scrubber, so a `Sentry.captureException(error)` added anywhere in this app in a 
 rather than sending a raw message. That last one is asserted against the real SDK with the
 transport replaced, not against a stand-in.
 
-**IT IS COMPLETE AND INERT, AND THAT IS PERMANENT, NOT A STAGING STATE.** Nobody here has a DSN —
-creating the Sentry project is Rhys's. With `VITE_SENTRY_DSN` unset, `installErrorSink()` installs
-no sink at all, `@sentry/react` is never even fetched, `hasErrorSink()` stays false and the crash
-screen goes on saying "This has not reached us automatically" — which on that build is true. There
-is no DSN in this repo and no placeholder that could be mistaken for one. The DSN is also checked
-for shape before anything is installed, and the client `init` returns is checked after, because the
-failure that matters is silent: a half-installed sink makes that sentence a lie.
+**IT IS INERT WHEREVER `VITE_SENTRY_DSN` IS ABSENT — WHICH IS NO LONGER PRODUCTION.** Rhys has
+created the Sentry project, in the **EU region**, and has set `VITE_SENTRY_DSN` on Vercel
+production. So the honest statement is narrower than it was: a build without the variable — local
+dev, and any preview that does not inherit it — installs no sink at all, `@sentry/react` is never
+even fetched, `hasErrorSink()` stays false and the crash screen goes on saying "This has not
+reached us automatically", which on that build is true. **A production build of this branch will
+install the sink and start sending.** There is still no DSN in this repo and no placeholder that
+could be mistaken for one; the value lives only in Vercel.
+
+Read that as the merge condition it is. The gate on shipping this is not the code — it is the
+Sentry DPA, which is not signed. Merging starts personal data flowing to a processor with no
+Article 28 contract in place. See the www privacy notice work, which lands first for the same
+reason.
+
+The DSN is checked for shape before anything is installed, and the client `init` returns is checked
+after, because the failure that matters is silent: a half-installed sink makes that sentence a lie.
 
 **Loaded on demand, deliberately.** A static import would put the vendor into the entry graph —
 the set a maker must download before route `/` draws anything, which entry 8 measured and this
@@ -410,17 +419,22 @@ so Rollup emitted a **494 kB (163 kB gzip)** chunk for a file that uses two func
 the import — `.then(({ init, captureEvent }) => …)` — makes the same chunk **89 kB (30 kB gzip)**.
 Off the critical path is not the same as free: a maker still downloads it on every load.
 
-**THE PROJECT DOES NOT EXIST YET AND NOTHING HERE PRETENDS IT DOES.** Nobody on this branch has a
-DSN; creating the Sentry account and project is Rhys's, and until he does it every build of this
-app is the inert one described above. There is no DSN in this repo, no placeholder that could be
-mistaken for one, and the two DSN-shaped strings in `error-sink.test.ts` are under the reserved
-`.invalid` TLD, which by RFC 2606 can never resolve.
+**THE PROJECT EXISTS, IN THE EU REGION, AND THE DSN IS SET ON VERCEL PRODUCTION.** No DSN is in
+this repo and there is no placeholder that could be mistaken for one; the two DSN-shaped strings in
+`error-sink.test.ts` are under the reserved `.invalid` TLD, which by RFC 2606 can never resolve.
 
-**When he does make it, prefer an EU project, and there is nothing to change in the code for that.**
-`@sentry/core` builds the ingest URL out of the DSN's own host, so an `ingest.de.sentry.io` DSN
-posts to the EU host by itself. There is no ingest hostname, no `region` option and no `tunnel`
-anywhere in this repo, and there must not be — a hardcoded host is a thing that silently stops
-matching the DSN.
+**The EU region needs no code change, and that was verified rather than assumed.** `@sentry/core`
+builds the ingest URL out of the DSN's own host, so an `ingest.de.sentry.io` DSN posts to the EU
+host by itself. There is no ingest hostname, no `region` option — none exists in `BrowserOptions` —
+and no `tunnel` anywhere in this repo, and there must not be: a hardcoded host is a thing that
+silently stops matching the DSN, and `tunnel` is the only setting that would override it.
+
+**Two things about the region that the word "EU" hides, and both belong in a privacy conversation
+rather than in this file's summary of them.** Storage in that region is Frankfurt, but account and
+org settings, access tokens, audit logs, project metadata and the DSN keys themselves sit in the US
+regardless of region. And there is no EU entity to contract with — the counterparty is Functional
+Software, Inc. So "the data is in the EU" is not a sentence anyone should repeat to a customer
+without qualification. The www privacy notice states the qualified version.
 
 **CONTENT SECURITY POLICY: THERE ISN'T ONE, IN EITHER REPO.** Checked because an EU ingest host
 missing from a `connect-src` fails silently — every test passes, the code is correct, and no error
@@ -429,10 +443,13 @@ in `index.html`, and the marketing repo sets no headers either. So nothing block
 **If a CSP is ever added to this app, `connect-src` must include the DSN's host** — and it is the
 DSN's host, not `*.sentry.io`, because the region lives there.
 
-**Still Rhys's, and not doable here:** create the Sentry project and set `VITE_SENTRY_DSN` in
-Vercel — until that happens none of this sends anything, which is the state it was written to be
-safe in. Then name Sentry as a processor in www's privacy notice and review the DPA; an EU project
-makes that the easier version of the conversation. Source maps are not uploaded, so frames arrive
+**Still Rhys's, and not doable here — and the first one now BLOCKS MERGE rather than blocking
+launch.** Enter into Sentry's DPA: it is not automatic, it binds whoever accepts it, and with the
+DSN already live in Vercel the only thing standing between customer error data and an unsigned
+Article 28 relationship is that this branch is not merged. Confirm too that the region is set on
+the **organisation** — in Sentry it is fixed when the org is created and cannot be changed
+afterwards, and the privacy notice now asserts Frankfurt. Naming Sentry as a processor is done, on
+www. Source maps are not uploaded, so frames arrive
 as `/assets/<chunk>.js:line:col` until a release step exists — that needs `@sentry/vite-plugin` and
 an auth token, which is its own decision.
 
