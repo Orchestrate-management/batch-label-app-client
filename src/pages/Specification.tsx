@@ -45,9 +45,9 @@ import {
 import { useMaterials } from '../lib/materials-store';
 import { categoryById } from '../lib/categories';
 import { addressForMarket } from '../lib/identity';
+import { useEntitlement } from '../lib/entitlement';
 import { saveComposition } from '../lib/products';
 import { recordEvidence, recordSdsSectionReviewed } from '../lib/evidence';
-import { useEntitlement } from '../lib/entitlement';
 import { useProduct, useProducts } from '../lib/product-store';
 import {
   Obligation,
@@ -150,6 +150,9 @@ function SpecificationView({ product }: {product: Product;}) {
   const category = categoryById(product.categoryId);
   useCategorySurface(product.categoryId);
   const { reload } = useProducts();
+  // For the record log only. A saved composition writes a line saying so, and the account it
+  // is filed under comes from the entitlement, never from this screen. See lib/records.ts.
+  const entitlement = useEntitlement();
 
   const [spec, setSpec] = useState<Spec>(product.spec);
   const [market, setMarket] = useState<Market>(product.markets[0]);
@@ -194,7 +197,7 @@ function SpecificationView({ product }: {product: Product;}) {
     setSaveError(null);
     setPartialSave(false);
     setSaved(false);
-    const result = await saveComposition(product, spec);
+    const result = await saveComposition(product, spec, entitlement.accountId);
     setSaving(false);
     if (!result.ok) {
       setSaveError(result.message);
