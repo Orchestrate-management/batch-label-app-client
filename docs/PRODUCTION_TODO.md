@@ -364,15 +364,61 @@ against the four literals that exist rather than a slug shape, because a call si
 interpolating a product id into it is still slug-shaped; the error `name`, matched against a list because
 `error.name` is writable and `error.name = product.name` passes any identifier check; the message
 ONLY if it matches one of the recognised forms, with the variable parts redacted; the ROUTE
-PATTERN rather than the URL; stack frames rebuilt into function/path/line/column with the origin
-and any query dropped; React component names.
+PATTERN rather than the URL; stack frames rebuilt into path/line/column with the origin and any
+query dropped; React component names.
 
-**What does not:** any message we do not recognise (it leaves as a 32-bit fingerprint and nothing
-else, which is what keeps unknown faults grouping); the `stack` as a string, because V8 puts the
+**What does not:** any message we do not recognise (it leaves as a 16-bit fingerprint and nothing
+else, which is what keeps unknown faults grouping); **a stack frame's function name**, because V8
+infers function names from data — `{ [batch.code]: fn }` produces `at Object.BL240417A (…)`, it
+survives minification, and no shape check can tell it from `deriveHazards`; the `stack` as a string, because V8 puts the
 whole unredacted message on its first line and `ScreenNotLoaded` appends a second one as
 `caused by:`; the URL, in particular `/products/<uuid>` and `?session_id=` — a uuid is not safe to
 send because it is a uuid, it names a product that may not have launched; anything React puts in a
 minified error's `?args[]=`; and every field `ErrorReport` grows next.
+
+**Four things were tightened after the fact, and each one had a false comment next to it.**
+
+- **The redaction fingerprint was reversible and the file said it was not.** Removed text carried
+  `[redacted:xxxxxxxx]`, a 32-bit FNV-1a of the removed value. Run against the real exported
+  `digest`: a formulation percentage came back uniquely from all 10,001 candidates between 0.00 and
+  100.00, a supplier name uniquely from 4,096, and 99.995% of a generated 312,000-name candle
+  catalogue came back uniquely from its tag. A 32-bit hash only collides freely when the candidate
+  space approaches 2^32; a maker's catalogue is a few hundred names and the template around the tag
+  is public. The per-value tags are **gone** — they contributed nothing to grouping, because
+  `eventFor` fingerprints on `[name, messageDigest]` and Sentry never reads the exception value
+  here. The surviving `messageDigest` is now taken over **the text we send** when the message was
+  recognised (so the removed value never enters a fingerprint at all: all 124,800 catalogue names
+  produce one identical tag) and over the original **only** when it was not recognised, where
+  nothing else separates two unknown faults — and there it is **16 bits**, which on the same
+  catalogue leaves 5.8 candidates per tag instead of one while keeping 65,536 issue buckets.
+
+- **`frames[].function` was the one field whose default for an unanticipated string was SEND.** It
+  is dropped, above. `filename` + `lineno` + `colno` are what Sentry's source-map resolution needs.
+
+- **The scrubber's mark was forgeable.** `beforeSend` looked for the literal `scrubbed: 'yes'`, so
+  one `Sentry.setTag('scrubbed', 'yes')` on a scope anywhere would have waved a raw exception
+  message and absolute file paths through. The mark is now minted from the CSPRNG at module load,
+  is not exported, and is swapped for `'yes'` on the way out so the wire carries the fact and not
+  the key.
+
+- **`infer_ip` is asserted on the transmitted bytes.** `dataCollection` is a deny-list at the SDK
+  layer: `resolveDataCollectionOptions` switches its baseline to an all-TRUE `DEFAULTS` the moment
+  the option is non-null, so `dataCollection: {}` — or the same object with one key deleted —
+  produces `sdk.settings.infer_ip: "auto"` and Relay stores the end user's IP on every event. No
+  allow-list in this app can catch that: `_enhanceEventWithSdkInfo` runs *after* `beforeSend`. So
+  the object is typed to require every category by name (a category added in an SDK minor is a
+  typecheck failure, not a silent opt-in) and the test parses the real envelope and requires
+  `infer_ip === "never"` with no `user` key, with a negative control that deletes a key and watches
+  it become `"auto"`.
+
+**The vendor chunk is no longer emitted on a build that cannot use it.** `installErrorSink` checks
+the DSN before importing, so a DSN-less build never *fetched* the 89.46 kB chunk — but Rollup
+followed the dynamic import and wrote it anyway, into every preview deploy and every local `dist`.
+A build-only Vite plugin resolves `@sentry/react` to a two-line stub when `VITE_SENTRY_DSN` is
+unset, and the chunk drops to 0.07 kB. The stub's `init` returns `undefined`, which is the value
+`installErrorSink` already reads as "the SDK declined to start", so the crash screen's copy stays
+true. The plugin logs which way it went on every build, because the failure worth naming is a DSN
+set in Vercel that `loadEnv` cannot see.
 
 **The SDK is not allowed to collect around it.** `defaultIntegrations: false` with `integrations:
 []` removes breadcrumbs (console, DOM clicks, fetch, XHR and history — a transcript of a maker's

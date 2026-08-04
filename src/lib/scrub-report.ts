@@ -53,8 +53,9 @@ import type { ErrorReport } from './report-error';
  *   route       NOT the URL — the matched ROUTE PATTERN, e.g. '/products/:productId'.
  *               See scrubRoute: a product id in a path segment identifies a
  *               customer's product, and a query string can hold anything at all.
- *   frames      Function name, script path, line and column — reconstructed
- *               from the stack rather than passed through. See scrubStack.
+ *   frames      Script path, line and column — reconstructed from the stack
+ *               rather than passed through, and deliberately WITHOUT the
+ *               function name. See scrubStack.
  *   components  React component names only, from the componentStack.
  *
  * And what leaves is ONLY that. `scrubReport` names each field explicitly rather
@@ -63,17 +64,65 @@ import type { ErrorReport } from './report-error';
  * a reason. There is a test that holds that property.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * ON HASHING RATHER THAN SIMPLY DELETING
+ * THE ONE FINGERPRINT THAT LEAVES, AND WHAT IT IS AND IS NOT
  * ─────────────────────────────────────────────────────────────────────────────
  *
- * Text that is removed is replaced by `[redacted:xxxxxxxx]`, where the suffix is
- * a 32-bit FNV-1a of the removed text. That is a GROUPING FINGERPRINT and is not
- * offered as a security primitive: it means two occurrences of the same unknown
- * fault land in the same issue instead of scattering into hundreds, which is
- * most of what an error tracker is for. Thirty-two bits is deliberately short —
- * it collides freely, so a match is weak evidence and it is useless as a way to
- * recover the text it stands for. It is not reversible; it is also not a secret,
- * and nothing here relies on it being one.
+ * Removed text is replaced by `[redacted]` AND NOTHING ELSE. It used to carry a
+ * per-value tag — `[redacted:d311c481]`, a 32-bit FNV-1a of the removed text —
+ * and the comment here used to say that tag was "useless as a way to recover the
+ * text it stands for". That was false, and it was disproved by running this
+ * file's own exported `digest`:
+ *
+ *   - the formulation percentage `12.43` was recovered UNIQUELY from all 10,001
+ *     candidates between 0.00 and 100.00;
+ *   - the supplier `Aromatica Fragrances Europe Ltd` was recovered UNIQUELY from
+ *     4,096 plausible supplier names;
+ *   - across a generated 312,000-name candle catalogue, 311,984 names — 99.995%
+ *     — were recovered UNIQUELY from their tag.
+ *
+ * The same attack is in scrub-report.test.ts, run over 124,800 names so it costs
+ * the suite a second rather than half a minute, and it is run against the OLD
+ * function and the new one side by side so the numbers below stay checkable.
+ *
+ * A 32-bit hash only collides freely when the candidate space approaches 2^32. A
+ * maker's catalogue is a few hundred names, and the template around the tag is
+ * not secret: for a runtime fault it is V8's own fixed wording, for one of ours a
+ * string literal in the shipped bundle. So the tag was a dictionary attack with
+ * the dictionary supplied.
+ *
+ * The per-value tags are gone, and they cost nothing to lose: `eventFor` groups
+ * on `[name, messageDigest]`, so Sentry never reads the exception value for
+ * grouping here and the inner tags contributed NOTHING to triage. They were one
+ * guessing oracle per redacted value in exchange for nothing.
+ *
+ * ONE FINGERPRINT REMAINS, `messageDigest`, and TWO things were done to it.
+ *
+ * FIRST, IT IS NO LONGER TAKEN OVER THE CUSTOMER'S TEXT WHEN THERE IS ANYTHING
+ * ELSE TO TAKE IT OVER. A recognised message is a template we shipped with the
+ * customer's value removed, so the digest is taken over the text we SEND — the
+ * template — and the removed value never enters a fingerprint at all. Width does
+ * not fix that case and narrowing alone would not have: a formulation percentage
+ * lives in a space of 10,001 candidates, and 16 bits over the whole message
+ * still names it uniquely (measured). Digesting the template instead means all
+ * 10,001 produce the SAME tag, which is no information at all. Same for the
+ * 312,000-name catalogue below: every name now yields one identical tag.
+ *
+ * SECOND, IT IS SIXTEEN BITS, which is what protects the case where there IS
+ * nothing else — an unrecognised message, where the original text is the only
+ * thing separating two unknown faults, so the digest has to be taken over it.
+ * Measured on a generated 312,000-name catalogue put into free-text messages:
+ * 32 bits named one candidate per tag (99.995% of the catalogue uniquely), 16
+ * bits leaves 5.8 candidates on average and 0.85% uniquely. And 16 bits is still
+ * 65,536 issue buckets — at ~200 distinct unknown messages, 0.3 expected
+ * collided pairs over the life of the project, which is far more separation than
+ * an unknown-fault stream needs.
+ *
+ * IT IS NOT A ONE-WAY FUNCTION AND THIS COMMENT WILL NOT CALL IT ONE. What is
+ * true is narrower and is the whole claim: no fingerprint that leaves this file
+ * takes a value we redacted as its input, and the one that takes an original
+ * message takes one an attacker would have to reconstruct in full — template
+ * included — before a 16-bit match told them anything, and a match would then
+ * still leave several thousand other messages that produce it.
  *
  * PURE, AND IN ITS OWN FILE, ON PURPOSE. Everything below is a function of its
  * arguments — no `window`, no clock, no Sentry — because the one thing this
@@ -82,10 +131,13 @@ import type { ErrorReport } from './report-error';
  * imports nothing but a type.
  */
 
-/** A stack frame, reduced to the four things that are ours rather than a customer's. */
+/**
+ * A stack frame, reduced to the three things that are ours rather than a customer's.
+ *
+ * THERE IS NO `function`, AND ITS ABSENCE IS THE FIX FOR A REAL LEAK. See
+ * scrubStack.
+ */
 export interface ScrubbedFrame {
-  /** A function name from our own code, or a placeholder. */
-  function: string;
   /** A script path under an allow-listed prefix, or a placeholder. Never an origin. */
   filename: string;
   lineno?: number;
@@ -100,7 +152,10 @@ export interface ScrubbedReport {
   message: string;
   /** False when the message was not recognised and so was replaced wholesale. */
   messageRecognised: boolean;
-  /** Fingerprint of the ORIGINAL message, so unknown faults still group. */
+  /**
+   * The grouping fingerprint — of the text we SEND when we recognised the
+   * message, and of the original only when we did not. See `scrubReport`.
+   */
   messageDigest: string;
   at: string;
   route: string;
@@ -117,7 +172,19 @@ const MAX_COMPONENTS = 30;
 const MAX_MESSAGE = 200;
 
 /**
- * FNV-1a, 32-bit. See the header: a grouping fingerprint, not a security primitive.
+ * FNV-1a, folded to sixteen bits. See the header for what this is and is not.
+ *
+ * THE WIDTH IS THE WHOLE POINT AND IT IS NOT A ROUND NUMBER BY ACCIDENT. Thirty-
+ * two bits made this function a lookup table for anything a guesser could
+ * enumerate — measured, 99.995% of a 312,000-name catalogue came back uniquely.
+ * Sixteen leaves 5.8 candidates on that same space while keeping 65,536 issue
+ * buckets, which is more separation than a stream of unknown faults has ever
+ * needed. It is a DELIBERATE loss of precision; do not widen it back to make
+ * grouping tidier without measuring what it hands out.
+ *
+ * Folded rather than truncated (`(h >>> 16) ^ (h & 0xffff)`) because that is
+ * FNV's own prescription for a shorter tag: every input bit still reaches the
+ * output, so the collisions are spread rather than concentrated on the low half.
  *
  * Written out rather than reached for, because the alternatives are a dependency
  * (for eight lines) or SubtleCrypto (which is async, and this runs inside a crash
@@ -129,12 +196,8 @@ export function digest(value: string): string {
     hash ^= value.charCodeAt(index);
     hash = Math.imul(hash, 0x01000193);
   }
-  return (hash >>> 0).toString(16).padStart(8, '0');
-}
-
-/** The placeholder that stands in for removed text, carrying its fingerprint. */
-function redacted(removed: string): string {
-  return `[redacted:${digest(removed)}]`;
+  const folded = ((hash >>> 16) ^ hash) & 0xffff;
+  return folded.toString(16).padStart(4, '0');
 }
 
 /**
@@ -172,6 +235,28 @@ const SCREEN_NAMES = [
 
 
 /**
+ * The four provider hooks, WHOLE, because the shape check was not one.
+ *
+ * `use([A-Za-z]{1,32}) must be used inside ([A-Za-z]{1,48})` was the only entry
+ * in the table below that echoed BOTH of its captures verbatim — up to eighty
+ * characters of arbitrary text, on the argument that both captures are code
+ * identifiers by construction. They are, today, from these four throw sites. But
+ * "by construction" is a property of the call sites and not of the pattern, and
+ * the pattern is what runs: a hook named after a product, or an error whose
+ * message merely FITS that sentence, walks straight through it.
+ *
+ * So the sentence is a list, on the same argument as SCREEN_NAMES, KNOWN_SOURCES
+ * and KNOWN_ERROR_NAMES. Grep `must be used inside` to see all four; add a
+ * provider and forget this and its message is redacted rather than sent.
+ */
+const PROVIDER_HOOK_MESSAGES = [
+'useAuth must be used inside AuthProvider',
+'useWorkspace must be used inside WorkspaceProvider',
+'useProducts must be used inside ProductsProvider',
+'useEntitlement must be used inside EntitlementProvider'];
+
+
+/**
  * The messages this app is allowed to say out loud, and how each one is rendered
  * once its variable parts are removed.
  *
@@ -198,9 +283,14 @@ const SCREEN_NAMES = [
 const RECOGNISED: Array<{pattern: RegExp;render: (match: RegExpExecArray) => string;}> = [
 // ── ours
 {
-  // The four provider hooks. Both captures are code identifiers by construction.
+  // The four provider hooks — matched for shape, then held to the LIST. See
+  // PROVIDER_HOOK_MESSAGES: this was the one entry here that echoed arbitrary
+  // text, and it is now the one entry that echoes a string we shipped.
   pattern: /^use([A-Za-z]{1,32}) must be used inside ([A-Za-z]{1,48})$/,
-  render: (m) => `use${m[1]} must be used inside ${m[2]}`
+  render: (m) =>
+  PROVIDER_HOOK_MESSAGES.includes(m[0]) ?
+  m[0] :
+  `use${REDACTED} must be used inside ${REDACTED}`
 },
 { pattern: /^plan catalogue is empty$/, render: () => 'plan catalogue is empty' },
 {
@@ -217,7 +307,7 @@ const RECOGNISED: Array<{pattern: RegExp;render: (match: RegExpExecArray) => str
   // is one we know we wrote — see SCREEN_NAMES.
   pattern: /^The code for the ([A-Za-z]{1,24}) screen could not be downloaded\.$/,
   render: (m) =>
-  `The code for the ${SCREEN_NAMES.includes(m[1]) ? m[1] : redacted(m[1])} screen ` +
+  `The code for the ${SCREEN_NAMES.includes(m[1]) ? m[1] : REDACTED} screen ` +
   'could not be downloaded.'
 },
 {
@@ -229,28 +319,28 @@ const RECOGNISED: Array<{pattern: RegExp;render: (match: RegExpExecArray) => str
 // ── the runtime's
 {
   pattern: /^Cannot read properties of (undefined|null) \(reading '([\s\S]*)'\)$/,
-  render: (m) => `Cannot read properties of ${m[1]} (reading '${redacted(m[2])}')`
+  render: (m) => `Cannot read properties of ${m[1]} (reading '${REDACTED}')`
 },
 {
   pattern: /^Cannot set properties of (undefined|null) \(setting '([\s\S]*)'\)$/,
-  render: (m) => `Cannot set properties of ${m[1]} (setting '${redacted(m[2])}')`
+  render: (m) => `Cannot set properties of ${m[1]} (setting '${REDACTED}')`
 },
 {
   // Safari's wording for the same fault.
   pattern: /^(undefined|null) is not an object \(evaluating '([\s\S]*)'\)$/,
-  render: (m) => `${m[1]} is not an object (evaluating '${redacted(m[2])}')`
+  render: (m) => `${m[1]} is not an object (evaluating '${REDACTED}')`
 },
 {
   pattern: /^([\s\S]+) is not a function$/,
-  render: (m) => `${redacted(m[1])} is not a function`
+  render: () => `${REDACTED} is not a function`
 },
 {
   pattern: /^([\s\S]+) is not iterable$/,
-  render: (m) => `${redacted(m[1])} is not iterable`
+  render: () => `${REDACTED} is not iterable`
 },
 {
   pattern: /^([\s\S]+) is not defined$/,
-  render: (m) => `${redacted(m[1])} is not defined`
+  render: () => `${REDACTED} is not defined`
 },
 {
   // EVERY React invariant in a production build arrives looking like this, so
@@ -269,11 +359,11 @@ const RECOGNISED: Array<{pattern: RegExp;render: (match: RegExpExecArray) => str
   // reaching us from below `ScreenNotLoaded`. The URL is redacted: it is our own
   // asset path today and there is no rule that says it must stay that way.
   pattern: /^Failed to fetch dynamically imported module:?\s*([\s\S]*)$/,
-  render: (m) => `Failed to fetch dynamically imported module: ${redacted(m[1])}`
+  render: () => `Failed to fetch dynamically imported module: ${REDACTED}`
 },
 {
   pattern: /^error loading dynamically imported module:?\s*([\s\S]*)$/,
-  render: (m) => `error loading dynamically imported module: ${redacted(m[1])}`
+  render: () => `error loading dynamically imported module: ${REDACTED}`
 },
 {
   pattern: /^Importing a module script failed\.$/,
@@ -350,19 +440,20 @@ const ALLOWED_SCRIPT_PREFIXES = ['/assets/', '/src/', '/node_modules/'];
 const SCRIPT_PATH = /^\/[A-Za-z0-9._@/-]{1,200}$/;
 
 /**
- * A function name as our own code produces one. `Object.<anonymous>`,
- * `ProductsProvider`, `Array.map` all pass; anything else is redacted rather
- * than trusted, because a name is cheap to check and a mistake here is a string
- * from who-knows-where going out in a field labelled "function".
+ * What a script's path may END in, which is the other half of the prefix check.
  *
- * NO SPACE IN THE CLASS, and that is not tidiness. The frame patterns below are
- * shape-matchers run over every line of a stack, and a MESSAGE line that happens
- * to end in `:12:5` parses as a frame — at which point whatever preceded it is
- * about to be sent in the function field. Requiring a single unbroken identifier
- * costs nothing real (`new Foo` and `async foo` are handled by stripping the
- * keyword) and means a stray "Lavender Dream" cannot pass for one.
+ * The prefix alone said "anything at all, as long as it starts with /assets/",
+ * and the way arbitrary text reaches this function is a MESSAGE line that parses
+ * as a frame — `at go (/assets/Winter-Fig-unlaunched:1:2)` is a stack line as far
+ * as the patterns below are concerned. Requiring an extension a bundler or a dev
+ * server actually emits costs nothing and refuses that line.
+ *
+ * IT NARROWS, IT DOES NOT CLOSE: `/assets/Winter-Fig.js` would still pass, and no
+ * shape check can tell that path from a real chunk. What makes the case remote is
+ * that a path only gets here from a stack, and V8 writes those from real script
+ * URLs — this is the belt, and `scrubMessage` is the braces.
  */
-const FUNCTION_NAME = /^[A-Za-z_$][A-Za-z0-9_$.<>]{0,79}$/;
+const SCRIPT_SUFFIXES = ['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.css', '.map'];
 
 /** V8: `    at fn (url:1:2)`, and `    at url:1:2` with no function at all. */
 const V8_FRAME = /^\s*at\s+(?:(.+?)\s+\()?(.+?):(\d+):(\d+)\)?\s*$/;
@@ -389,6 +480,7 @@ function scrubScriptPath(location: string): string {
   }
   if (!SCRIPT_PATH.test(path)) return REDACTED;
   if (!ALLOWED_SCRIPT_PREFIXES.some((prefix) => path.startsWith(prefix))) return REDACTED;
+  if (!SCRIPT_SUFFIXES.some((suffix) => path.endsWith(suffix))) return REDACTED;
   return path;
 }
 
@@ -408,6 +500,31 @@ function boundedPosition(raw: string): number | undefined {
  * was looking at. Only lines that parse as a frame survive; everything else —
  * headers, causes, blank lines, whatever a future Error subclass appends — is
  * dropped because it is not on the list.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE FUNCTION NAME IS PARSED AND THEN THROWN AWAY, AND THAT IS THE POINT
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * It used to be sent, held to an identifier shape. That made it the ONE field in
+ * this file whose default answer for a string nobody anticipated was SEND —
+ * every neighbour here is checked against a list, and a shape check cannot be
+ * one, because V8 INFERS FUNCTION NAMES FROM DATA. Run this and read the stack:
+ *
+ *     const handlers = { [batch.code]: function () { throw new Error('x') } };
+ *     handlers[batch.code]();
+ *
+ * V8 writes `at Object.BL240417A (/assets/index-a1b2c3.js:2:53)`, and a batch
+ * code is exactly the kind of value this app holds. `Object.defineProperty(fn,
+ * 'name', …)` and a class named from data do the same. Minification does not
+ * save us either: esbuild mangles local bindings and not property names, so the
+ * computed key survives into the bundle and into the frame. And an identifier
+ * shape cannot tell `BL240417A` from `deriveHazards` — nothing can.
+ *
+ * WHAT IT COST TO DROP: nothing Sentry needs. `filename`, `lineno` and `colno`
+ * are already sent and are precisely what its source-map resolution consumes to
+ * name the real symbol; grouping here is our own `fingerprint`, not the frames.
+ * In a production build the name would have been a mangled two-letter binding
+ * anyway — except in the one case that leaked.
  */
 export function scrubStack(stack: string | undefined): ScrubbedFrame[] {
   if (typeof stack !== 'string' || stack.length === 0) return [];
@@ -416,20 +533,10 @@ export function scrubStack(stack: string | undefined): ScrubbedFrame[] {
     if (frames.length >= MAX_FRAMES) break;
     const match = V8_FRAME.exec(line) ?? AT_FRAME.exec(line);
     if (!match) continue;
-    const rawFunction = (match[1] ?? '').trim().replace(/^(?:async|new)\s+/, '');
-    const filename = scrubScriptPath(match[2].trim());
+    // match[1] is the function name. It is matched so that the rest of the line
+    // parses, and deliberately not read — see above.
     frames.push({
-      // TIED TO THE FILE, deliberately. A frame we cannot place in our own build
-      // is a frame whose function name we have no reason to vouch for either —
-      // an injected script, an extension, or a line of a message that parsed
-      // like a frame. Dropping both costs us nothing we could have acted on.
-      function:
-      filename === REDACTED ?
-      REDACTED :
-      rawFunction.length === 0 ?
-      '<anonymous>' :
-      shaped(rawFunction, FUNCTION_NAME, REDACTED),
-      filename,
+      filename: scrubScriptPath(match[2].trim()),
       lineno: boundedPosition(match[3]),
       colno: boundedPosition(match[4])
     });
@@ -623,6 +730,18 @@ function oneOf(value: string | undefined, known: string[], fallback: string): st
  * else entirely, with no reason to think about this file — starts being sent to
  * a third party the moment it is added. Naming each field is the allow-list;
  * there is a test that fails if this ever becomes a spread.
+ *
+ * `messageDigest` IS TAKEN OVER WHAT WE SEND, NOT OVER WHAT WE WERE GIVEN —
+ * except in the one case where there is nothing else to take it over. When a
+ * message was RECOGNISED, the text that goes out is a template we shipped and
+ * the only thing removed from it is the customer's; digesting the original there
+ * would put the customer's value back into a grouping key, which is precisely the
+ * oracle the header describes — and it would buy nothing, because two events
+ * with the same rendered text are two events a triager cannot tell apart in the
+ * issue list anyway. When it was NOT recognised, the text that goes out is
+ * `[unrecognised:…]` and the original is the ONLY thing that separates two
+ * different unknown faults, so the digest is taken over it and that residual is
+ * named in the header rather than hidden.
  */
 export function scrubReport(report: ErrorReport, href: string | null): ScrubbedReport {
   const rawMessage = typeof report.message === 'string' ? report.message : '';
@@ -633,7 +752,7 @@ export function scrubReport(report: ErrorReport, href: string | null): ScrubbedR
     name: oneOf(report.name, KNOWN_ERROR_NAMES, REDACTED),
     message: message.text,
     messageRecognised: message.recognised,
-    messageDigest: digest(rawMessage),
+    messageDigest: message.recognised ? digest(message.text) : digest(rawMessage),
     at: shaped(report.at, ISO_TIMESTAMP, ''),
     route: scrubRoute(href),
     frames: scrubStack(report.stack),

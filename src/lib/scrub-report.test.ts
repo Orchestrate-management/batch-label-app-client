@@ -73,8 +73,8 @@ describe('what a real crash on a real product sends', () => {
     expect(scrubbed.message).toMatch(/^Cannot read properties of undefined \(reading/);
     expect(scrubbed.route).toBe('/products/:productId');
     expect(scrubbed.components).toEqual(['Specification', 'ErrorBoundary']);
-    expect(scrubbed.frames[0]).toMatchObject({
-      function: 'deriveHazards',
+    // No `function` — see scrubStack. The position is what resolves to a symbol.
+    expect(scrubbed.frames[0]).toEqual({
       filename: '/assets/Specification-C6POi-On.js',
       lineno: 12,
       colno: 3456
@@ -132,6 +132,15 @@ describe('the message', () => {
       text: 'useProducts must be used inside ProductsProvider',
       recognised: true
     });
+    // …and only the four we actually wrote. The shape check that used to stand
+    // in for this echoed BOTH captures verbatim, which is up to eighty
+    // characters of arbitrary text in the one message form that does that.
+    const invented = scrubMessage(
+      'useMidnightFigNoSevenCandle must be used inside RobertetRoseAbsoluteEurope'
+    );
+    expect(invented.text).not.toContain('MidnightFig');
+    expect(invented.text).not.toContain('Robertet');
+    expect(invented.text).toBe('use[redacted] must be used inside [redacted]');
     expect(scrubMessage('plan catalogue request failed (503)')).toEqual({
       text: 'plan catalogue request failed (503)',
       recognised: true
@@ -154,8 +163,12 @@ describe('the message', () => {
 
   it('keeps the browser template and redacts what the browser put in it', () => {
     const { text } = scrubMessage("Cannot read properties of null (reading 'lavender_dream')");
-    expect(text).toBe(`Cannot read properties of null (reading '${'[redacted:' + digest('lavender_dream') + ']'}')`);
+    // `[redacted]` AND NOTHING ELSE. It used to be `[redacted:<32-bit digest of
+    // the removed text>]`, which was a per-value guessing oracle — see the
+    // dictionary attack below and the header of scrub-report.ts.
+    expect(text).toBe("Cannot read properties of null (reading '[redacted]')");
     expect(text).not.toContain('lavender_dream');
+    expect(text).not.toContain(digest('lavender_dream'));
   });
 
   it('lets the deploy signal through, because it is one character', () => {
@@ -276,7 +289,7 @@ describe('the stack', () => {
       '    at fetchChunk (https://app.batchlabel.xyz/assets/index-CQDYjleZ.js:2:1)'
     );
     expect(JSON.stringify(frames)).not.toContain('Winter Fig');
-    expect(frames.map((frame) => frame.function)).toEqual(['loadMaterials', 'fetchChunk']);
+    expect(frames.map((frame) => frame.lineno)).toEqual([4, 2]);
   });
 
   it('keeps the path and drops the origin', () => {
@@ -302,36 +315,228 @@ describe('the stack', () => {
     expect(frame.filename).not.toContain('Winter');
   });
 
-  it('names an anonymous frame rather than dropping it', () => {
-    // A frame with no function is still a position in our own code.
+  it('keeps a frame with no function at all, because it is still a position', () => {
     const [frame] = scrubStack('    at https://app.batchlabel.xyz/assets/index-abc.js:5:7');
-    expect(frame).toEqual({
-      function: '<anonymous>',
-      filename: '/assets/index-abc.js',
-      lineno: 5,
-      colno: 7
-    });
+    expect(frame).toEqual({ filename: '/assets/index-abc.js', lineno: 5, colno: 7 });
   });
 
   it('reads Safari and Firefox frames too', () => {
     const [frame] = scrubStack('deriveHazards@https://app.batchlabel.xyz/assets/x.js:9:4');
-    expect(frame).toMatchObject({ function: 'deriveHazards', filename: '/assets/x.js', lineno: 9 });
+    expect(frame).toEqual({ filename: '/assets/x.js', lineno: 9, colno: 4 });
+  });
+
+  it('sends no function name, because V8 infers those from a maker\'s own data', () => {
+    // THE FIELD IS GONE, AND THIS IS WHY. A batch code used as an object key
+    // becomes a function name, in a real V8 stack, in a production-shaped chunk:
+    //
+    //   const handlers = { [batch.code]: function () { throw new Error('x') } }
+    //
+    // V8 writes `at Object.BL240417A (…)`. It survives minification — esbuild
+    // mangles bindings, not property names — and no shape check can tell that
+    // string from `deriveHazards`.
+    const frames = scrubStack(
+      'Error: recompute failed\n' +
+      '    at Object.BL240417A (/assets/index-a1b2c3.js:2:53)\n' +
+      '    at deriveHazards (/assets/index-a1b2c3.js:9:1)'
+    );
+    expect(JSON.stringify(frames)).not.toContain('BL240417A');
+    expect(frames).toEqual([
+    { filename: '/assets/index-a1b2c3.js', lineno: 2, colno: 53 },
+    { filename: '/assets/index-a1b2c3.js', lineno: 9, colno: 1 }]
+    );
+    // What is left is exactly what Sentry resolves a symbol from.
+    expect(Object.keys(frames[0])).toEqual(['filename', 'lineno', 'colno']);
   });
 
   it('will not let a message line masquerade as a frame', () => {
     // A message that happens to end in :line:col parses as a frame. When it
-    // does, the file is not one of ours — and the function name goes with it,
-    // rather than being sent because it happened to look like an identifier.
+    // does, the file is not one of ours and the whole frame says so.
     const [frame] = scrubStack('    at Lavender (Ambrox 12.5%:3:1)');
     expect(frame.filename).toBe('[redacted]');
-    expect(frame.function).toBe('[redacted]');
     expect(JSON.stringify(frame)).not.toContain('Lavender');
+  });
+
+  it('wants a script extension as well as an allow-listed prefix', () => {
+    // The prefix on its own said "anything, as long as it starts with /assets/",
+    // and the way arbitrary text reaches here is a message line that parses.
+    expect(scrubStack('    at go (/assets/WinterFigAndCassis-unlaunched:1:2)')[0].filename).toBe(
+      '[redacted]'
+    );
+    expect(scrubStack('    at go (/assets/index-abc.js:1:2)')[0].filename).toBe(
+      '/assets/index-abc.js'
+    );
+    expect(scrubStack('    at go (/src/lib/derive.ts:1:2)')[0].filename).toBe('/src/lib/derive.ts');
   });
 
   it('has a floor and a ceiling: no stack is empty, no stack is unbounded', () => {
     expect(scrubStack(undefined)).toEqual([]);
     const huge = Array.from({ length: 200 }, (_, i) => `    at f${i} (/assets/a.js:1:2)`).join('\n');
     expect(scrubStack(huge).length).toBeLessThanOrEqual(30);
+  });
+});
+
+/**
+ * THE ATTACK THAT WORKED, RUN AGAINST THE FUNCTION THAT SHIPPED.
+ *
+ * `[redacted:xxxxxxxx]` carried a 32-bit FNV-1a of the text it replaced, and the
+ * file said that made it "useless as a way to recover the text it stands for".
+ * It did not. A tag is only safe when the candidate space approaches 2^32, and a
+ * candle maker's catalogue is a few hundred names in a shape anyone can generate.
+ * Both halves are exercised below with the real exported `digest`, so the claim
+ * this file now makes is the one the code has.
+ */
+describe('the fingerprint, and what a guesser can do with it', () => {
+  const FIRST = [
+  'Midnight', 'Winter', 'Amber', 'Velvet', 'Smoked', 'Wild', 'Black', 'Golden',
+  'Copper', 'Frosted', 'Burnt', 'Salted', 'Bitter', 'Sun', 'Moss', 'Storm',
+  'Rose', 'Cedar', 'Fig', 'Oud', 'Vetiver', 'Neroli', 'Tonka', 'Cassis',
+  'Pepper', 'Saffron', 'Iris', 'Linen', 'Driftwood', 'Ember', 'Hearth', 'Tide',
+  'Harvest', 'Solstice', 'Equinox', 'Lantern', 'Orchard', 'Meadow', 'Thicket', 'Hollow',
+  'Slate', 'Marble', 'Ink', 'Ash', 'Peat', 'Birch', 'Alder', 'Sorrel',
+  'Quince', 'Damson', 'Sloe', 'Bergamot', 'Yuzu', 'Clove', 'Anise', 'Myrrh',
+  'Labdanum', 'Benzoin', 'Ambrette', 'Immortelle'];
+
+  const SECOND = [
+  'Fig', 'Rose', 'Cassis', 'Cedarwood', 'Oud', 'Vetiver', 'Amber', 'Musk',
+  'Jasmine', 'Tuberose', 'Lily', 'Violet', 'Peony', 'Magnolia', 'Osmanthus', 'Mimosa',
+  'Sandalwood', 'Patchouli', 'Oakmoss', 'Labdanum', 'Tobacco', 'Leather', 'Suede', 'Cashmere',
+  'Vanilla', 'Tonka', 'Praline', 'Honey', 'Fir', 'Pine', 'Spruce', 'Juniper',
+  'Bergamot', 'Neroli', 'Petitgrain', 'Mandarin', 'Grapefruit', 'Lime', 'Basil', 'Mint',
+  'Sage', 'Thyme', 'Lavender', 'Rosemary', 'Cardamom', 'Cinnamon', 'Nutmeg', 'Ginger',
+  'Saffron', 'Pepper', 'Pimento', 'Coriander'];
+
+  const SIZES = ['20cl', '30cl', '35cl', '50cl'];
+
+  /** 60 × 52 × 10 × 4 = 124,800 names in the shape a real maker uses. */
+  const CATALOGUE: string[] = [];
+  for (const first of FIRST) {
+    for (const second of SECOND) {
+      for (let number = 1; number <= 10; number += 1) {
+        for (const size of SIZES) {
+          CATALOGUE.push(`${first} ${second} No. ${number} Candle ${size}`);
+        }
+      }
+    }
+  }
+
+  /** What a V8 null-read puts on the wire when the property key is a product. */
+  const messageFor = (name: string) =>
+  `Cannot read properties of undefined (reading '${name}')`;
+
+  /** The 32-bit FNV-1a this file used to ship, so the two can be compared here. */
+  function digest32(value: string): string {
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < value.length; index += 1) {
+      hash ^= value.charCodeAt(index);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0).toString(16).padStart(8, '0');
+  }
+
+  /** Brute-force the whole catalogue against one tag function, and score it. */
+  function attack(tagOf: (name: string) => string) {
+    const buckets = new Map<string, number>();
+    for (const name of CATALOGUE) {
+      const tag = tagOf(name);
+      buckets.set(tag, (buckets.get(tag) ?? 0) + 1);
+    }
+    let unique = 0;
+    let survivors = 0;
+    for (const count of buckets.values()) {
+      if (count === 1) unique += 1;
+      // Every name in a bucket of n has n candidates surviving its own tag.
+      survivors += count * count;
+    }
+    return {
+      uniqueShare: unique / CATALOGUE.length,
+      meanSurvivors: survivors / CATALOGUE.length
+    };
+  }
+
+  /** What actually goes on the wire as the grouping key, for one product name. */
+  const shippedDigestFor = (message: string) =>
+  scrubReport(
+    {
+      reference: 'K7QP-3MTX',
+      source: 'render',
+      name: 'TypeError',
+      message,
+      at: '2026-08-04T09:15:22.481Z'
+    },
+    null
+  ).messageDigest;
+
+  it('is sixteen bits, and says so in four hex characters', () => {
+    expect(digest('Failed to save batch BL-2026-0417')).toMatch(/^[0-9a-f]{4}$/);
+    expect(Number.parseInt(digest('anything at all'), 16)).toBeLessThan(65536);
+  });
+
+  it('put a per-value tag next to every redaction, and no longer does', () => {
+    // The tag was one oracle per redacted value, and it bought nothing: eventFor
+    // fingerprints on [name, messageDigest], so Sentry never reads the exception
+    // value for grouping and the inner tags were not part of triage at all.
+    const secret = 'Midnight Fig No. 7 Candle 30cl';
+    const sent = scrubMessage(messageFor(secret)).text;
+    expect(sent).toBe("Cannot read properties of undefined (reading '[redacted]')");
+    expect(sent).not.toMatch(/\[redacted:/);
+    expect(sent).not.toContain(digest(secret));
+    expect(sent).not.toContain(digest32(secret));
+  });
+
+  it('recovered a formulation percentage and a supplier from 32 bits', () => {
+    // The two smallest spaces, and the ones this app most obviously holds. NOTE
+    // that narrowing the hash would NOT have saved the percentage: 10,001
+    // candidates against a 16-bit tag over the whole message still comes back
+    // with one. That is why the fix below is about the INPUT, not the width.
+    const percentages = Array.from({ length: 10_001 }, (_, i) => (i / 100).toFixed(2));
+    const tag = digest32('12.43');
+    expect(percentages.filter((p) => digest32(p) === tag)).toEqual(['12.43']);
+    expect(digest32('Aromatica Fragrances Europe Ltd')).toBe('09ce5a4a');
+  });
+
+  it('gives a recognised message a tag that owes nothing to the value removed', () => {
+    // THE FIX THAT MATTERS. `Cannot read properties of undefined (reading 'X')`
+    // is V8's own fixed wording, so a guesser who has the template needs only to
+    // enumerate X — which for a candle catalogue is a generated list. The digest
+    // is now taken over the text we SEND, which is the template with X gone, so
+    // all 124,800 names produce one identical tag and a brute force learns which
+    // of them it was with probability 1 in 124,800.
+    const before = attack((name) => digest32(messageFor(name)));
+    const after = attack((name) => shippedDigestFor(messageFor(name)));
+
+    expect(before.uniqueShare).toBeGreaterThan(0.999);
+    expect(before.meanSurvivors).toBeLessThan(1.01);
+
+    expect(after.uniqueShare).toBe(0);
+    expect(after.meanSurvivors).toBe(CATALOGUE.length);
+    // Same tag for a percentage, a supplier and a product: the template only.
+    expect(shippedDigestFor(messageFor('12.43'))).toBe(
+      shippedDigestFor(messageFor('Aromatica Fragrances Europe Ltd'))
+    );
+  });
+
+  it('leaves several thousand candidates when only the original will do', () => {
+    // An UNRECOGNISED message is the one case where the original text has to be
+    // digested — it is the only thing separating two unknown faults. So this is
+    // where the width earns its keep, on the same 124,800 names.
+    const asFreeText = (name: string) => `Failed to derive hazards for ${name}`;
+    expect(scrubMessage(asFreeText('x')).recognised).toBe(false);
+
+    const before = attack((name) => digest32(asFreeText(name)));
+    const after = attack((name) => shippedDigestFor(asFreeText(name)));
+
+    expect(before.uniqueShare).toBeGreaterThan(0.999);
+    expect(before.meanSurvivors).toBeLessThan(1.01);
+    // 16 bits: a tag no longer names a product, and most names share theirs.
+    expect(after.uniqueShare).toBeLessThan(0.25);
+    expect(after.meanSurvivors).toBeGreaterThan(2);
+  });
+
+  it('still groups: same message, same fingerprint; different message, different bucket', () => {
+    // The other half of the bargain, and the reason the digest exists at all.
+    // 16 bits is 65,536 buckets, which is the separation being traded for.
+    expect(digest('Save failed for BL-2026-0417')).toBe(digest('Save failed for BL-2026-0417'));
+    expect(digest('Save failed for BL-2026-0417')).not.toBe(digest('Save failed for BL-2026-0418'));
   });
 });
 

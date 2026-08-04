@@ -230,6 +230,49 @@ describe('beforeSend, the last gate before the network', () => {
     ).toBeNull();
   });
 
+  it('drops an event whose mark was FORGED, not just one that has none', () => {
+    // The gate advertises itself as the thing that makes a stray
+    // `Sentry.captureException` harmless. While the mark was the literal 'yes',
+    // one `Sentry.setTag('scrubbed', 'yes')` on a scope anywhere in the app
+    // undid that for every event the scope touched — a raw exception message and
+    // absolute file paths, straight onto the wire. The mark is now minted in
+    // error-sink.ts at module load and is not exported, so it cannot be written
+    // down anywhere else.
+    const forged = {
+      tags: { scrubbed: 'yes' },
+      exception: {
+        values: [
+        {
+          type: 'Error',
+          value: 'Winter Fig & Cassis (Robertet) at 8.5%',
+          stacktrace: { frames: [{ filename: '/Users/rhys/batchlabel/src/lib/derive.ts' }] }
+        }]
+
+      }
+    };
+    expect(beforeSend(forged)).toBeNull();
+  });
+
+  it('says on the wire that an event was scrubbed, without saying what the mark is', () => {
+    // The issue list still carries the fact. It does not carry the value, which
+    // would let the next event forge it.
+    const kept = beforeSend(
+      eventFor(
+        scrubReport(
+          {
+            reference: 'K7QP-3MTX',
+            source: 'render',
+            name: 'TypeError',
+            message: 'Failed to fetch',
+            at: '2026-08-04T09:15:22.481Z'
+          },
+          null
+        )
+      )
+    );
+    expect(kept.tags.scrubbed).toBe('yes');
+  });
+
   it('strips anything the SDK attached that we did not choose', () => {
     // The integrations that add these are all off, so today this removes
     // nothing. It exists so that turning one back on, or an SDK upgrade adding
@@ -325,9 +368,40 @@ describe('the event a scrubbed report becomes', () => {
 
   it('orders the frames the way Sentry renders them, oldest first', () => {
     const frames = (
-    event.exception as {values: [{stacktrace: {frames: {function: string;}[];};}];}).
+    event.exception as {values: [{stacktrace: {frames: {filename: string;lineno: number;}[];};}];}).
     values[0].stacktrace.frames;
-    expect(frames.map((frame) => frame.function)).toEqual(['renderWithHooks', 'deriveHazards']);
+    expect(frames.map((frame) => frame.lineno)).toEqual([1, 12]);
+    expect(frames.map((frame) => frame.filename)).toEqual([
+    '/assets/react-2p8.js',
+    '/assets/Specification-C6.js']
+    );
+  });
+
+  it('sends no function name on any frame', () => {
+    // The field is gone from ScrubbedFrame because V8 infers function names from
+    // data — `{ [batch.code]: fn }` becomes `at Object.BL240417A (…)`, and no
+    // shape check can tell that from `deriveHazards`. filename + lineno + colno
+    // is what Sentry's source-map resolution needs to name the real symbol.
+    const withABatchCode = eventFor(
+      scrubReport(
+        {
+          reference: 'K7QP-3MTX',
+          source: 'render',
+          name: 'TypeError',
+          message: 'Failed to fetch',
+          stack:
+          'TypeError: recompute failed\n' +
+          '    at Object.BL240417A (https://app.batchlabel.xyz/assets/index-a1b2c3.js:2:53)',
+          at: '2026-08-04T09:15:22.481Z'
+        },
+        null
+      )
+    );
+    expect(JSON.stringify(withABatchCode)).not.toContain('BL240417A');
+    const frames = (
+    withABatchCode.exception as {values: [{stacktrace: {frames: object[];};}];}).
+    values[0].stacktrace.frames;
+    expect(Object.keys(frames[0])).toEqual(['filename', 'lineno', 'colno', 'in_app']);
   });
 
   it('groups an unrecognised message by its digest rather than by its text', () => {
@@ -386,6 +460,12 @@ const UNROUTABLE_DSN = 'https://0000000000000000000000000000000@o0.ingest.sentry
 describe('against the real @sentry/react, with the wire replaced', () => {
   const envelopes: unknown[] = [];
 
+  /** The event as it was serialised into the envelope, not as we built it. */
+  function eventOnTheWire(index = 0): Record<string, any> {
+    const envelope = envelopes[index] as [unknown, Array<[unknown, Record<string, any>]>];
+    return envelope?.[1]?.[0]?.[1];
+  }
+
   function realSentryWithStubTransport(): SentryLike {
     return {
       init: (options: BrowserOptions) =>
@@ -439,6 +519,71 @@ describe('against the real @sentry/react, with the wire replaced', () => {
     // serving this suite from https://app.batchlabel.xyz/. With the defaults off
     // it is not installed, and `beforeSend` would drop the field even if it were.
     expect(wire).not.toContain('batchlabel.xyz');
+  });
+
+  it('tells Sentry never to take the maker\'s IP address off the request', async () => {
+    // ASSERTED ON THE TRANSMITTED BYTES, AND IT HAS TO BE. `infer_ip` is not a
+    // field of the event we build — `createEventEnvelope` calls
+    // `_enhanceEventWithSdkInfo` AFTER `beforeSend` has returned, so
+    // `keepOnlyAllowedEventFields` never sees it and `scrubReport` is irrelevant
+    // to it. `dataCollection.userInfo: false` in sentryOptionsFor is the only
+    // thing that produces "never" here, and "never" is what stops Relay reading
+    // the end user's IP off the request and storing it on every event.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await installErrorSink(UNROUTABLE_DSN, () => Promise.resolve(realSentryWithStubTransport()));
+    reportError(new Error('Failed to fetch'), 'render');
+    await realSentry.flush(2000);
+
+    expect(envelopes).toHaveLength(1);
+    const event = eventOnTheWire();
+    expect(event.sdk.settings.infer_ip).toBe('never');
+    expect(event.user).toBeUndefined();
+    expect(JSON.stringify(envelopes)).not.toContain('ip_address');
+  });
+
+  it('would say "auto" if one key of dataCollection went missing', async () => {
+    // THE NEGATIVE CONTROL, so the assertion above is known to have teeth. It is
+    // also the upgrade case: @sentry/core's `resolveDataCollectionOptions`
+    // switches its baseline to an all-TRUE DEFAULTS object the moment
+    // `dataCollection` is non-null, so an unset category is an ON category —
+    // `dataCollection: {}` produces "auto" too, despite the SDK's own type doc
+    // saying `userInfo` defaults to false. That is why the object in
+    // error-sink.ts is typed to require every category by name: a category added
+    // in an SDK minor fails the typecheck instead of switching itself on.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const options = sentryOptionsFor(UNROUTABLE_DSN) as Record<string, any>;
+    delete options.dataCollection.userInfo;
+    await installErrorSink(UNROUTABLE_DSN, () =>
+    Promise.resolve({
+      init: () =>
+      realSentry.init({
+        ...(options as BrowserOptions),
+        transport: () => ({
+          send: (envelope: unknown) => {
+            envelopes.push(envelope);
+            return Promise.resolve({});
+          },
+          flush: () => Promise.resolve(true)
+        })
+      } as BrowserOptions),
+      captureEvent: (event) =>
+      realSentry.captureEvent(event as Parameters<typeof realSentry.captureEvent>[0])
+    })
+    );
+    reportError(new Error('Failed to fetch'), 'render');
+    await realSentry.flush(2000);
+
+    expect(envelopes).toHaveLength(1);
+    expect(eventOnTheWire().sdk.settings.infer_ip).toBe('auto');
+  });
+
+  it('carries the scrubber\'s mark as a fact and never as its value', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await installErrorSink(UNROUTABLE_DSN, () => Promise.resolve(realSentryWithStubTransport()));
+    reportError(new Error('Failed to fetch'), 'render');
+    await realSentry.flush(2000);
+
+    expect(eventOnTheWire().tags.scrubbed).toBe('yes');
   });
 
   it('sends nothing at all for a capture that did not come through the seam', async () => {

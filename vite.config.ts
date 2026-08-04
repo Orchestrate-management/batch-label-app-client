@@ -1,7 +1,62 @@
 import { gzipSync } from 'node:zlib'
-import { defineConfig, type Plugin } from 'vite'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { vendorChunkFor } from './src/build/vendor-chunks'
+
+/**
+ * DO NOT SHIP 89 kB OF ERROR REPORTER TO A BUILD THAT CANNOT REPORT ERRORS.
+ *
+ * `installErrorSink` checks the DSN before it imports anything, so on a build
+ * with `VITE_SENTRY_DSN` unset the vendor chunk is never fetched — that has a
+ * test and it stays true. But never fetched is not never emitted: Rollup follows
+ * the dynamic import regardless and writes the chunk, so every preview deploy
+ * and every developer's `dist` has carried 89.46 kB raw / 30.26 kB gzip of a
+ * vendor that build has no way to reach. Nobody downloads it; it is still
+ * deployed, and "deployed but unreachable" is a thing that stops being true
+ * quietly.
+ *
+ * So the import is resolved to a stub when there is no DSN. THE STUB IS NOT A
+ * DISABLED SENTRY — its `init` returns undefined, which is precisely the value
+ * `installErrorSink` already treats as "the SDK declined to start": no sink is
+ * installed, `hasErrorSink()` stays false, and the crash screen goes on telling
+ * the customer their failure has not reached us. On that build that is true, and
+ * it was already true before this plugin existed.
+ *
+ * BUILD ONLY, and it logs which way it went, because the failure mode worth
+ * naming is a DSN that is set in Vercel but not visible to `loadEnv`: the app
+ * would build inert with nothing red. `loadEnv` reads `process.env` as well as
+ * the `.env` files, which is how Vercel supplies it, and the line below is how
+ * you check.
+ */
+function sentryOnlyWhenThereIsADsn(dsn: string): Plugin {
+  const STUB = '\0batchlabel:sentry-absent'
+  return {
+    name: 'batchlabel:sentry-only-with-a-dsn',
+    apply: 'build',
+    // BEFORE `vite:resolve`, or this never sees the bare specifier: a normal-order
+    // plugin is asked only after Vite has already resolved '@sentry/react' to a
+    // path inside node_modules, and the chunk is emitted exactly as before.
+    enforce: 'pre',
+    buildStart() {
+      this.info(
+        dsn
+          ? 'VITE_SENTRY_DSN is set — bundling @sentry/react as an on-demand chunk'
+          : 'VITE_SENTRY_DSN is unset — @sentry/react is stubbed and not emitted'
+      )
+    },
+    resolveId(source) {
+      return !dsn && source === '@sentry/react' ? STUB : null
+    },
+    load(id) {
+      if (id !== STUB) return null
+      // The two named bindings lib/error-sink.ts destructures, and nothing else.
+      return (
+        'export function init() { return undefined }\n' +
+        'export function captureEvent() { return undefined }\n'
+      )
+    }
+  }
+}
 
 /**
  * THE NUMBER THE 500 kB WARNING USED TO STAND FOR.
@@ -62,8 +117,12 @@ function reportEntryGraph(limitBytes = 500 * 1024): Plugin {
 }
 
 // https://vitejs.dev/config/
-export default defineConfig({
-  plugins: [react(), reportEntryGraph()],
+export default defineConfig(({ mode }) => ({
+  plugins: [
+    react(),
+    reportEntryGraph(),
+    sentryOnlyWhenThereIsADsn((loadEnv(mode, process.cwd(), 'VITE_').VITE_SENTRY_DSN ?? '').trim())
+  ],
   build: {
     rollupOptions: {
       output: {
@@ -89,4 +148,4 @@ export default defineConfig({
       }
     }
   }
-})
+}))

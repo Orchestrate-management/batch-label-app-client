@@ -47,7 +47,10 @@ import { scrubReport, type ScrubbedReport } from './scrub-report';
  *      this app wants are its own (lib/global-errors.ts) and they feed the seam.
  *   2. `dataCollection` with every category set to false, so no cookies, no
  *      headers, no bodies, no query parameters and no stack-frame variables are
- *      collected even if some future integration would like to.
+ *      collected even if some future integration would like to — and, the one
+ *      that no allow-list here could have caught, `userInfo: false`, which is
+ *      what puts `infer_ip: "never"` on the wire and stops Sentry taking the
+ *      maker's IP address off the request. See NOTHING_COLLECTED_BY_THE_SDK.
  *   3. `beforeSend` DROPS ANY EVENT THAT DID NOT COME THROUGH `send` below —
  *      see SCRUBBED_TAG. Someone reaching for `Sentry.captureException(error)`
  *      directly, in a year, would otherwise ship a raw message. Now it silently
@@ -81,10 +84,52 @@ export const SENTRY_DSN: string = (env?.VITE_SENTRY_DSN ?? '').trim();
 const ENVIRONMENT: string = (env?.MODE ?? 'production').trim() || 'production';
 
 /**
- * The marker `beforeSend` looks for. Its value is not a secret and does not need
- * to be: it is a latch between two functions in this file, not an access check.
+ * The tag `beforeSend` looks for, and the value only this module can put in it.
+ *
+ * IT USED TO BE THE LITERAL 'yes', AND THAT MADE THE GATE A LABEL RATHER THAN A
+ * PROVENANCE CHECK. The gate advertises itself as the thing that makes a stray
+ * `Sentry.captureException` in some other file harmless — but one
+ * `Sentry.setTag('scrubbed', 'yes')` on a scope, anywhere, and every event that
+ * scope touches is waved through with a raw exception message and absolute file
+ * paths on it. Nothing in the app does that today; the point is that the promise
+ * was unenforced, and a gate whose key is written down next to the lock is not a
+ * gate.
+ *
+ * So the value is minted here, at module load, from the platform CSPRNG, and it
+ * is not exported. `eventFor` is the only thing that can put it on an event and
+ * `gateOutgoingEvent` is the only thing that reads it; nothing outside this file
+ * can guess it and nothing outside this module can name it.
+ *
+ * IT DOES NOT GO ON THE WIRE. The gate swaps it for the literal 'yes' on the way
+ * out, so the issue list still carries the fact that an event was scrubbed and
+ * the transmitted bytes do not carry a value that would let the next event forge
+ * it. Random per page load rather than per build for the same reason: a constant
+ * baked into the bundle is a constant an attacker can read out of the bundle.
  */
 const SCRUBBED_TAG = 'scrubbed';
+
+/** What the tag says on the wire once the gate has checked the real mark. */
+const SCRUBBED_ON_THE_WIRE = 'yes';
+
+function mintScrubberMark(): string {
+  try {
+    const source = (globalThis as {crypto?: {getRandomValues?: <T>(array: T) => T;};}).crypto;
+    if (source?.getRandomValues) {
+      const words = source.getRandomValues(new Uint32Array(4));
+      return Array.from(words, (word) => word.toString(16).padStart(8, '0')).join('');
+    }
+  } catch {
+    // No crypto, or a hostile one. Fall through — this is a latch, not a key,
+    // and it must never be the reason a crash report fails to be built.
+  }
+  let out = '';
+  for (let index = 0; index < 4; index += 1) {
+    out += Math.floor(Math.random() * 0x1_0000_0000).toString(16).padStart(8, '0');
+  }
+  return out;
+}
+
+const SCRUBBER_MARK = mintScrubberMark();
 
 /**
  * Is this a DSN, or is it a leftover, a placeholder or half a copy-paste?
@@ -224,11 +269,14 @@ export function eventFor(scrubbed: ScrubbedReport): SentryEvent {
         type: scrubbed.name,
         value: scrubbed.message,
         stacktrace: {
+          // No `function`: see scrubStack in lib/scrub-report.ts. filename +
+          // lineno + colno is what Sentry's source-map resolution needs to name
+          // the real symbol, and a function name is the one thing V8 will infer
+          // from a maker's own data.
           frames: scrubbed.frames.
           slice().
           reverse().
           map((frame) => ({
-            function: frame.function,
             filename: frame.filename,
             lineno: frame.lineno,
             colno: frame.colno,
@@ -239,12 +287,18 @@ export function eventFor(scrubbed: ScrubbedReport): SentryEvent {
 
     },
     // GROUPED BY US, NOT BY SENTRY. Its default grouping reads the exception
-    // value, and ours is `[unrecognised:1a2b3c4d]` for anything we did not
+    // value, and ours is `[unrecognised:1a2b]` for anything we did not
     // recognise — so the digest is what separates two different unknown faults,
     // and it has to be said out loud or every unknown error lands in one issue.
+    //
+    // AND IT IS WHY THE INNER `[redacted:…]` TAGS WERE FREE TO DELETE: grouping
+    // reads this line and nothing else, so a fingerprint on every redacted value
+    // was a guessing oracle bought for no triage at all. See scrub-report.ts.
     fingerprint: [scrubbed.name, scrubbed.messageDigest],
     tags: {
-      [SCRUBBED_TAG]: 'yes',
+      // The real mark, which `gateOutgoingEvent` swaps for 'yes' before this
+      // leaves. See SCRUBBED_TAG.
+      [SCRUBBED_TAG]: SCRUBBER_MARK,
       reference: scrubbed.reference,
       source: scrubbed.source,
       route: scrubbed.route,
@@ -258,6 +312,55 @@ export function eventFor(scrubbed: ScrubbedReport): SentryEvent {
     }
   };
 }
+
+/* ─────────────────────────────────────────────── what the SDK may collect itself */
+
+type DataCollection = NonNullable<BrowserOptions['dataCollection']>;
+
+/**
+ * `dataCollection` with EVERY CATEGORY REQUIRED, so a new one is a typecheck failure.
+ *
+ * THE OPTION IS A DENY-LIST AT THE SDK LAYER AND IT DEFAULTS THE WRONG WAY. Read
+ * `resolveDataCollectionOptions` in @sentry/core: the moment `dataCollection` is
+ * non-null it switches its baseline to a DEFAULTS object in which every value is
+ * TRUE, and then fills each unset key from it. So `dataCollection: {}` is not
+ * "collect nothing", it is "collect everything" — proved on the wire, where it
+ * produces `sdk.settings.infer_ip: "auto"` despite the SDK's own type doc saying
+ * `userInfo` defaults to false. Delete the one key `userInfo` from the object
+ * below and the same thing happens: Relay takes the end-user's IP address off
+ * the request and stores it on every event this app files.
+ *
+ * THE TWO ALLOW-LISTS IN THIS FILE CANNOT BACK THAT UP, which is why the type is
+ * doing the work instead. `createEventEnvelope` calls `_enhanceEventWithSdkInfo`
+ * AFTER `beforeSend` has returned, so `keepOnlyAllowedEventFields` never sees
+ * `sdk.settings` and `scrubReport` is irrelevant to it. There is no runtime gate
+ * downstream of this object; there is only this object.
+ *
+ * `Required<…>` over the SDK's own type means a category added in a minor
+ * release — which under the rule above would arrive switched ON — fails
+ * `npm run typecheck` with "property missing" rather than shipping quietly. The
+ * nested bags are re-required for the same reason. `queryParams` is excluded
+ * deliberately: it is the SDK's deprecated alias for `urlQueryParams`, which is
+ * set below, and the resolver reads it only when `urlQueryParams` is unset.
+ */
+type EveryDataCollectionCategory = Required<Omit<DataCollection, 'queryParams'>> & {
+  httpHeaders: Required<NonNullable<DataCollection['httpHeaders']>>;
+  graphQL: Required<NonNullable<DataCollection['graphQL']>>;
+  genAI: Required<NonNullable<DataCollection['genAI']>>;
+};
+
+const NOTHING_COLLECTED_BY_THE_SDK: EveryDataCollectionCategory = {
+  userInfo: false,
+  cookies: false,
+  httpHeaders: { request: false, response: false },
+  httpBodies: [],
+  urlQueryParams: false,
+  graphQL: { document: false, variables: false },
+  genAI: { inputs: false, outputs: false },
+  databaseQueryData: false,
+  stackFrameVariables: false,
+  frameContextLines: 0
+};
 
 /**
  * Everything handed to `Sentry.init`, as a value, so a test can read it.
@@ -297,20 +400,13 @@ export function sentryOptionsFor(dsn: string): BrowserOptions {
     // request hostname — which here would be the Supabase project host, added
     // to an Error a maker's screen may go on to display. Off.
     enhanceFetchErrorMessages: false,
-    // Every category, off. `sendDefaultPii` is the deprecated single switch for
-    // the same thing; setting both means one is ignored, so only this is set.
-    dataCollection: {
-      userInfo: false,
-      cookies: false,
-      httpHeaders: { request: false, response: false },
-      httpBodies: [],
-      urlQueryParams: false,
-      graphQL: { document: false, variables: false },
-      genAI: { inputs: false, outputs: false },
-      databaseQueryData: false,
-      stackFrameVariables: false,
-      frameContextLines: 0
-    },
+    // Every category, off, and exhaustive by construction — see
+    // NOTHING_COLLECTED_BY_THE_SDK for why the type is load-bearing here and
+    // why `userInfo: false` in particular is the only thing standing between a
+    // maker's IP address and Sentry. `sendDefaultPii` is the deprecated single
+    // switch for the same thing; setting both means one is ignored, so only
+    // this is set.
+    dataCollection: NOTHING_COLLECTED_BY_THE_SDK,
     /**
      * The last gate before the network, and the one that catches us rather than
      * the SDK: an event without the scrubber's mark is dropped whole. See the
@@ -325,10 +421,17 @@ export function sentryOptionsFor(dsn: string): BrowserOptions {
 /**
  * The last gate before the network. Exported so the test can put an event through
  * it directly as well as through the real client.
+ *
+ * The check is against the minted mark, not against a word — see SCRUBBED_TAG —
+ * so an event carrying `scrubbed: 'yes'` set on a scope by some other file is
+ * dropped exactly like an unmarked one. The mark is then replaced by 'yes' so it
+ * is the FACT and not the value that leaves.
  */
 export function gateOutgoingEvent(event: ErrorEvent): ErrorEvent | null {
-  if (!event || event.tags?.[SCRUBBED_TAG] !== 'yes') return null;
-  return keepOnlyAllowedEventFields(event);
+  if (!event || event.tags?.[SCRUBBED_TAG] !== SCRUBBER_MARK) return null;
+  const kept = keepOnlyAllowedEventFields(event);
+  if (kept.tags) kept.tags = { ...kept.tags, [SCRUBBED_TAG]: SCRUBBED_ON_THE_WIRE };
+  return kept;
 }
 
 /* ────────────────────────────────────────────────────────────────── installing */
