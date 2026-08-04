@@ -456,7 +456,76 @@ most affects what a paid vendor charges.
 **Where it bites.** `src/index.tsx` (the boot path), calling `reportError` from
 `src/lib/report-error.ts`. Nothing else moves.
 
-### 8. The entry chunk is still 570 kB, and 212 kB of it is the Supabase client
+### 8. The entry chunk is still 570 kB, and 212 kB of it is the Supabase client — DONE (a); (b) still not worth it
+
+**DONE** (commit `perf(8)`): option **(a)**, measured before and after rather than assumed.
+Option (b) was left alone, agreeing with the entry. Option (c) is still unavailable and (d) was
+the alternative (a) had to beat.
+
+**What (a) actually bought, measured on this branch.** The method: build, record every chunk;
+change one customer-visible string in a file that is in the entry chunk; build again; see which
+fingerprints moved. That is a deploy that changed only our own code, which is what nearly every
+deploy is.
+
+| | before | after |
+|---|---|---|
+| critical path (route `/`), raw | 578,158 B, one chunk | 577,643 B, **five** chunks |
+| critical path, gzip | **168,898 B** | **170,167 B** (+1,269 B, +0.75%) |
+| re-downloaded after a code-only deploy, gzip | 210,502 B (**the entire build**) | **91,787 B** |
+| …of which is on the critical path | **168,898 B** | **49,735 B** |
+
+So a returning maker after a deploy fetches **50 kB gzip instead of 169 kB before their first
+screen draws — 71% less** — and pays **1.3 kB extra, once, on a cold visit**. The entry
+predicted "about 119 kB instead of 570 kB"; the real figure is better than that, because
+Vite's hashing cascades: today a change to one of our files re-fingerprints *every* chunk in
+the build, including all nine on-demand screens, since they carry the entry chunk's file name.
+The vendor chunks are the only ones that break that chain, because nothing in them imports us.
+
+**What is split, and the rule for adding to it.** `@supabase/*` (218 kB), react + react-dom +
+scheduler (142 kB), react-router (23 kB), sonner (34 kB). The list is not "the big packages" —
+it is the packages route `/` cannot draw without, every one of which is in today's entry chunk
+already, which is the whole reason this cannot regress first paint. `lucide-react` is
+deliberately NOT on it: Vite emits two of its icons as their own on-demand chunks, and the
+one-line version of this rule (`if (id.includes('node_modules')) return 'vendor'`) would pull
+them forward. That version is shorter, reads as the obvious simplification, is a first-paint
+regression, and no build log would say so — so the rule lives in `src/build/vendor-chunks.ts`
+where a test can call it, and `src/build/vendor-chunks.test.ts` (7 tests) exercises exactly
+that boundary. A config cannot be imported from a jsdom test — esbuild refuses to start there —
+which is why the rule moved out of `vite.config.ts` rather than being scanned as source.
+
+**ONE THING THE SPLIT COSTS, AND IT IS THE STANDING RULE IN BUILD-OUTPUT FORM.** Rollup's
+"chunks are larger than 500 kB" warning **stops firing**, because no single chunk is over 500 kB
+any more. Not one byte has left the critical path. A build that reads better and is not is
+exactly what this codebase is not allowed to ship, and the entry itself says the warning is
+telling the truth and should be left firing. So the signal is replaced rather than lost: a
+small plugin in `vite.config.ts` prints the **entry graph** — the entry chunk plus everything
+it statically imports, which is the set a browser must hold before route `/` draws, dynamic
+imports deliberately excluded — and warns above the same 500 kB. It fires today, on the same
+weight, for the same reason:
+
+```
+[plugin:batchlabel:entry-graph-size] entry graph is 563.50 kB across 5 chunks (165.90 kB gzip)
+ — what route / must fetch before it can draw anything
+```
+
+**(b), the lazy Toaster: still no, and now with a number.** `sonner` is its own chunk at 9.56 kB
+gzip, so the trade the entry described is unchanged — 5.6% of what is left, against a
+confirmation toast a maker never sees if one fires before the chunk lands. Being its own file
+does mean that if the answer ever changes it is a one-line change with the cost already
+measured.
+
+**(c) is still not available** for the reason the entry gives, and it is worth restating because
+the split makes `supabase` look separable: it is a separate FILE, not a deferred one.
+`AuthProvider` calls `getSession()` on mount and the app renders nothing until it answers, so
+the browser waits for those 57 kB gzip either way.
+
+`src/build/vendor-chunks.ts` is not on the coverage floor in `vitest.config.ts`: the rule for
+that list is money, data, or a true sentence about a customer's compliance, and this is none of
+the three. It is fully covered by its own tests regardless.
+
+**Original entry follows.**
+
+### 8 (original). The entry chunk is still 570 kB, and 212 kB of it is the Supabase client
 
 **The gap.** Route-level splitting is done; the numbers are below. What is left on the critical
 path is almost all vendor code, and none of the remaining moves are free.
