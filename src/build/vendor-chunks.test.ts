@@ -75,7 +75,22 @@ describe('vite.config.ts', () => {
     // One 578 kB chunk became five, which silenced Rollup's own size warning without moving a
     // byte off the critical path. The plugin re-states the number that warning stood for. If it
     // goes, the build reads lighter than it is and nothing on screen says otherwise.
-    expect(source).toMatch(/plugins: \[react\(\), reportEntryGraph\(\)\]/);
+    //
+    // Matched on the plugin being INSTALLED rather than on the exact array literal: the list has
+    // more than two entries in it now, and a test that breaks when a plugin is added is a test
+    // that gets edited rather than read.
+    expect(source).toMatch(/plugins: \[[\s\S]*?reportEntryGraph\(\)/);
     expect(source).toMatch(/if \(raw > limitBytes\) this\.warn\(line\)/);
+  });
+
+  it('does not emit the error-reporting vendor on a build that has no DSN', () => {
+    // `installErrorSink` checks the DSN before it imports anything, so the chunk was never
+    // fetched — but Rollup followed the dynamic import and wrote 89.46 kB of it into every
+    // preview deploy regardless. `enforce: 'pre'` is load-bearing: without it the plugin is
+    // asked only after Vite has resolved the bare specifier to a path in node_modules, and the
+    // chunk comes out exactly as before.
+    expect(source).toMatch(/sentryOnlyWhenThereIsADsn/);
+    expect(source).toMatch(/enforce: 'pre'/);
+    expect(source).toMatch(/source === '@sentry\/react'/);
   });
 });

@@ -101,6 +101,17 @@ export default defineConfig({
         // that silently goes unrecorded or one crash filed three times, and the second is what
         // a paid vendor bills for.
         'src/lib/global-errors.ts',
+        // Where those reports now go (TODO entry 6). These two are on this list
+        // under a clause the rule above did not have to spell out, because until
+        // now nothing in this repo sent anything anywhere: scrub-report.ts is
+        // the ONLY thing deciding what of a customer's data leaves their
+        // machine for a third party, and error-sink.ts is the only thing that
+        // can install a transport for it. A mistake in the first is a supplier
+        // name or a formulation percentage in somebody else's database; a
+        // mistake in the second is the crash screen telling a customer their
+        // failure reached us when it did not.
+        'src/lib/scrub-report.ts',
+        'src/lib/error-sink.ts',
       ],
       thresholds: {
         lines: 70,

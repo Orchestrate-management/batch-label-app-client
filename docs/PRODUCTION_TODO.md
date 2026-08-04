@@ -339,7 +339,203 @@ product, and that is your call rather than a refactor.
 second mount can be told apart in the reports. The copy is `crashCopy()` in that file, guarded by
 the banned-register scan at the bottom of `src/components/ErrorBoundary.test.tsx`.
 
-### 6. Error reports go to the customer's own console and nowhere else
+### 6. Error reports go to the customer's own console and nowhere else — DONE (inert until Rhys makes the project)
+
+**DONE** (commit `feat(6)`): option **(a) Sentry on the free tier, with the payload restricted**,
+and the payload decided at the same time as the vendor, as this entry asked. Two new modules,
+`src/lib/scrub-report.ts` and `src/lib/error-sink.ts`; `setErrorSink` is called from one line of
+`src/index.tsx` and **no `reportError` call site moved**, which is what the seam was for.
+
+**THE SCRUBBER IS THE CHANGE. THE INTEGRATION IS THE SMALL HALF.** `scrub-report.ts` is pure,
+imports nothing but a type, and has its own test file, because "what leaves the machine" must be
+readable in one place rather than emergent from a vendor's configuration.
+
+**The rule is an ALLOW-LIST**, and the argument is entirely about which way each one fails. A
+deny-list — send the report, strip what looks like customer data — is safe until somebody adds a
+field to `ErrorReport`, throws a new kind of error, or upgrades the SDK; on that day it fails
+silently towards SEND and a formulation percentage appears in a third party's web UI with nothing
+going red. An allow-list fails towards DROP: the same day, the new value is `[redacted]`, somebody
+notices a gap in a dashboard, and the fix is a deliberate line in a diff. The price is real and is
+paid in maintenance — a route, a call site or an `Error` subclass that nobody adds to the lists in
+that file reports as redacted.
+
+**What leaves:** the reference (generated per report, meaningless elsewhere); the `source`, matched
+against the four literals that exist rather than a slug shape, because a call site that starts
+interpolating a product id into it is still slug-shaped; the error `name`, matched against a list because
+`error.name` is writable and `error.name = product.name` passes any identifier check; the message
+ONLY if it matches one of the recognised forms, with the variable parts redacted; the ROUTE
+PATTERN rather than the URL; stack frames rebuilt into path/line/column with the origin and any
+query dropped; React component names.
+
+**What does not:** any message we do not recognise (it leaves as a 16-bit fingerprint and nothing
+else, which is what keeps unknown faults grouping); **a stack frame's function name**, because V8
+infers function names from data — `{ [batch.code]: fn }` produces `at Object.BL240417A (…)`, it
+survives minification, and no shape check can tell it from `deriveHazards`; the `stack` as a string, because V8 puts the
+whole unredacted message on its first line and `ScreenNotLoaded` appends a second one as
+`caused by:`; the URL, in particular `/products/<uuid>` and `?session_id=` — a uuid is not safe to
+send because it is a uuid, it names a product that may not have launched; anything React puts in a
+minified error's `?args[]=`; and every field `ErrorReport` grows next.
+
+**Four things were tightened after the fact, and each one had a false comment next to it.**
+
+- **The redaction fingerprint was reversible and the file said it was not.** Removed text carried
+  `[redacted:xxxxxxxx]`, a 32-bit FNV-1a of the removed value. Run against the real exported
+  `digest`: a formulation percentage came back uniquely from all 10,001 candidates between 0.00 and
+  100.00, a supplier name uniquely from 4,096, and 99.995% of a generated 312,000-name candle
+  catalogue came back uniquely from its tag. A 32-bit hash only collides freely when the candidate
+  space approaches 2^32; a maker's catalogue is a few hundred names and the template around the tag
+  is public. The per-value tags are **gone** — they contributed nothing to grouping, because
+  `eventFor` fingerprints on `[name, messageDigest]` and Sentry never reads the exception value
+  here. The surviving `messageDigest` is now taken over **the text we send** when the message was
+  recognised (so the removed value never enters a fingerprint at all: all 124,800 catalogue names
+  produce one identical tag) and over the original **only** when it was not recognised, where
+  nothing else separates two unknown faults — and there it is **16 bits**, which on the same
+  catalogue leaves 5.8 candidates per tag instead of one while keeping 65,536 issue buckets.
+
+- **`frames[].function` was the one field whose default for an unanticipated string was SEND.** It
+  is dropped, above. `filename` + `lineno` + `colno` are what Sentry's source-map resolution needs.
+
+- **The scrubber's mark was forgeable.** `beforeSend` looked for the literal `scrubbed: 'yes'`, so
+  one `Sentry.setTag('scrubbed', 'yes')` on a scope anywhere would have waved a raw exception
+  message and absolute file paths through. The mark is now minted from the CSPRNG at module load,
+  is not exported, and is swapped for `'yes'` on the way out so the wire carries the fact and not
+  the key.
+
+- **`infer_ip` is asserted on the transmitted bytes.** `dataCollection` is a deny-list at the SDK
+  layer: `resolveDataCollectionOptions` switches its baseline to an all-TRUE `DEFAULTS` the moment
+  the option is non-null, so `dataCollection: {}` — or the same object with one key deleted —
+  produces `sdk.settings.infer_ip: "auto"` and Relay stores the end user's IP on every event. No
+  allow-list in this app can catch that: `_enhanceEventWithSdkInfo` runs *after* `beforeSend`. So
+  the object is typed to require every category by name (a category added in an SDK minor is a
+  typecheck failure, not a silent opt-in) and the test parses the real envelope and requires
+  `infer_ip === "never"` with no `user` key, with a negative control that deletes a key and watches
+  it become `"auto"`.
+
+**The vendor chunk is no longer emitted on a build that cannot use it.** `installErrorSink` checks
+the DSN before importing, so a DSN-less build never *fetched* the 89.46 kB chunk — but Rollup
+followed the dynamic import and wrote it anyway, into every preview deploy and every local `dist`.
+A build-only Vite plugin resolves `@sentry/react` to a two-line stub when `VITE_SENTRY_DSN` is
+unset, and the chunk drops to 0.07 kB. The stub's `init` returns `undefined`, which is the value
+`installErrorSink` already reads as "the SDK declined to start", so the crash screen's copy stays
+true. The plugin logs which way it went on every build, because the failure worth naming is a DSN
+set in Vercel that `loadEnv` cannot see.
+
+**The SDK is not allowed to collect around it.** `defaultIntegrations: false` with `integrations:
+[]` removes breadcrumbs (console, DOM clicks, fetch, XHR and history — a transcript of a maker's
+session), the global handlers, HttpContext (which attaches the page URL), culture context and
+session tracking. `dataCollection` is set with every category off, including
+`stackFrameVariables`, which would otherwise capture local variables — the most direct possible
+route for a formulation value. `enhanceFetchErrorMessages` is off because its default REWRITES the
+app's own `Error` objects. And `beforeSend` drops any event that did not come through the
+scrubber, so a `Sentry.captureException(error)` added anywhere in this app in a year sends nothing
+rather than sending a raw message. That last one is asserted against the real SDK with the
+transport replaced, not against a stand-in.
+
+**IT IS INERT WHEREVER `VITE_SENTRY_DSN` IS ABSENT — WHICH IS NO LONGER PRODUCTION.** Rhys has
+created the Sentry project, in the **EU region**, and has set `VITE_SENTRY_DSN` on Vercel
+production. So the honest statement is narrower than it was: a build without the variable — local
+dev, and any preview that does not inherit it — installs no sink at all, `@sentry/react` is never
+even fetched, `hasErrorSink()` stays false and the crash screen goes on saying "This has not
+reached us automatically", which on that build is true. **A production build of this branch will
+install the sink and start sending.** There is still no DSN in this repo and no placeholder that
+could be mistaken for one; the value lives only in Vercel.
+
+**THE MERGE GATE IS CLEARED. IT WAS THE DPA AND THE REGION, AND BOTH ARE DONE.** This paragraph
+used to read "the gate on shipping this is not the code — it is the Sentry DPA, which is not
+signed". Rhys has now **signed Sentry's DPA**, and has **confirmed the region is EU on the
+organisation** (in Sentry the region is fixed when the org is created and cannot be changed
+afterwards, so confirming it on the org — not on the project — was the check that mattered; the
+www privacy notice asserts Frankfurt on the strength of it). So merging no longer starts personal
+data flowing to a processor with no Article 28 contract in place.
+
+What remains before merge is one thing and it is in the other repo: **the www privacy notice has to
+name what an error report contains and be true of this branch's head.** It lands first, and it has
+to land with any change here that alters the transmitted field set — `error-sink.test.ts` pins that
+set and its failure message says so.
+
+**Retention, now known rather than open:** Sentry keeps error events **30 days on the Developer
+plan and 90 days on Team and Business**. It is a plan property, not a setting, and **data already
+stored keeps the retention period it was collected under** — so moving up a plan does not
+retroactively lengthen retention on old events, and moving down does not shorten it. The privacy
+notice should say the period that applies to the plan we are actually on.
+
+The DSN is checked for shape before anything is installed, and the client `init` returns is checked
+after, because the failure that matters is silent: a half-installed sink makes that sentence a lie.
+
+**Loaded on demand, deliberately.** A static import would put the vendor into the entry graph —
+the set a maker must download before route `/` draws anything, which entry 8 measured and this
+build prints on every run. The cost is that a crash in the few hundred milliseconds before the
+chunk lands reaches the console and nothing else; during that window `hasErrorSink()` is false, so
+the customer is told the truth. It is deliberately NOT buffered: a queue would make that sentence
+claim a report had reached us while it was still on the device. The entry graph moved 563.50 kB →
+571.78 kB (165.90 → 168.82 kB gzip), which is `scrub-report.ts` and `error-sink.ts` themselves; the
+vendor is in a chunk of its own and is not on it.
+
+**And a finding worth the next person's time: HOW you dynamically import it is worth 133 kB gzip.**
+`import('@sentry/react').then((module) => …)` takes the whole namespace, and `@sentry/react`
+re-exports the whole of `@sentry/browser` — session replay, user feedback, a browser-tracing
+integration for every router anyone has shipped. Nothing can be tree-shaken off a namespace object,
+so Rollup emitted a **494 kB (163 kB gzip)** chunk for a file that uses two functions. Destructuring
+the import — `.then(({ init, captureEvent }) => …)` — makes the same chunk **89 kB (30 kB gzip)**.
+Off the critical path is not the same as free: a maker still downloads it on every load.
+
+**THE PROJECT EXISTS, IN THE EU REGION, AND THE DSN IS SET ON VERCEL PRODUCTION.** No DSN is in
+this repo and there is no placeholder that could be mistaken for one; the two DSN-shaped strings in
+`error-sink.test.ts` are under the reserved `.invalid` TLD, which by RFC 2606 can never resolve.
+
+**The EU region needs no code change, and that was verified rather than assumed.** `@sentry/core`
+builds the ingest URL out of the DSN's own host, so an `ingest.de.sentry.io` DSN posts to the EU
+host by itself. There is no ingest hostname, no `region` option — none exists in `BrowserOptions` —
+and no `tunnel` anywhere in this repo, and there must not be: a hardcoded host is a thing that
+silently stops matching the DSN, and `tunnel` is the only setting that would override it.
+
+**Two things about the region that the word "EU" hides, and both belong in a privacy conversation
+rather than in this file's summary of them.** Storage in that region is Frankfurt, but account and
+org settings, access tokens, audit logs, project metadata and the DSN keys themselves sit in the US
+regardless of region. And the counterparty on the DPA is Functional Software, Inc., a US company.
+
+This line used to read "there is no EU entity to contract with", and that half-sentence cost a
+later reader a round trip: there IS a Sentry entity in the EU — Sentry Software Netherlands B.V. —
+and finding it makes the line look wrong. It is not the counterparty. It is Sentry's Article 27
+REPRESENTATIVE, the EU address a data subject or a supervisory authority writes to, and a
+representative is not a party to the processing agreement. So the correct statement is the narrow
+one: the processor you contract with is American, and the transfer is a transfer to the US whatever
+the storage region says. So "the data is in the EU" is not a sentence anyone should repeat to a
+customer without qualification. The www privacy notice states the qualified version, with the
+safeguards it relies on.
+
+**CONTENT SECURITY POLICY: THERE ISN'T ONE, IN EITHER REPO.** Checked because an EU ingest host
+missing from a `connect-src` fails silently — every test passes, the code is correct, and no error
+ever arrives. `vercel.json` here carries only a rewrite, there is no headers block, no CSP meta tag
+in `index.html`, and the marketing repo sets no headers either. So nothing blocks the EU host today.
+**If a CSP is ever added to this app, `connect-src` must include the DSN's host** — and it is the
+DSN's host, not `*.sentry.io`, because the region lives there.
+
+**Still Rhys's, and not doable here — but no longer blocking merge, because both of these are
+DONE.** The DPA is signed (it is not automatic and it binds whoever accepts it, which is why it was
+the gate), and the region is confirmed EU on the **organisation** rather than only on the project.
+Naming Sentry as a processor is done, on www.
+
+**What is genuinely left, and none of it blocks merge:**
+
+- *Source maps are not uploaded,* so frames arrive as `/assets/<chunk>.js:line:col` and stay
+  unresolved. That needs `@sentry/vite-plugin` and an auth token, which is its own decision — and
+  note that `frames[].filename` is now held to the list of scripts the page actually fetched (see
+  `LOADED SCRIPTS` in `src/lib/scrub-report.ts`), so a release step changing `entryFileNames`
+  changes nothing about what may be sent.
+- *The www privacy notice* has to name the transmitted field set and match this head. That is the
+  one remaining pre-merge item and it is in the other repo.
+- *Retention* is 30 days on Developer and 90 on Team/Business, with stored data keeping the period
+  it was collected under. Nothing to configure; something to state accurately on www.
+
+---
+
+*Everything below this line is the entry AS IT WAS WRITTEN, before any of the above existed. It
+described a seam with nothing behind it and asked Rhys to choose a vendor. He chose (a) and the
+payload decision that went with it, so the options are settled and the gap is closed — but the
+reasoning is kept because it is the argument the scrubber is built on, and the four leaks found
+since were all found by re-reading it. Read it as history, not as a to-do: `setErrorSink()` IS
+called now, there IS a vendor, and the answers are recorded above.*
 
 **The gap.** `src/lib/report-error.ts` is a seam, not an integration. `setErrorSink()` is exported
 and called by nothing, so today every report is a structured `console.error` on the maker's own
@@ -381,6 +577,7 @@ day this is decided; no call site moves. `hasErrorSink()` drives one sentence of
 are both on the coverage `include` list now, and both clear the per-file floor; `lazy-screen.ts`
 needed a test file of its own to get there (`lazyScreen` itself had none). The rest of this entry
 is untouched: no vendor, no dependency, no endpoint — that decision is Rhys's.
+*(Settled: Sentry, EU region, scrubbed payload. See the top of this entry.)*
 
 ### 7. Only render errors are caught; a failed promise in a handler is still invisible — DONE (listeners only)
 
