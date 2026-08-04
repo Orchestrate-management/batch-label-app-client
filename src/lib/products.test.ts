@@ -30,7 +30,13 @@ const db = vi.hoisted(() => {
     // What each UPDATE actually sent. Some of these columns are printed on a label, so the
     // difference between null and a falsy value is the difference between a field left blank
     // and a false declaration.
-    updatePayloads: [] as Array<[string, Record<string, unknown>]>
+    updatePayloads: [] as Array<[string, Record<string, unknown>]>,
+    // Which Postgres schema each read and write went through. Recorded rather than
+    // ignored: the domain tables moved out of `public` so a second brand can have
+    // its own `products`, and a client that quietly went back to `public` would
+    // read an empty decoy table and report "you have no products" — a silent,
+    // plausible, wrong answer, which is the shape this repo keeps finding.
+    schemas: [] as string[]
   };
 
   const query = (result: () => {data: unknown;error: unknown;}, onEq?: (column: string, value: unknown) => void) => {
@@ -54,6 +60,12 @@ const db = vi.hoisted(() => {
   };
 
   const supabase = {
+    // supabase-js returns a schema-scoped client; the fake returns itself and
+    // notes which schema was asked for.
+    schema(name: string) {
+      state.schemas.push(name);
+      return supabase;
+    },
     from(table: string) {
       return {
         insert(payload: Record<string, unknown>) {
@@ -1180,5 +1192,43 @@ describe('reading the products list without an account to scope it to', () => {
 
     expect(result.ok).toBe(true);
     expect(db.state.lookupFilters).toContainEqual(['account_id', 'acct-1111']);
+  });
+});
+
+describe('the schema every domain read and write goes through', () => {
+  /**
+   * `products` and `specifications` left `public` in 20260804120000 so that the
+   * next Orchestrate brand can have a `products` table meaning stock rather than
+   * candles. Nothing in the type system holds them there — `.schema()` takes a
+   * string — so this is the thing that notices a revert.
+   *
+   * The failure it guards against is quiet rather than loud: `public.products`
+   * does not exist after the move, so a client that drifted back would not throw
+   * a nice error. It would 404 on a schema PostgREST does not serve and the
+   * screen would say "we could not read your products", or — worse, if somebody
+   * ever recreates a decoy in `public` — succeed and report an empty workspace to
+   * a maker who has products.
+   */
+  it('is batchlabel, never public', async () => {
+    db.state.productsRead = { data: [productRow()], error: null };
+    db.state.specificationsRead = { data: [specRow()], error: null };
+
+    await fetchProducts('acct-1111');
+
+    expect(db.state.schemas.length).toBeGreaterThan(0);
+    expect([...new Set(db.state.schemas)]).toEqual(['batchlabel']);
+  });
+
+  it('holds for writes too, not only reads', async () => {
+    db.state.schemas = [];
+    db.state.specInsert = { data: { id: 'spec-1' }, error: null };
+    db.state.productInsert = { data: { id: 'prod-1' }, error: null };
+
+    await createProduct(
+      { name: 'Amber', sku: 'AMB-1', categoryId: 'home-fragrance', productType: 'candle' },
+      'acct-1111'
+    );
+
+    expect([...new Set(db.state.schemas)]).toEqual(['batchlabel']);
   });
 });
