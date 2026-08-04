@@ -339,7 +339,102 @@ product, and that is your call rather than a refactor.
 second mount can be told apart in the reports. The copy is `crashCopy()` in that file, guarded by
 the banned-register scan at the bottom of `src/components/ErrorBoundary.test.tsx`.
 
-### 6. Error reports go to the customer's own console and nowhere else
+### 6. Error reports go to the customer's own console and nowhere else — DONE (inert until Rhys makes the project)
+
+**DONE** (commit `feat(6)`): option **(a) Sentry on the free tier, with the payload restricted**,
+and the payload decided at the same time as the vendor, as this entry asked. Two new modules,
+`src/lib/scrub-report.ts` and `src/lib/error-sink.ts`; `setErrorSink` is called from one line of
+`src/index.tsx` and **no `reportError` call site moved**, which is what the seam was for.
+
+**THE SCRUBBER IS THE CHANGE. THE INTEGRATION IS THE SMALL HALF.** `scrub-report.ts` is pure,
+imports nothing but a type, and has its own test file, because "what leaves the machine" must be
+readable in one place rather than emergent from a vendor's configuration.
+
+**The rule is an ALLOW-LIST**, and the argument is entirely about which way each one fails. A
+deny-list — send the report, strip what looks like customer data — is safe until somebody adds a
+field to `ErrorReport`, throws a new kind of error, or upgrades the SDK; on that day it fails
+silently towards SEND and a formulation percentage appears in a third party's web UI with nothing
+going red. An allow-list fails towards DROP: the same day, the new value is `[redacted]`, somebody
+notices a gap in a dashboard, and the fix is a deliberate line in a diff. The price is real and is
+paid in maintenance — a route, a call site or an `Error` subclass that nobody adds to the lists in
+that file reports as redacted.
+
+**What leaves:** the reference (generated per report, meaningless elsewhere); the `source`, matched
+against the four literals that exist rather than a slug shape, because a call site that starts
+interpolating a product id into it is still slug-shaped; the error `name`, matched against a list because
+`error.name` is writable and `error.name = product.name` passes any identifier check; the message
+ONLY if it matches one of the recognised forms, with the variable parts redacted; the ROUTE
+PATTERN rather than the URL; stack frames rebuilt into function/path/line/column with the origin
+and any query dropped; React component names.
+
+**What does not:** any message we do not recognise (it leaves as a 32-bit fingerprint and nothing
+else, which is what keeps unknown faults grouping); the `stack` as a string, because V8 puts the
+whole unredacted message on its first line and `ScreenNotLoaded` appends a second one as
+`caused by:`; the URL, in particular `/products/<uuid>` and `?session_id=` — a uuid is not safe to
+send because it is a uuid, it names a product that may not have launched; anything React puts in a
+minified error's `?args[]=`; and every field `ErrorReport` grows next.
+
+**The SDK is not allowed to collect around it.** `defaultIntegrations: false` with `integrations:
+[]` removes breadcrumbs (console, DOM clicks, fetch, XHR and history — a transcript of a maker's
+session), the global handlers, HttpContext (which attaches the page URL), culture context and
+session tracking. `dataCollection` is set with every category off, including
+`stackFrameVariables`, which would otherwise capture local variables — the most direct possible
+route for a formulation value. `enhanceFetchErrorMessages` is off because its default REWRITES the
+app's own `Error` objects. And `beforeSend` drops any event that did not come through the
+scrubber, so a `Sentry.captureException(error)` added anywhere in this app in a year sends nothing
+rather than sending a raw message. That last one is asserted against the real SDK with the
+transport replaced, not against a stand-in.
+
+**IT IS COMPLETE AND INERT, AND THAT IS PERMANENT, NOT A STAGING STATE.** Nobody here has a DSN —
+creating the Sentry project is Rhys's. With `VITE_SENTRY_DSN` unset, `installErrorSink()` installs
+no sink at all, `@sentry/react` is never even fetched, `hasErrorSink()` stays false and the crash
+screen goes on saying "This has not reached us automatically" — which on that build is true. There
+is no DSN in this repo and no placeholder that could be mistaken for one. The DSN is also checked
+for shape before anything is installed, and the client `init` returns is checked after, because the
+failure that matters is silent: a half-installed sink makes that sentence a lie.
+
+**Loaded on demand, deliberately.** A static import would put the vendor into the entry graph —
+the set a maker must download before route `/` draws anything, which entry 8 measured and this
+build prints on every run. The cost is that a crash in the few hundred milliseconds before the
+chunk lands reaches the console and nothing else; during that window `hasErrorSink()` is false, so
+the customer is told the truth. It is deliberately NOT buffered: a queue would make that sentence
+claim a report had reached us while it was still on the device. The entry graph moved 563.50 kB →
+571.78 kB (165.90 → 168.82 kB gzip), which is `scrub-report.ts` and `error-sink.ts` themselves; the
+vendor is in a chunk of its own and is not on it.
+
+**And a finding worth the next person's time: HOW you dynamically import it is worth 133 kB gzip.**
+`import('@sentry/react').then((module) => …)` takes the whole namespace, and `@sentry/react`
+re-exports the whole of `@sentry/browser` — session replay, user feedback, a browser-tracing
+integration for every router anyone has shipped. Nothing can be tree-shaken off a namespace object,
+so Rollup emitted a **494 kB (163 kB gzip)** chunk for a file that uses two functions. Destructuring
+the import — `.then(({ init, captureEvent }) => …)` — makes the same chunk **89 kB (30 kB gzip)**.
+Off the critical path is not the same as free: a maker still downloads it on every load.
+
+**THE PROJECT DOES NOT EXIST YET AND NOTHING HERE PRETENDS IT DOES.** Nobody on this branch has a
+DSN; creating the Sentry account and project is Rhys's, and until he does it every build of this
+app is the inert one described above. There is no DSN in this repo, no placeholder that could be
+mistaken for one, and the two DSN-shaped strings in `error-sink.test.ts` are under the reserved
+`.invalid` TLD, which by RFC 2606 can never resolve.
+
+**When he does make it, prefer an EU project, and there is nothing to change in the code for that.**
+`@sentry/core` builds the ingest URL out of the DSN's own host, so an `ingest.de.sentry.io` DSN
+posts to the EU host by itself. There is no ingest hostname, no `region` option and no `tunnel`
+anywhere in this repo, and there must not be — a hardcoded host is a thing that silently stops
+matching the DSN.
+
+**CONTENT SECURITY POLICY: THERE ISN'T ONE, IN EITHER REPO.** Checked because an EU ingest host
+missing from a `connect-src` fails silently — every test passes, the code is correct, and no error
+ever arrives. `vercel.json` here carries only a rewrite, there is no headers block, no CSP meta tag
+in `index.html`, and the marketing repo sets no headers either. So nothing blocks the EU host today.
+**If a CSP is ever added to this app, `connect-src` must include the DSN's host** — and it is the
+DSN's host, not `*.sentry.io`, because the region lives there.
+
+**Still Rhys's, and not doable here:** create the Sentry project and set `VITE_SENTRY_DSN` in
+Vercel — until that happens none of this sends anything, which is the state it was written to be
+safe in. Then name Sentry as a processor in www's privacy notice and review the DPA; an EU project
+makes that the easier version of the conversation. Source maps are not uploaded, so frames arrive
+as `/assets/<chunk>.js:line:col` until a release step exists — that needs `@sentry/vite-plugin` and
+an auth token, which is its own decision.
 
 **The gap.** `src/lib/report-error.ts` is a seam, not an integration. `setErrorSink()` is exported
 and called by nothing, so today every report is a structured `console.error` on the maker's own

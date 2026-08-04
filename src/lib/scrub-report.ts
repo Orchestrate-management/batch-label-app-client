@@ -1,0 +1,642 @@
+import type { ErrorReport } from './report-error';
+
+/**
+ * What may leave a maker's machine when this app files an error report.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE RULE IS AN ALLOW-LIST, AND THE REASON IS THE FAILURE MODE OF THE OTHER ONE
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * There are two ways to write this file.
+ *
+ *   A DENY-LIST says "send the report, but strip the things that look like
+ *   customer data" — a regex for percentages, one for uuids, one for anything
+ *   that looks like a supplier name. It is easier to write, it keeps far more
+ *   debugging detail, and its default answer for anything nobody thought of is
+ *   SEND. It is safe exactly until the day somebody adds a field to
+ *   `ErrorReport`, throws a new kind of error, or upgrades the SDK — and on that
+ *   day it fails silently and in the wrong direction. Nothing goes red. A
+ *   formulation percentage just quietly appears in a third party's web UI.
+ *
+ *   AN ALLOW-LIST says "send nothing except these named things, in these
+ *   shapes". Its default answer for anything nobody thought of is DROP. It is
+ *   more work, it throws away detail a deny-list would have kept, and when it
+ *   goes stale the cost is a redacted line in an issue nobody can read — a
+ *   developer is inconvenienced, a customer is not exposed.
+ *
+ * THIS FILE IS AN ALLOW-LIST. Batchlabel turns a supplier's Safety Data Sheet
+ * into a compliant CLP label, so the data it holds IS the customer's commercial
+ * secret: fragrance supplier names, formulation percentages, batch identifiers,
+ * product names not yet launched. They pay us precisely to handle that
+ * carefully. A reporting integration that leaks it is not a bug in a tool, it is
+ * the company breaking the promise it sells. So the default has to be drop, and
+ * every single thing that leaves has to be named below and defended in a
+ * comment.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHAT LEAVES, AND WHY EACH ONE IS SAFE
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ *   reference   Eight characters generated for this one report by
+ *               `newReference()`. It identifies nothing and is meaningless
+ *               anywhere else; it exists so a support email and a log line can
+ *               be joined up by a human. Shape-checked anyway.
+ *   source      The call site name — 'render', 'window-error'. Matched against a
+ *               LIST of the four sources that exist, not against a slug shape:
+ *               `reportError(error, `product-${id}`)` is slug-shaped, and the
+ *               field is documented as free text from the call site.
+ *   name        The error's constructor name: 'TypeError', 'ScreenNotLoaded'.
+ *               Also a list, for the same reason — `error.name` is writable, so
+ *               `error.name = product.name` passes any identifier shape.
+ *   message     THE DANGEROUS ONE. See scrubMessage below.
+ *   at          The ISO timestamp, shape-checked.
+ *   route       NOT the URL — the matched ROUTE PATTERN, e.g. '/products/:productId'.
+ *               See scrubRoute: a product id in a path segment identifies a
+ *               customer's product, and a query string can hold anything at all.
+ *   frames      Function name, script path, line and column — reconstructed
+ *               from the stack rather than passed through. See scrubStack.
+ *   components  React component names only, from the componentStack.
+ *
+ * And what leaves is ONLY that. `scrubReport` names each field explicitly rather
+ * than spreading the report, so a field added to `ErrorReport` next month does
+ * not leave on its own — it leaves when somebody adds it here, on purpose, with
+ * a reason. There is a test that holds that property.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ON HASHING RATHER THAN SIMPLY DELETING
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * Text that is removed is replaced by `[redacted:xxxxxxxx]`, where the suffix is
+ * a 32-bit FNV-1a of the removed text. That is a GROUPING FINGERPRINT and is not
+ * offered as a security primitive: it means two occurrences of the same unknown
+ * fault land in the same issue instead of scattering into hundreds, which is
+ * most of what an error tracker is for. Thirty-two bits is deliberately short —
+ * it collides freely, so a match is weak evidence and it is useless as a way to
+ * recover the text it stands for. It is not reversible; it is also not a secret,
+ * and nothing here relies on it being one.
+ *
+ * PURE, AND IN ITS OWN FILE, ON PURPOSE. Everything below is a function of its
+ * arguments — no `window`, no clock, no Sentry — because the one thing this
+ * repo cannot afford is for "what leaves the machine" to be an emergent property
+ * of an integration nobody can run in a test. The sink imports this; this
+ * imports nothing but a type.
+ */
+
+/** A stack frame, reduced to the four things that are ours rather than a customer's. */
+export interface ScrubbedFrame {
+  /** A function name from our own code, or a placeholder. */
+  function: string;
+  /** A script path under an allow-listed prefix, or a placeholder. Never an origin. */
+  filename: string;
+  lineno?: number;
+  colno?: number;
+}
+
+/** Exactly what may leave the machine. Nothing outside this interface is sent. */
+export interface ScrubbedReport {
+  reference: string;
+  source: string;
+  name: string;
+  message: string;
+  /** False when the message was not recognised and so was replaced wholesale. */
+  messageRecognised: boolean;
+  /** Fingerprint of the ORIGINAL message, so unknown faults still group. */
+  messageDigest: string;
+  at: string;
+  route: string;
+  /** Newest frame first, as the stack was written. The sink reverses for Sentry. */
+  frames: ScrubbedFrame[];
+  components: string[];
+}
+
+const REDACTED = '[redacted]';
+
+/** Bounds on what one report may carry, so a pathological stack cannot become the payload. */
+const MAX_FRAMES = 30;
+const MAX_COMPONENTS = 30;
+const MAX_MESSAGE = 200;
+
+/**
+ * FNV-1a, 32-bit. See the header: a grouping fingerprint, not a security primitive.
+ *
+ * Written out rather than reached for, because the alternatives are a dependency
+ * (for eight lines) or SubtleCrypto (which is async, and this runs inside a crash
+ * handler where an await is a way to lose the report).
+ */
+export function digest(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+/** The placeholder that stands in for removed text, carrying its fingerprint. */
+function redacted(removed: string): string {
+  return `[redacted:${digest(removed)}]`;
+}
+
+/**
+ * Keep a value only if it has the shape we expect, and otherwise say so.
+ *
+ * The shape check is the allow-list applied to a single field: it is not looking
+ * for anything bad, it is refusing anything it cannot positively recognise.
+ */
+function shaped(value: string | undefined, pattern: RegExp, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  return pattern.test(value) ? value : fallback;
+}
+
+/* ────────────────────────────────────────────────────────────── the message */
+
+/**
+ * The screens `lazyScreen` names in App.tsx, which is the only place the name in
+ * a `ScreenNotLoaded` message can come from — every one is a string literal at a
+ * call site, never a value read from a product.
+ *
+ * A LIST RATHER THAN A CHARACTER CLASS, and it will go stale: add a screen and
+ * forget this and its message is redacted rather than sent. That is the correct
+ * direction to fail, and it is the whole argument of this file in one place. The
+ * alternative — allow any short word here — is safe only until somebody writes
+ * `lazyScreen(product.name, …)`.
+ */
+const SCREEN_NAMES = [
+'Materials',
+'Products',
+'specification',
+'artefact',
+'Records',
+'Settings',
+'Billing'];
+
+
+/**
+ * The messages this app is allowed to say out loud, and how each one is rendered
+ * once its variable parts are removed.
+ *
+ * Two families, and the distinction is worth keeping in mind when adding one:
+ *
+ *   OURS — thrown by this codebase, so the whole string is a literal in our
+ *   source and can be echoed back whole. Grep `throw new` to see them all.
+ *
+ *   THE RUNTIME'S — thrown by the browser or by a library. These are the ones
+ *   that carry things: `Cannot read properties of undefined (reading 'x')` puts
+ *   a property key in the message, and while that key is almost always an
+ *   identifier from our own code, `map[product.name]` would put a product name
+ *   there instead. Almost always is not a standard this file gets to use, so the
+ *   TEMPLATE is kept and the capture is redacted. That still separates "a null
+ *   read" from "a failed chunk fetch" from "a syntax error", which is the
+ *   triage most of this is for.
+ *
+ * Anything that matches nothing here is replaced wholesale. That is the
+ * allow-list doing its job, and it is the reason `NonError` — where
+ * `report-error.ts` puts `JSON.stringify(thrownValue)` into the message, and a
+ * thrown product object therefore becomes the message — cannot leak: an
+ * arbitrary JSON blob matches no pattern below.
+ */
+const RECOGNISED: Array<{pattern: RegExp;render: (match: RegExpExecArray) => string;}> = [
+// ── ours
+{
+  // The four provider hooks. Both captures are code identifiers by construction.
+  pattern: /^use([A-Za-z]{1,32}) must be used inside ([A-Za-z]{1,48})$/,
+  render: (m) => `use${m[1]} must be used inside ${m[2]}`
+},
+{ pattern: /^plan catalogue is empty$/, render: () => 'plan catalogue is empty' },
+{
+  pattern: /^plan catalogue is missing currency or tax behaviour$/,
+  render: () => 'plan catalogue is missing currency or tax behaviour'
+},
+{
+  // An HTTP status is not a customer's data.
+  pattern: /^plan catalogue request failed \((\d{3})\)$/,
+  render: (m) => `plan catalogue request failed (${m[1]})`
+},
+{
+  // ScreenNotLoaded, from lib/lazy-screen.ts. The screen name is kept only if it
+  // is one we know we wrote — see SCREEN_NAMES.
+  pattern: /^The code for the ([A-Za-z]{1,24}) screen could not be downloaded\.$/,
+  render: (m) =>
+  `The code for the ${SCREEN_NAMES.includes(m[1]) ? m[1] : redacted(m[1])} screen ` +
+  'could not be downloaded.'
+},
+{
+  // report-error.ts's own last resort, when describe() cannot print the value.
+  pattern: /^An unprintable value was thrown\.$/,
+  render: () => 'An unprintable value was thrown.'
+},
+
+// ── the runtime's
+{
+  pattern: /^Cannot read properties of (undefined|null) \(reading '([\s\S]*)'\)$/,
+  render: (m) => `Cannot read properties of ${m[1]} (reading '${redacted(m[2])}')`
+},
+{
+  pattern: /^Cannot set properties of (undefined|null) \(setting '([\s\S]*)'\)$/,
+  render: (m) => `Cannot set properties of ${m[1]} (setting '${redacted(m[2])}')`
+},
+{
+  // Safari's wording for the same fault.
+  pattern: /^(undefined|null) is not an object \(evaluating '([\s\S]*)'\)$/,
+  render: (m) => `${m[1]} is not an object (evaluating '${redacted(m[2])}')`
+},
+{
+  pattern: /^([\s\S]+) is not a function$/,
+  render: (m) => `${redacted(m[1])} is not a function`
+},
+{
+  pattern: /^([\s\S]+) is not iterable$/,
+  render: (m) => `${redacted(m[1])} is not iterable`
+},
+{
+  pattern: /^([\s\S]+) is not defined$/,
+  render: (m) => `${redacted(m[1])} is not defined`
+},
+{
+  // EVERY React invariant in a production build arrives looking like this, so
+  // without it the most common class of fault in this app would be unreadable.
+  //
+  // THE TAIL IS DROPPED AND THAT IS THE WHOLE POINT OF THE ENTRY. React appends
+  // `; visit https://react.dev/errors/418?args[]=…`, and those args are the
+  // values interpolated into the real message — which for a hydration or a
+  // rendering invariant is text off the screen the maker was looking at. The
+  // number alone is enough: it maps to the message on React's own site.
+  pattern: /^Minified React error #(\d{1,4})[\s\S]*$/,
+  render: (m) => `Minified React error #${m[1]}`
+},
+{
+  // The failed-chunk family, which is the mid-deploy case in lib/lazy-screen.ts
+  // reaching us from below `ScreenNotLoaded`. The URL is redacted: it is our own
+  // asset path today and there is no rule that says it must stay that way.
+  pattern: /^Failed to fetch dynamically imported module:?\s*([\s\S]*)$/,
+  render: (m) => `Failed to fetch dynamically imported module: ${redacted(m[1])}`
+},
+{
+  pattern: /^error loading dynamically imported module:?\s*([\s\S]*)$/,
+  render: (m) => `error loading dynamically imported module: ${redacted(m[1])}`
+},
+{
+  pattern: /^Importing a module script failed\.$/,
+  render: () => 'Importing a module script failed.'
+},
+{ pattern: /^Failed to fetch$/, render: () => 'Failed to fetch' },
+{ pattern: /^Load failed$/, render: () => 'Load failed' },
+{
+  pattern: /^NetworkError when attempting to fetch resource\.$/,
+  render: () => 'NetworkError when attempting to fetch resource.'
+},
+{ pattern: /^Network request failed$/, render: () => 'Network request failed' },
+{
+  // A cross-origin script, with everything stripped by the browser before we
+  // ever see it. Kept because knowing a report is this and nothing else is the
+  // difference between investigating and not.
+  pattern: /^Script error\.$/,
+  render: () => 'Script error.'
+},
+{
+  pattern: /^ResizeObserver loop (completed with undelivered notifications\.|limit exceeded)$/,
+  render: (m) => `ResizeObserver loop ${m[1]}`
+},
+{
+  // ONE character, and it is the one that matters: '<' means the origin served
+  // index.html for a request for a script, which is the signature of a stale
+  // tab after a deploy. A single character cannot carry a supplier name.
+  pattern: /^Unexpected token '(.)'$/,
+  render: (m) => `Unexpected token '${m[1]}'`
+}];
+
+
+/**
+ * The message, reduced to something we can defend sending.
+ *
+ * An exception message is the single most likely place a customer's formulation
+ * data leaves this app: it is free text assembled at the throw site, and the
+ * throw site is frequently not ours. So it is not filtered, it is RECOGNISED —
+ * matched whole against the list above — and anything that matches nothing is
+ * replaced by its fingerprint and nothing else.
+ *
+ * The cost is real and is the point: an unfamiliar error arrives unreadable, and
+ * making it readable means adding a pattern here, in a diff, with a reason. That
+ * is the trade this file exists to make.
+ */
+export function scrubMessage(message: string): {text: string;recognised: boolean;} {
+  if (typeof message !== 'string' || message.length === 0) {
+    return { text: '', recognised: true };
+  }
+  for (const entry of RECOGNISED) {
+    const match = entry.pattern.exec(message);
+    if (match) return { text: entry.render(match).slice(0, MAX_MESSAGE), recognised: true };
+  }
+  return { text: `[unrecognised:${digest(message)}]`, recognised: false };
+}
+
+/* ──────────────────────────────────────────────────────────────── the stack */
+
+/**
+ * Where a script may have come from for its path to be sent.
+ *
+ * `/assets/` is every chunk Vite emits in a production build; `/src/` and
+ * `/node_modules/` are what a dev server serves. Everything else is redacted,
+ * and the case that matters is the DOCUMENT: a frame whose file is the page
+ * itself carries the page's path, which is `/products/<a customer's product id>`.
+ * Browser extensions and injected third-party scripts fall out here too.
+ *
+ * The origin is dropped from every frame regardless. `~/assets/index-abc.js` is
+ * also the form Sentry's source-map resolution expects, so nothing is lost by it.
+ */
+const ALLOWED_SCRIPT_PREFIXES = ['/assets/', '/src/', '/node_modules/'];
+
+/** A path that is ours to send: no query, no fragment, no surprises. */
+const SCRIPT_PATH = /^\/[A-Za-z0-9._@/-]{1,200}$/;
+
+/**
+ * A function name as our own code produces one. `Object.<anonymous>`,
+ * `ProductsProvider`, `Array.map` all pass; anything else is redacted rather
+ * than trusted, because a name is cheap to check and a mistake here is a string
+ * from who-knows-where going out in a field labelled "function".
+ *
+ * NO SPACE IN THE CLASS, and that is not tidiness. The frame patterns below are
+ * shape-matchers run over every line of a stack, and a MESSAGE line that happens
+ * to end in `:12:5` parses as a frame — at which point whatever preceded it is
+ * about to be sent in the function field. Requiring a single unbroken identifier
+ * costs nothing real (`new Foo` and `async foo` are handled by stripping the
+ * keyword) and means a stray "Lavender Dream" cannot pass for one.
+ */
+const FUNCTION_NAME = /^[A-Za-z_$][A-Za-z0-9_$.<>]{0,79}$/;
+
+/** V8: `    at fn (url:1:2)`, and `    at url:1:2` with no function at all. */
+const V8_FRAME = /^\s*at\s+(?:(.+?)\s+\()?(.+?):(\d+):(\d+)\)?\s*$/;
+/** SpiderMonkey and JavaScriptCore: `fn@url:1:2`, `@url:1:2`. */
+const AT_FRAME = /^([^@]*)@(.+?):(\d+):(\d+)$/;
+
+/**
+ * A frame's file, reduced to a path we are willing to name, or a placeholder.
+ *
+ * Deliberately does not care whether the origin is ours: it drops the origin
+ * either way and then asks only about the path. Comparing origins would need the
+ * page's origin passed in, and would make a frame's safety depend on where the
+ * app happens to be deployed.
+ */
+function scrubScriptPath(location: string): string {
+  let path: string;
+  try {
+    path = new URL(location).pathname;
+  } catch {
+    // Not an absolute URL. A bare absolute path is the only other form worth
+    // reading; anything else (`blob:`, `eval at …`, a Windows path) is dropped.
+    if (!location.startsWith('/')) return REDACTED;
+    path = location.split('?')[0].split('#')[0];
+  }
+  if (!SCRIPT_PATH.test(path)) return REDACTED;
+  if (!ALLOWED_SCRIPT_PREFIXES.some((prefix) => path.startsWith(prefix))) return REDACTED;
+  return path;
+}
+
+function boundedPosition(raw: string): number | undefined {
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isFinite(value) || value < 0 || value > 10_000_000) return undefined;
+  return value;
+}
+
+/**
+ * The stack, rebuilt from the frames it contains rather than passed through.
+ *
+ * REBUILT IS THE LOAD-BEARING WORD. `error.stack` begins with a header line that
+ * is the name and the whole unredacted message, and `ScreenNotLoaded` appends a
+ * `caused by:` line carrying a second one. Sending the stack as a string would
+ * hand over the exact text scrubMessage exists to withhold, in a field nobody
+ * was looking at. Only lines that parse as a frame survive; everything else —
+ * headers, causes, blank lines, whatever a future Error subclass appends — is
+ * dropped because it is not on the list.
+ */
+export function scrubStack(stack: string | undefined): ScrubbedFrame[] {
+  if (typeof stack !== 'string' || stack.length === 0) return [];
+  const frames: ScrubbedFrame[] = [];
+  for (const line of stack.split('\n')) {
+    if (frames.length >= MAX_FRAMES) break;
+    const match = V8_FRAME.exec(line) ?? AT_FRAME.exec(line);
+    if (!match) continue;
+    const rawFunction = (match[1] ?? '').trim().replace(/^(?:async|new)\s+/, '');
+    const filename = scrubScriptPath(match[2].trim());
+    frames.push({
+      // TIED TO THE FILE, deliberately. A frame we cannot place in our own build
+      // is a frame whose function name we have no reason to vouch for either —
+      // an injected script, an extension, or a line of a message that parsed
+      // like a frame. Dropping both costs us nothing we could have acted on.
+      function:
+      filename === REDACTED ?
+      REDACTED :
+      rawFunction.length === 0 ?
+      '<anonymous>' :
+      shaped(rawFunction, FUNCTION_NAME, REDACTED),
+      filename,
+      lineno: boundedPosition(match[3]),
+      colno: boundedPosition(match[4])
+    });
+  }
+  return frames;
+}
+
+/* ─────────────────────────────────────────────────────── the component trail */
+
+const COMPONENT_LINE = /^\s*(?:at|in)\s+([A-Za-z_$][A-Za-z0-9_$.]{0,63})/;
+
+/**
+ * React's component trail, reduced to the component names.
+ *
+ * The names themselves are the useful half and are our own code — a component is
+ * never named after a product. The REST of each line is a script URL, and in
+ * some React builds the document URL, which is where the route and therefore a
+ * product id lives. So the names are extracted and the lines are thrown away,
+ * rather than the lines being cleaned up and kept.
+ */
+export function scrubComponentStack(componentStack: string | undefined): string[] {
+  if (typeof componentStack !== 'string' || componentStack.length === 0) return [];
+  const names: string[] = [];
+  for (const line of componentStack.split('\n')) {
+    if (names.length >= MAX_COMPONENTS) break;
+    const match = COMPONENT_LINE.exec(line);
+    if (match) names.push(match[1]);
+  }
+  return names;
+}
+
+/* ──────────────────────────────────────────────────────────────── the route */
+
+/**
+ * Every route this app answers, copied from `RoutedScreens` in App.tsx.
+ *
+ * LITERAL SEGMENTS BEFORE PARAMETERISED ONES, because '/settings/billing' and
+ * '/settings/:tab' both match a two-segment path and the first match wins. The
+ * list below is already in that order and the sort keeps it there, so adding a
+ * route in the wrong place cannot quietly relabel an existing one.
+ *
+ * A second copy of the route table is a thing that can drift, and the drift is
+ * survivable in one direction only: a route added there and not here reports as
+ * unrecognised, which loses a label. The reverse — a pattern here that is not a
+ * route — costs nothing at all.
+ */
+const ROUTES = [
+'/',
+'/materials',
+'/materials/:materialClass',
+'/materials/:materialClass/:materialId',
+'/products',
+'/products/:productId',
+'/products/:productId/artefacts/:artefactType',
+'/outputs',
+'/artefacts',
+'/records',
+'/records/:recordCode',
+'/compliance',
+'/billing',
+'/billing/success',
+'/settings',
+'/settings/billing',
+'/settings/:tab'].
+sort((a, b) => {
+  const params = (route: string) => route.split('/').filter((s) => s.startsWith(':')).length;
+  return params(a) - params(b);
+});
+
+function matches(pattern: string, path: string): boolean {
+  const wanted = pattern.split('/');
+  const got = path.split('/');
+  if (wanted.length !== got.length) return false;
+  return wanted.every((segment, index) =>
+  segment.startsWith(':') ? got[index].length > 0 : segment === got[index]
+  );
+}
+
+/**
+ * Which SCREEN the maker was on — never which product.
+ *
+ * A URL is the quietest leak in this whole file. `/products/8f3c…` is a uuid,
+ * and a uuid feels safe because it is not a name — but it identifies one
+ * customer's product, it is stable, and a handful of reports from one account
+ * are enough to map their catalogue by size. A query string is worse: it can
+ * carry anything a screen ever chose to put there.
+ *
+ * So the URL is not cleaned, it is REPLACED — by the route pattern it matched,
+ * and by nothing if it matched none. '/products/:productId' is the entire useful
+ * content of a URL for triage anyway; which product it was is a question for the
+ * customer, not for a third party's database.
+ */
+export function scrubRoute(href: string | null | undefined): string {
+  if (typeof href !== 'string' || href.length === 0) return '[no route]';
+  let path: string;
+  try {
+    path = new URL(href).pathname;
+  } catch {
+    // A bare path, which is what a test or a non-browser caller is likeliest to
+    // hand over. Split before reading: the query is never inspected, only cut.
+    path = href.split('?')[0].split('#')[0];
+  }
+  if (!path.startsWith('/')) return '[unrecognised route]';
+  const normalised = path.length > 1 && path.endsWith('/') ? path.slice(0, -1) : path;
+  const route = ROUTES.find((pattern) => matches(pattern, normalised));
+  return route ?? '[unrecognised route]';
+}
+
+/* ────────────────────────────────────────────────────────────── the whole of it */
+
+/**
+ * The reference and the timestamp are SHAPES, because both are generated inside
+ * `report-error.ts` from a fixed alphabet and a clock and cannot be anything
+ * else. The two below them are LISTS, and the difference is the whole argument.
+ */
+// REFERENCE_ALPHABET in report-error.ts, exactly: no I, L, O, U, 0 or 1, because a
+// reference is read down a phone. Copying the real alphabet rather than [A-Z0-9] costs
+// nothing and means a reference-shaped string that this app did not generate is refused.
+const REFERENCE = /^[A-HJ-KMNP-TV-Z2-9]{4}-[A-HJ-KMNP-TV-Z2-9]{4}$/;
+const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/;
+
+/**
+ * Every `source` this app files under.
+ *
+ * A LIST, NOT A SLUG SHAPE. `source` is documented in report-error.ts as free
+ * text from the call site, and the natural next call site is
+ * `reportError(error, `product-${id}`)` — which is a perfectly good slug and a
+ * customer's product id. A shape check would wave it through. This cannot: a
+ * source added without being added here reports as `[redacted]`, which loses a
+ * label and leaks nothing.
+ *
+ * From `sourceFor` in components/ErrorBoundary.tsx and the two listeners in
+ * lib/global-errors.ts. They are the only callers of `reportError` today.
+ */
+const KNOWN_SOURCES = ['render', 'screen-render', 'window-error', 'unhandled-rejection'];
+
+/**
+ * Every error name we are willing to repeat.
+ *
+ * ALSO A LIST, AND FOR A SHARPER REASON THAN `source`: `error.name` is a plain
+ * writable property. `ScreenNotLoaded` sets its own in a constructor, which is
+ * ordinary and fine — and `error.name = product.name` is one line away from
+ * ordinary too. Any identifier-shaped check passes "Lavender". A list does not.
+ *
+ * The JavaScript built-ins, this app's own subclass, `report-error.ts`'s label
+ * for a thrown non-Error, and the handful of DOMException names a browser
+ * actually produces here. Anything else is `[redacted]` — the report still
+ * arrives, still groups, and still carries its frames.
+ */
+const KNOWN_ERROR_NAMES = [
+// JavaScript's own
+'Error',
+'TypeError',
+'RangeError',
+'SyntaxError',
+'ReferenceError',
+'EvalError',
+'URIError',
+'AggregateError',
+// ours
+'ScreenNotLoaded',
+'NonError',
+// DOMException, restricted to the ones this app can plausibly see
+'AbortError',
+'NetworkError',
+'NotAllowedError',
+'NotFoundError',
+'NotSupportedError',
+'QuotaExceededError',
+'SecurityError',
+'TimeoutError',
+'InvalidStateError',
+'DataCloneError'];
+
+
+/** Keep it only if it is one of the values we know about. */
+function oneOf(value: string | undefined, known: string[], fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  return known.includes(value) ? value : fallback;
+}
+
+/**
+ * The one function the sink calls, and the only thing in this app that decides
+ * what a third party is told.
+ *
+ * `href` is passed in rather than read off `window` so this stays pure and so a
+ * test can put a real product URL through it. Null is fine and means "no route".
+ *
+ * FIELD BY FIELD, NOT SPREAD. `{ ...report }` would be shorter and would mean
+ * that the next field added to `ErrorReport` — by somebody working on something
+ * else entirely, with no reason to think about this file — starts being sent to
+ * a third party the moment it is added. Naming each field is the allow-list;
+ * there is a test that fails if this ever becomes a spread.
+ */
+export function scrubReport(report: ErrorReport, href: string | null): ScrubbedReport {
+  const rawMessage = typeof report.message === 'string' ? report.message : '';
+  const message = scrubMessage(rawMessage);
+  return {
+    reference: shaped(report.reference, REFERENCE, REDACTED),
+    source: oneOf(report.source, KNOWN_SOURCES, REDACTED),
+    name: oneOf(report.name, KNOWN_ERROR_NAMES, REDACTED),
+    message: message.text,
+    messageRecognised: message.recognised,
+    messageDigest: digest(rawMessage),
+    at: shaped(report.at, ISO_TIMESTAMP, ''),
+    route: scrubRoute(href),
+    frames: scrubStack(report.stack),
+    components: scrubComponentStack(report.componentStack)
+  };
+}
