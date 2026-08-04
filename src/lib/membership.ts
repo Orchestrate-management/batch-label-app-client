@@ -316,6 +316,112 @@ export function mayModify(entitlement: Entitlement): boolean {
   return entitlement.canModify !== false;
 }
 
+/**
+ * The two states where offering "New product" wastes a maker's time, and ONLY those two.
+ *
+ * It is deliberately not "can this account create a product", which we do not know and must
+ * not pretend to: the SKU allowance may be full, the code may be a duplicate, the read may be
+ * a moment old. It answers the narrower question a create BUTTON needs — is this a state where
+ * the insert is already established to fail, so that a form collecting four fields would
+ * collect them in order to be refused?
+ *
+ *   suspended       the INSERT policy refuses it with a bare 42501. Already gated this way on
+ *                   every create surface; this function is where that rule now lives.
+ *   no_membership   there is no account row for this brand, so there is nothing for the
+ *                   column to be and nothing for the database's own `current_account_id()`
+ *                   default to resolve. Signup was not finished. The write fails, and the
+ *                   thing that fixes it is finishing signup, not pressing the button again.
+ *
+ * EVERYTHING ELSE KEEPS THE BUTTON, and the two near misses are the point of this comment.
+ *
+ *   unknown         the entitlement read failed, or has not landed. `createProduct` then omits
+ *                   account_id and `current_account_id()` resolves it server-side — so for a
+ *                   maker holding exactly one account the create WOULD have worked. Hiding it
+ *                   here would take away something they can genuinely do because one read of
+ *                   ours blipped, which is the expensive direction to be wrong in.
+ *   account_ambiguous
+ *                   is not a status; it is a write hint the database returns for a person
+ *                   holding more than one account. It arrives after the attempt, with a true
+ *                   sentence and correctly no retry (see NO_ACCOUNT / ACCOUNT_AMBIGUOUS in
+ *                   lib/products.ts). We cannot see it in advance, so we do not guess at it.
+ *   free / lapsed / past_due
+ *                   are money states. §6.1: no new, keep everything old working — and the
+ *                   allowance, not the plan, is what governs a create. SkuLimitNotice states
+ *                   that separately and before anything is typed.
+ *
+ * Fails OPEN on every state it does not name, for the same reason `mayModify` does.
+ */
+export function createIsCertainToFail(entitlement: Entitlement): boolean {
+  return entitlement.status === 'suspended' || entitlement.status === 'no_membership';
+}
+
+/**
+ * WHAT WE KNOW ABOUT THE ACCOUNT'S LIVE-SKU COUNT, WHICH IS THREE THINGS AND NOT TWO.
+ *
+ * `Entitlement.skuCount` is `number | null`, and null already carries one meaning: the database
+ * declined to state a count (no account resolved, or the read failed). That is the whole reason
+ * the view yields null rather than nought — "zero is a claim; the honest answer is that we do
+ * not know".
+ *
+ * There is a third state and it has been getting answered with a number. The count is read once,
+ * when the entitlement provider mounts; a create then moves it, and until the re-read lands the
+ * number in hand is KNOWN to be wrong — not unread, not right. Two screens patched over that by
+ * treating 0 as unknown, which is not a model: it made a genuine zero unsayable everywhere while
+ * leaving a stale 3 perfectly sayable. Overloading nought only hid the first create.
+ *
+ * So the three are named:
+ *
+ *   `{ known: false, reason: 'unread' }`  no number at all. Say nothing, or an em dash.
+ *   `{ known: false, reason: 'stale' }`   we hold a number and we know a write moved it. Do not
+ *                                         state it; a re-read is already in flight.
+ *   `{ known: true, count }`              the database counted this, and nothing we did since has
+ *                                         moved it. Nought here is a fact and may be stated.
+ */
+export type SkuCount =
+{known: true;count: number;} |
+{known: false;reason: 'unread' | 'stale';};
+
+/**
+ * The sanctioned reader for the count, in the same spirit as `mayModify`: the raw field is still
+ * there, and a screen that states the number should come through here rather than reading it and
+ * deciding on its own what a null or a nought means.
+ *
+ * `unread` beats `stale`: having no number at all is the stronger answer, and after a refresh that
+ * failed both are true at once.
+ */
+export function readSkuCount(skuCount: number | null, stale: boolean): SkuCount {
+  if (skuCount === null) return { known: false, reason: 'unread' };
+  if (stale) return { known: false, reason: 'stale' };
+  return { known: true, count: skuCount };
+}
+
+/**
+ * The count as a sentence may state it BESIDE A LIST of the same account's products — Studio's
+ * header and the Settings identity tab, both of which print the account's total next to products
+ * they have just drawn.
+ *
+ * THE RULE IS NOT "ZERO IS UNKNOWN", which is what those two screens used to do. It is that an
+ * account cannot hold fewer live products than this client has just read out of it, so a count
+ * BELOW what is on screen is not a fact about the account — it is the two sources disagreeing,
+ * and neither of them is worth printing as the winner. Zero beside a non-empty list is only the
+ * loudest case of that; "1 product · 3 things outstanding across 3 products" is the same nonsense
+ * one row further up.
+ *
+ * A genuine zero stays sayable. `skuCountBeside({ known: true, count: 0 }, 0)` is 0, so a screen
+ * that wants to state an empty account can — Billing already does, beside no list at all, and it
+ * does not come through here.
+ *
+ * It does not reconcile the disagreement and must not: `fetchProducts` drops a product whose
+ * specification did not come back, and the count is the database's own over the rows the
+ * enforcement trigger counts, so a difference is real information about one of them being
+ * incomplete. What this decides is only whether a number may be printed in that sentence.
+ */
+export function skuCountBeside(skus: SkuCount, shown: number): number | null {
+  if (!skus.known) return null;
+  if (skus.count < shown) return null;
+  return skus.count;
+}
+
 export interface EntitlementFetch {
   row: EntitlementRow | null;
   /** True when the read itself failed, as opposed to succeeding and finding nothing. */

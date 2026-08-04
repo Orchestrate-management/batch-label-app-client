@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   allowanceLabel,
+  createIsCertainToFail,
   entitlementMessage,
   mapEntitlement,
   mayModify,
   periodLine,
   planLabel,
   readEntitlementRow,
+  readSkuCount,
+  skuCountBeside,
   type EntitlementRow } from
 './membership';
 
@@ -236,6 +239,121 @@ describe('can_modify, which does not exist yet', () => {
   it('denies only when the column is actually false', () => {
     expect(mayModify(mapEntitlement(row({ canModify: false })))).toBe(false);
     expect(mayModify(mapEntitlement(row({ canModify: true })))).toBe(true);
+  });
+});
+
+/**
+ * Whether to offer a create button, which is a NARROWER question than "can this account
+ * create a product" and must stay narrower.
+ *
+ * The expensive direction is a false positive: hiding the control from somebody whose create
+ * would have worked takes away a thing they can genuinely do, on the strength of one read of
+ * ours going wrong. So the two named states are the two the DATABASE has already settled, and
+ * everything else — including every state we are unsure about — keeps the button and lets the
+ * write answer.
+ */
+describe('the create button, and the two states that make it a waste of typing', () => {
+  it('hides it for a suspended account, whose insert the policy refuses', () => {
+    expect(createIsCertainToFail(mapEntitlement(row({ membershipStatus: 'suspended' })))).toBe(
+      true
+    );
+  });
+
+  it('hides it for a signup that never finished, which has no account to insert into', () => {
+    // No row for this brand at all. There is nothing for account_id to be, and nothing for
+    // the database's own current_account_id() default to resolve. Finishing signup is the
+    // fix; pressing a button is not.
+    const unfinished = mapEntitlement(null);
+    expect(unfinished.status).toBe('no_membership');
+    expect(createIsCertainToFail(unfinished)).toBe(true);
+  });
+
+  it('KEEPS it when our own entitlement read failed', () => {
+    // THE ONE THAT MATTERS. `createProduct` omits account_id when it has none, and
+    // current_account_id() resolves it server-side — so for a maker holding one account the
+    // create would have worked. A blipped read must not cost them a product.
+    const unreadable = mapEntitlement(null, true);
+    expect(unreadable.status).toBe('unknown');
+    expect(createIsCertainToFail(unreadable)).toBe(false);
+  });
+
+  it('keeps it on every money state, because none of them withholds a create', () => {
+    // §6.1: no new, keep everything old fully working. The SKU allowance is what governs a
+    // create, and SkuLimitNotice states that separately, before anything is typed.
+    expect(createIsCertainToFail(mapEntitlement(row({ plan: 'free' })))).toBe(false);
+    expect(createIsCertainToFail(mapEntitlement(row({ plan: 'studio', active: false }))))
+      .toBe(false);
+    expect(
+      createIsCertainToFail(mapEntitlement(row({ plan: 'studio', planStatus: 'past_due' })))
+    ).toBe(false);
+    expect(createIsCertainToFail(mapEntitlement(row({ plan: 'studio', active: true })))).toBe(
+      false
+    );
+  });
+
+  it('keeps it for a membership whose account this brand could not single out', () => {
+    // `account_ambiguous` is a write hint, not a status: it comes back from the attempt, with
+    // a true sentence and correctly no retry. We cannot see it in advance, so we do not guess.
+    expect(createIsCertainToFail(mapEntitlement(row({ accountId: null })))).toBe(false);
+  });
+});
+
+/**
+ * THE COUNT, AND THE THIRD STATE IT USED TO BE MISSING.
+ *
+ * Null already meant "the database declined to state a count". What had no name was "we hold a
+ * number and a write of ours has moved it", which is every frame between a create and the
+ * re-read that answers for it — and which two screens papered over by reading nought as
+ * unknown, a guard that could not see a stale 3 and could not say a true 0.
+ */
+describe('what we know about the SKU count', () => {
+  it('has no number at all when the database gave none', () => {
+    expect(readSkuCount(null, false)).toEqual({ known: false, reason: 'unread' });
+  });
+
+  it('does not call a count current when a write of ours has moved it', () => {
+    expect(readSkuCount(3, true)).toEqual({ known: false, reason: 'stale' });
+  });
+
+  it('answers with the number when nothing has moved it', () => {
+    expect(readSkuCount(3, false)).toEqual({ known: true, count: 3 });
+  });
+
+  it('treats nought from the database as a real answer, because it is one', () => {
+    // The account holds nothing. Billing states that beside an allowance — "0 of 3" — and it
+    // is the true sentence for a new account. The old guard on Studio and Settings made this
+    // unsayable everywhere in order to hide the stale case above.
+    expect(readSkuCount(0, false)).toEqual({ known: true, count: 0 });
+  });
+
+  it('says unread rather than stale when a refresh moved it and then failed', () => {
+    // Both are true at once; having no number is the stronger answer, and it is the one that
+    // stops a screen implying we are about to produce one.
+    expect(readSkuCount(null, true)).toEqual({ known: false, reason: 'unread' });
+  });
+});
+
+describe('stating the count beside a list of the same products', () => {
+  it('states it when the account holds at least what is on screen', () => {
+    expect(skuCountBeside({ known: true, count: 4 }, 1)).toBe(4);
+    expect(skuCountBeside({ known: true, count: 4 }, 4)).toBe(4);
+  });
+
+  it('says nothing when there is no count, or a moved one', () => {
+    expect(skuCountBeside({ known: false, reason: 'unread' }, 1)).toBeNull();
+    expect(skuCountBeside({ known: false, reason: 'stale' }, 1)).toBeNull();
+  });
+
+  it('refuses a count lower than the products the screen has already drawn', () => {
+    // Not "zero is unknown". An account cannot hold fewer live products than this client just
+    // read out of it, so a lower count is the two sources disagreeing — and "1 product · 3
+    // things outstanding across 3 products" is the same nonsense as "0 products" one row up.
+    expect(skuCountBeside({ known: true, count: 0 }, 1)).toBeNull();
+    expect(skuCountBeside({ known: true, count: 1 }, 3)).toBeNull();
+  });
+
+  it('still states a genuine nought where nothing contradicts it', () => {
+    expect(skuCountBeside({ known: true, count: 0 }, 0)).toBe(0);
   });
 });
 

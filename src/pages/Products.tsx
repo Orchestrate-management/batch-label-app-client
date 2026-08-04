@@ -4,13 +4,15 @@ import { PackageIcon, PlusIcon, RefreshCwIcon } from 'lucide-react';
 import { PageHeader } from '../components/AppShell';
 import { Button, Callout, Card, EmptyState, Pill, SectionTitle, Skeleton } from '../components/ui/Primitives';
 import { NewProductDialog } from '../components/NewProductDialog';
+import { NoAccountNotice } from '../components/NoAccountNotice';
 import { PlanNotice } from '../components/PlanNotice';
 import { SkuLimitNotice } from '../components/SkuLimitNotice';
 import { CATEGORIES } from '../lib/categories';
+import { useEntitlement } from '../lib/entitlement';
+import { createIsCertainToFail } from '../lib/membership';
 import { outstandingObligations } from '../lib/regimes';
 import { specSummary } from '../lib/derive';
 import { formatDate } from '../lib/model';
-import { useEntitlement } from '../lib/entitlement';
 import { useProducts } from '../lib/product-store';
 import { useWorkspace } from '../lib/workspace';
 
@@ -30,13 +32,19 @@ export function Products() {
   const navigate = useNavigate();
   const { enabledCategories } = useWorkspace();
   const { status, products, error, refresh } = useProducts();
+  const entitlement = useEntitlement();
   const [creating, setCreating] = useState(false);
 
   // See product-store.tsx. Published only for a suspended membership, which the entitlement
   // read established before this screen rendered — so there is something true to say, and no
   // reason to offer a create the database will refuse.
-  const entitlement = useEntitlement();
   const unavailable = status === 'unavailable';
+
+  // Suspension AND an unfinished signup: the two states where the insert is already
+  // established to fail, so a form here would take four fields in order to be refused. NOT a
+  // failed entitlement read, where the database resolves the account itself and the create
+  // would have worked. The whole argument is on `createIsCertainToFail`.
+  const offerCreate = !createIsCertainToFail(entitlement);
 
   // Only categories that hold something get a section. A brand new account gets ONE empty
   // state rather than three — "nothing in home fragrance yet", "nothing in cosmetics yet",
@@ -55,12 +63,12 @@ export function Products() {
         title="What you make"
         description="Each product holds a composition, the classification it produces, and the two outputs that follow: a label and a safety data sheet."
         actions={
-        unavailable ?
-        undefined :
+        offerCreate ?
         <Button variant="primary" onClick={() => setCreating(true)}>
             <PlusIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
             New product
-          </Button>
+          </Button> :
+        undefined
         } />
 
 
@@ -100,28 +108,13 @@ export function Products() {
           </Callout>
         }
 
-        {status === 'no-account' &&
-        <Callout tone="info" role="status" title="This workspace has no account behind it yet">
-            {/* NOT the empty state, and not an error either. Nothing failed and nothing is
-                missing — we simply have no account to scope a read to, so we are showing
-                nothing rather than guessing. Rendering "No products yet" here would tell
-                somebody who may hold a full workspace that it is empty, which is the one
-                sentence this screen must never get wrong. */}
-            <p className="max-w-prose leading-relaxed">
-              {entitlement.status === 'no_membership' ?
-              'Your account has not finished being set up, so there is nothing to show yet. Finishing signup fixes this — a retry will not.' :
-              entitlement.status === 'unknown' ?
-              'We could not read which account this workspace belongs to just now. This is us, not you, and nothing of yours has been lost.' :
-              'We could not tell which of your accounts this workspace should be showing, so it is showing none rather than the wrong one. Nothing has been lost.'}
-            </p>
-            {entitlement.status === 'unknown' &&
-            <Button size="sm" variant="secondary" className="mt-3" onClick={refresh}>
-                <RefreshCwIcon className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
-                Try again
-              </Button>
-            }
-          </Callout>
-        }
+        {/* The copy, and the retry that goes with it, moved to NoAccountNotice — verbatim.
+            It was inline here and nowhere else, so Studio, the specification screen and the
+            designer each answered the same state with whatever their own fall-through
+            happened to be. One of the three fixes it names is now a real fix, too: the retry
+            re-reads the ENTITLEMENT rather than the products, which is the read that failed
+            and the only one that can produce an account id. */}
+        {status === 'no-account' && <NoAccountNotice />}
 
         {status === 'ready' && products.length === 0 &&
         <EmptyState

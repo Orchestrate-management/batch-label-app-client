@@ -41,6 +41,14 @@ import { useWorkspace } from '../lib/workspace';
  * from a read taken before anything rendered, so the dialog says that instead. The screens
  * that open it hide their create buttons on the same fact; this is the backstop for a
  * suspension that lands between their render and this one.
+ *
+ * AN UNFINISHED SIGNUP DOES SEE THE FORM, AND THAT IS DELIBERATE. The create surfaces now hide
+ * their button for `no_membership` too (`createIsCertainToFail`, lib/membership.ts), so the
+ * only way to reach this dialog in that state is the same narrow race. It gets no early return
+ * of its own because, unlike suspension, the write path can already name the cause exactly:
+ * `createProduct` answers `no_account` with NO_ACCOUNT_MESSAGE, which says the signup was not
+ * finished, says nothing was saved, and points at the step that fixes it. A second copy of
+ * that sentence here would be a second place for it to drift.
  */
 export function NewProductDialog({
   onClose,
@@ -99,6 +107,38 @@ export function NewProductDialog({
       setFailure({ reason: result.reason, message: result.message });
       return;
     }
+
+    /**
+     * THE ACCOUNT'S SKU COUNT JUST CHANGED, AND ONLY THE DATABASE KNOWS THE NEW ONE.
+     *
+     * `entitlements.sku_count` was read once when the provider mounted and, until this line,
+     * was re-read by exactly one caller in the whole app — the return from Stripe Checkout.
+     * So a maker who created their first product was then told "0 products · 3 things
+     * outstanding across 1 product" on Studio and "every output on all 0 products this
+     * account holds" on Settings, both from a count taken before the row existed. Billing's
+     * meter and its progress bar were a create behind for the rest of the session too.
+     *
+     * The fix is deliberately not "count the list instead". That is the fallback Billing
+     * removed on purpose: `fetchProducts` drops a product whose specification did not come
+     * back, so the client's length and the meter's count can differ by exactly the amount
+     * that makes a screen say "2 of 3" while the next insert is refused for holding 3.
+     *
+     * IT SAYS WHAT HAPPENED, NOT WHAT TO DO ABOUT IT. `noteSkuCountChanged` rather than a bare
+     * `refresh`, because the fact this dialog holds is "the count moved", and a re-read on its
+     * own leaves every screen free to keep stating the pre-create number for the round trip it
+     * takes to answer. The provider marks the held count stale and re-reads; the screens then
+     * have a state to render instead of a number they would have had to guess was old.
+     *
+     * IT IS FIRED HERE AND NOT INSIDE `reload`. The store's reload is also what a saved
+     * composition calls, and a composition changes no count — refreshing the entitlement
+     * there would be a round trip per save for a number that cannot have moved. A create is
+     * the only write in this app that moves it.
+     *
+     * Not awaited, and before the list read rather than after it: the two are independent
+     * reads, this one blocks nothing on screen, and the provider revalidates in the
+     * background without blanking anything (see lib/entitlement.tsx).
+     */
+    entitlement.noteSkuCountChanged();
 
     // Land the list before leaving, so the product screen finds the product it is about to
     // render rather than racing a background refresh into a "no such product" state.

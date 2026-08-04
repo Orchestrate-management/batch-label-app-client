@@ -48,6 +48,20 @@ export default defineConfig({
       // Measured against the units that actually have tests, so the number is a
       // real signal rather than being diluted by the (as yet untested) view
       // layer inherited from the Magic Patterns scaffold.
+      //
+      // THE CURATION IS THE POINT AND ALSO THE RISK. A hand-written list keeps
+      // the percentage honest, and it silently excuses whatever is not on it —
+      // so a file added to the app is a file added to this list, or the number
+      // goes UP as the untested surface grows. That is what happened to the two
+      // entries at the bottom: lib/products.ts and lib/product-store.tsx landed
+      // with the cutover from the in-memory fixture store to Supabase, which is
+      // the account isolation, the SKU meter's client half and every write a
+      // maker makes, and coverage read 93% throughout without once looking at
+      // them.
+      //
+      // The rule for what belongs here: anything where being wrong costs a
+      // customer money, data, or a true sentence about their compliance. Not
+      // "anything with a test".
       include: [
         'src/lib/session-storage.ts',
         'src/lib/auth-redirect.ts',
@@ -64,12 +78,54 @@ export default defineConfig({
         'src/lib/consent-preferences.ts',
         'src/lib/meta-pixel.ts',
         'src/lib/meta-consent.tsx',
+        // The data layer. Two files decide, between them, which account's rows
+        // a screen reads, whether a write landed, and what a maker is told when
+        // it did not — and one of those answers ("you have no products") is the
+        // one this app must never get wrong, because to somebody holding forty
+        // SKUs it reads as data loss.
+        'src/lib/products.ts',
+        'src/lib/product-store.tsx',
+        // The two the shell stream left for whoever next opened this list (TODO entry 6's
+        // follow-up). Both meet the rule above on the third clause rather than the first two:
+        // `hasErrorSink()` drives a sentence the crash screen says to a customer about whether
+        // their failure reached us, and `lazyScreen`'s typed rejection is the only thing that
+        // tells "the file never arrived" apart from "this screen crashed" — opposite
+        // instructions to give somebody who was about to print a label. Neither costs money or
+        // data; both can make a screen state something untrue.
+        'src/lib/report-error.ts',
+        'src/lib/lazy-screen.ts',
+        // The other half of the reporting seam (TODO entry 7): the two window listeners that
+        // catch what an error boundary structurally cannot — a rejected promise, a throw in a
+        // click handler. On the list for the same third-clause reason as report-error.ts, and
+        // for one of its own: it decides when NOT to file, so a mistake here is either a fault
+        // that silently goes unrecorded or one crash filed three times, and the second is what
+        // a paid vendor bills for.
+        'src/lib/global-errors.ts',
       ],
       thresholds: {
         lines: 70,
         functions: 70,
         statements: 70,
         branches: 70,
+        // PER FILE, WHICH TURNS THE NUMBER FROM AN AVERAGE INTO A FLOOR.
+        //
+        // Pooled was the same trick the include list was: a new module with no
+        // tests at all cost the total a point or two and the gate stayed green.
+        // Every file on the list above is one where being wrong costs a customer
+        // money, data, or a true sentence about their compliance, and an average
+        // lets one of them be uncovered as long as the others carry it.
+        //
+        // It was blocked on src/lib/billing.ts, at 66.66% functions. The TODO
+        // named createRailTestSession and createPortalSession; the portal call
+        // was in fact already covered, and the two without a test were
+        // createRailTestSession — the 30p live-rail purchase — and leaveFor, the
+        // line that actually navigates the customer to Stripe. Both have one now.
+        //
+        // WHEN THIS FAILS ON A FILE, the fix is a test. Lowering the bar, or
+        // writing a per-file exception, puts the number back to being an average
+        // with extra steps — and it would do it in whichever file was hardest to
+        // cover, which is not the one you want excused.
+        perFile: true
       },
     },
   },

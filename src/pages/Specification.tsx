@@ -15,6 +15,7 @@ import {
   Skeleton } from
 '../components/ui/Primitives';
 import { DerivationPanel } from '../components/DerivationPanel';
+import { NoAccountNotice } from '../components/NoAccountNotice';
 import { PlanNotice } from '../components/PlanNotice';
 import { ArtefactRail } from '../components/artefact/ArtefactRail';
 import { ArtefactRenderer, defaultArtefactOptions } from '../components/artefact/ArtefactRenderer';
@@ -91,6 +92,20 @@ export function Specification() {
     return (
       <main className="flex-1 px-6 py-8 lg:px-10">
         <PlanNotice states={['suspended']} />
+      </main>);
+
+  }
+
+  // Also before the not-found branch, and for a sharper version of the same reason. There is
+  // no account to scope a read to, so no read was made — and "we read your products and there
+  // is nothing here with this address, it may have been archived" is then false in every
+  // clause AND is a deletion notice. The most likely reader is a Google signup abandoned at
+  // /finish-setup returning to a bookmark: their product is almost certainly still there, and
+  // what they need is to be told to go and finish.
+  if (status === 'no-account') {
+    return (
+      <main className="flex-1 px-6 py-8 lg:px-10">
+        <NoAccountNotice />
       </main>);
 
   }

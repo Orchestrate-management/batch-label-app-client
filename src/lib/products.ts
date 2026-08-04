@@ -793,7 +793,21 @@ fragranceId?: string)
     productType,
     model: 'Not yet assigned',
     items: [],
-    ratings: { voltage: '5 V', current: '2 A', power: '10 W' },
+    /**
+     * NOT 5 V / 2 A / 10 W, WHICH IS WHAT THIS SEEDED UNTIL NOW.
+     *
+     * Those three numbers are what a rating plate is printed from, and a rating plate is a
+     * legal marking on a device. A maker who creates a wax warmer, never opens the ratings
+     * fields and produces the plate would have got 5 V / 2 A / 10 W on a mains product —
+     * plausible enough to survive a glance, and invented by us. Nothing on the screen said
+     * they were a placeholder, because they did not look like one.
+     *
+     * The em dash is what `toProduct` already maps an absent rating to (the `str(…, '—')`
+     * fallback in the bom branch), so a spec that has never been filled in now reads the same
+     * whether it came from here or from a stored row — and the line above has always taken
+     * the same view of the model, which is the other field the plate carries.
+     */
+    ratings: { voltage: '—', current: '—', power: '—' },
     netQuantity: 400,
     netUnit: 'g',
     packagingId: 'pkg-device-box'
@@ -839,7 +853,13 @@ function packColumns(spec: Spec) {
  * rule 2 at the top of this file: supplied it is checked by the INSERT policy, omitted it is
  * decided by the column default. Nothing else may be passed here.
  *
- * TWO INSERTS, IN THIS ORDER, AND WHAT HAPPENS WHEN THE SECOND FAILS. A product cannot be
+ * TWO INSERTS, IN THIS ORDER, AND WHAT HAPPENS WHEN THE SECOND FAILS. The pair is not atomic and
+ * cannot be made atomic from this side; the only real fix is one SECURITY INVOKER RPC taking both
+ * halves, logged with the schema reading it needs in docs/PRODUCTION_TODO.md entry 4. What
+ * follows is what this file does in the meantime, which is report honestly rather than
+ * compensate.
+ *
+ * A product cannot be
  * inserted before its specification, because it carries the foreign key. So a refused product
  * — most often the SKU meter refusing one over the plan allowance — leaves a specification
  * behind. The browser is granted no DELETE on specifications (deleting one cascades to its
@@ -985,7 +1005,9 @@ accountId: string | null = null)
  *
  * THE PAIR IS NOT ATOMIC, AND THE SECOND FAILURE IS NOT A NO-OP. Two round trips, no
  * transaction: PostgREST has no way to span them, and one SECURITY INVOKER RPC that took both
- * halves is the real fix. Until it exists, the failure that matters is the first update
+ * halves is the real fix — logged with the schema reading it needs in
+ * docs/PRODUCTION_TODO.md entry 4, including why invoker rather than definer and what the SKU
+ * trigger's hint requires of the function body. Until it exists, the failure that matters is the first update
  * committing and the second not — the recipe stored against the old pack, which is a
  * combination the maker never approved and which drives both the label and the sheet. Saying
  * "nothing has changed" there is false, and it is false in the direction that makes somebody

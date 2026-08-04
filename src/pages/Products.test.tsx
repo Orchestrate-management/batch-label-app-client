@@ -74,7 +74,13 @@ function stateFor(row: Partial<EntitlementRow>): EntitlementValue {
     canModify: true,
     ...row
   };
-  return { ...mapEntitlement(full), loading: false, refresh: () => {} };
+  return {
+    ...mapEntitlement(full),
+    loading: false,
+    skuCountStale: false,
+    refresh: () => {},
+    noteSkuCountChanged: () => {}
+  };
 }
 
 function draw() {

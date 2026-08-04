@@ -74,7 +74,11 @@ const CATALOGUE = {
 
 };
 
-function stateFor(row: Partial<EntitlementRow> | null, failed = false): EntitlementValue {
+function stateFor(
+  row: Partial<EntitlementRow> | null,
+  failed = false,
+  extra: Partial<EntitlementValue> = {}
+): EntitlementValue {
   const full: EntitlementRow | null = row === null ?
   null :
   {
@@ -97,7 +101,14 @@ function stateFor(row: Partial<EntitlementRow> | null, failed = false): Entitlem
     canModify: null,
     ...row
   };
-  return { ...mapEntitlement(full, failed), loading: false, refresh: vi.fn() };
+  return {
+    ...mapEntitlement(full, failed),
+    loading: false,
+    skuCountStale: false,
+    refresh: vi.fn(),
+    noteSkuCountChanged: vi.fn(),
+    ...extra
+  };
 }
 
 const fetchMock = vi.fn();
@@ -309,6 +320,29 @@ describe('the plan somebody is on', () => {
     );
     expect(screen.queryByText(/could not count your products/)).not.toBeInTheDocument();
     expect(screen.queryByRole('progressbar', { name: 'SKUs used' })).not.toBeInTheDocument();
+  });
+
+  it('does not restate a count a create has just moved', async () => {
+    // This page has no list beside the number, so nothing here can notice a stale one the way
+    // Studio's header can: it would simply have said "12 of 45", drawn a matching meter and
+    // set aria-valuenow=12 for the rest of a session in which the maker had created their
+    // thirteenth. The provider says the count moved; the page says it is counting, which is
+    // what the read it is waiting on is actually doing.
+    entitlement.mockReturnValue(
+      stateFor(
+        { plan: 'maker', planStatus: 'active', active: true, skuLimit: 45, skuCount: 12 },
+        false,
+        { skuCountStale: true }
+      )
+    );
+    renderPage();
+    await waitFor(() =>
+    expect(screen.getByText(/Counting what you are holding/)).toBeInTheDocument()
+    );
+    expect(screen.queryByText('12')).not.toBeInTheDocument();
+    expect(screen.queryByRole('progressbar', { name: 'SKUs used' })).not.toBeInTheDocument();
+    // And it is not an apology: nothing failed, a read is in flight.
+    expect(screen.queryByText(/could not count your products/)).not.toBeInTheDocument();
   });
 
   it('says the count failed only once the entitlement has resolved without one', async () => {

@@ -14,6 +14,7 @@ import { ARTEFACT_LABELS, CATEGORIES, STOCK } from '../lib/categories';
 import { ADDRESSES, BUSINESS, COMPETENT_PERSON } from '../lib/identity';
 import { useAuth } from '../lib/auth';
 import { useEntitlement } from '../lib/entitlement';
+import { readSkuCount, skuCountBeside } from '../lib/membership';
 import { regimeById } from '../lib/regimes';
 import { useProducts } from '../lib/product-store';
 import { useWorkspace } from '../lib/workspace';
@@ -51,8 +52,12 @@ const TABS = [
   id: 'preferences',
   label: 'Preferences',
   title: 'Preferences',
+  // Was "…Which categories are switched on, and what the export defaults to." The second
+  // half named a setting that does not exist: the two export fields below are not stored
+  // anywhere and nothing reads them. A tab description is the first sentence somebody reads
+  // on the screen, so it may not promise a control the screen does not have.
   description:
-  'Small, reversible choices. Which categories are switched on, and what the export defaults to.'
+  'Small, reversible choices. Which categories are switched on when you create a product.'
 }] as
 const;
 
@@ -138,12 +143,25 @@ function IdentityTab() {
    *
    * Null is unknown, and unknown is said by leaving the number out rather than by printing a
    * plausible one.
+   *
+   * THERE ARE THREE STATES AND THIS USED TO SEE TWO. "It affects every output on all 0 products
+   * this account holds" was reachable for the whole of a maker's first session — the count is
+   * read once when the provider mounts, so it stayed at the value it had before they created
+   * anything — and the first fix for it was to read nought as unknown here, which made a real
+   * zero unsayable and left a stale 3 as sayable as ever. `readSkuCount` now names the state
+   * that was actually in play (a write of ours moved the count; the re-read has not landed) and
+   * `skuCountBeside` refuses a count lower than the list this tab has drawn, because an account
+   * cannot hold fewer products than we just read out of it. The number is never invented; the
+   * sentence falls back to the wording that names none.
    */
-  const skuCount = entitlement.skuCount;
+  const stated = skuCountBeside(
+    readSkuCount(entitlement.skuCount, entitlement.skuCountStale),
+    products.length
+  );
   const scope =
-  skuCount === null ?
+  stated === null ?
   'It affects every output on every product this account holds.' :
-  `It affects every output on all ${skuCount} ${skuCount === 1 ? 'product' : 'products'} this account holds.`;
+  `It affects every output on all ${stated} ${stated === 1 ? 'product' : 'products'} this account holds.`;
 
   return (
     <>
@@ -370,10 +388,22 @@ function PreferencesTab() {
         </Card>
       </section>
 
+      {/* TWO HALVES OF THIS CARD, AND ONLY ONE OF THEM IS A THING THE SOFTWARE DOES.
+          The presets are real: the artefact designer reads STOCK and offers exactly these.
+          The two fields underneath were uncontrolled `<Select defaultValue=…>` with no
+          onChange and nowhere to write to — changing either did nothing, survived nothing,
+          and looked identical to the category toggles above, which do work. That is the same
+          fault the identity tab was fixed for, so it gets the identity tab's answer:
+          disabled, and told plainly why, rather than collecting a choice to throw away. */}
       <section aria-labelledby="stock-heading">
-        <SectionTitle className="mb-3">
+        <SectionTitle className="mb-1">
           <span id="stock-heading">Stock presets and export defaults</span>
         </SectionTitle>
+        <p className="mb-3 max-w-prose text-2xs leading-relaxed text-ink-tertiary">
+          The presets are what the artefact designer offers when you choose a stock. The two
+          defaults below are not stored yet, so they are shown the way the identity tab shows
+          what it cannot save.
+        </p>
         <Card className="px-5 py-5">
           <table className="w-full text-left text-sm">
             <thead>
@@ -402,14 +432,20 @@ function PreferencesTab() {
             </tbody>
           </table>
           <div className="mt-5 grid gap-5 md:grid-cols-2">
-            <Field label="Default export">
-              <Select defaultValue="single">
+            <Field
+              label="Default export"
+              hint="Not stored yet. Nothing produces an export for this to be the default of.">
+
+              <Select disabled defaultValue="single">
                 <option value="single">Single label PDF</option>
                 <option value="sheet">Sheet layout PDF</option>
               </Select>
             </Field>
-            <Field label="Default market">
-              <Select defaultValue="GB">
+            <Field
+              label="Default market"
+              hint="Not stored yet. A product's market is chosen on its specification screen, per product.">
+
+              <Select disabled defaultValue="GB">
                 <option value="GB">Great Britain</option>
                 <option value="EU">European Union and Northern Ireland</option>
               </Select>

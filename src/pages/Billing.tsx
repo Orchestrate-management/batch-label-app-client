@@ -4,7 +4,13 @@ import { CheckIcon, ExternalLinkIcon, RefreshCwIcon } from 'lucide-react';
 import { PageHeader } from '../components/AppShell';
 import { Button, Callout, Card, Pill, SectionTitle, Skeleton } from '../components/ui/Primitives';
 import { useEntitlement } from '../lib/entitlement';
-import { allowanceLabel, entitlementMessage, periodLine, planLabel } from '../lib/membership';
+import {
+  allowanceLabel,
+  entitlementMessage,
+  periodLine,
+  planLabel,
+  readSkuCount } from
+'../lib/membership';
 import { metaInitiateCheckout } from '../lib/meta-pixel';
 import {
   createCheckoutSession,
@@ -82,13 +88,24 @@ export function Billing() {
    * refused for holding 3 of 3.
    *
    * `null` means WE DO NOT KNOW and is rendered as such: an em dash, no meter, no percentage.
+   *
+   * A COUNT WE KNOW IS BEHIND IS NOT A COUNT EITHER. This page states the number with no list
+   * beside it, so unlike Studio and the identity tab it has nothing to notice a stale one
+   * against: it would simply have shown "3 of 45" and a matching meter for the rest of a session
+   * in which the maker had just created their fourth. `readSkuCount` is what tells them apart —
+   * a nought from the database is a fact and is still shown as one, which is why this page does
+   * not go through `skuCountBeside`.
    */
-  const skuCount = entitlement.skuCount;
+  const skus = readSkuCount(entitlement.skuCount, entitlement.skuCountStale);
+  const skuCount = skus.known ? skus.count : null;
 
   // A read in flight is not a read that failed. The entitlement starts unresolved on every
   // visit, so collapsing that into "could not count" would open every visit on an apology for
-  // a failure that has not happened.
-  const countPending = entitlement.loading;
+  // a failure that has not happened. A re-read fired by a create we just made is the same
+  // thing one visit later — the row it is fetching carries both halves of the sentence below,
+  // so "counting what you are holding and checking what your plan allows" is literally what is
+  // happening, and it beats restating the number we already know that create has moved.
+  const countPending = entitlement.loading || (!skus.known && skus.reason === 'stale');
 
   // Annual is the default and monthly is the secondary option, which is the founder
   // decision and also the honest one: annual is the cheaper way to buy the same thing.

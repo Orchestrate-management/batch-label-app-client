@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowRightIcon, PackageIcon, PlusIcon, RefreshCwIcon } from 'lucide-react';
 import { PageHeader } from '../components/AppShell';
 import { NewProductDialog } from '../components/NewProductDialog';
+import { NoAccountNotice } from '../components/NoAccountNotice';
 import { PlanNotice } from '../components/PlanNotice';
 import { SkuLimitNotice } from '../components/SkuLimitNotice';
 import {
@@ -17,6 +18,7 @@ import {
 import { categoryById } from '../lib/categories';
 import { derive } from '../lib/derive';
 import { useEntitlement } from '../lib/entitlement';
+import { createIsCertainToFail, readSkuCount, skuCountBeside } from '../lib/membership';
 import { outstandingFor } from '../lib/pipeline';
 import { useProducts } from '../lib/product-store';
 
@@ -69,6 +71,23 @@ export function Studio() {
   const unavailable = status === 'unavailable';
 
   /**
+   * Whether to offer "New product" at all.
+   *
+   * Was `!unavailable` — suspension only. That left an unfinished signup a create button that
+   * opens a dialog, takes four fields, and is refused: `no_membership` means there is no
+   * account row for the column to point at and none for the database's own default to
+   * resolve, so the insert cannot land however carefully it is filled in. The refusal is
+   * honest (lib/products.ts names the cause and points at the setup step) but it arrives
+   * after the typing.
+   *
+   * The rule lives in `createIsCertainToFail` rather than here, because it is the same rule on
+   * four surfaces and the case it must NOT cover — a blipped entitlement read, where the
+   * create would have worked — is the one that costs a maker a product. See the comment on
+   * that function; it is doing the arguing.
+   */
+  const offerCreate = !createIsCertainToFail(entitlement);
+
+  /**
    * How many products the ACCOUNT holds, which is not the length of the list on this screen.
    *
    * `entitlement.skuCount` is counted by the database over the same rows the enforcement
@@ -80,8 +99,19 @@ export function Studio() {
    *
    * Null is unknown and is simply not said. The clause below disappears rather than
    * substituting a number, which is the whole rule the view's `sku_count` was built around.
+   *
+   * IT USED TO READ NOUGHT AS UNKNOWN, here and on the Settings identity tab, which fixed the
+   * symptom ("0 products · 3 things outstanding across 1 product", the first line a maker read
+   * after their first create) by making a genuine zero unsayable while leaving a stale 3 sayable.
+   * The two real states are named now instead: `readSkuCount` separates a count we do not have
+   * from one we know a write of ours has moved, and `skuCountBeside` refuses any count lower
+   * than the list it is printed next to — the account cannot hold fewer products than this
+   * screen just read out of it, so that is the two sources disagreeing rather than a total.
    */
-  const skuCount = entitlement.skuCount;
+  const stated = skuCountBeside(
+    readSkuCount(entitlement.skuCount, entitlement.skuCountStale),
+    products.length
+  );
 
   return (
     <main className="flex-1 pb-24 xl:pb-0">
@@ -90,22 +120,22 @@ export function Studio() {
         title={greeting(entitlement.businessName)}
         description="Ingredients in, the right label and a compliant safety data sheet out. Here is what is between you and that today."
         actions={
-        unavailable ?
-        undefined :
+        offerCreate ?
         <Button variant="primary" onClick={() => setCreating(true)}>
             <PlusIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
             New product
-          </Button>
+          </Button> :
+        undefined
         }
         meta={
         status === 'loading' ?
         <Skeleton className="h-4 w-72 bg-paper-line/70" /> :
         ready && products.length > 0 ?
         <p className="text-[0.8125rem] text-ink-secondary">
-              {skuCount !== null &&
+              {stated !== null &&
           <>
-                  <span className="tabular">{skuCount}</span>{' '}
-                  {skuCount === 1 ? 'product' : 'products'}
+                  <span className="tabular">{stated}</span>{' '}
+                  {stated === 1 ? 'product' : 'products'}
                   <span className="mx-2 text-ink-tertiary" aria-hidden="true">
                     ·
                   </span>
@@ -153,6 +183,15 @@ export function Studio() {
           )}
           </div>
         }
+
+        {/* THE ONE STATE THIS SCREEN USED TO RENDER AS NOTHING AT ALL. `ready` is false, so
+            neither the queue nor the empty state drew; nothing matched 'error' or 'loading';
+            and route `/` — the first screen after sign-in — came up as a greeting, a create
+            button and blank space below them. The person most likely to be looking at it is
+            a Google signup who never finished at /finish-setup: signed in, no account, and
+            nothing anywhere telling them that is what happened. Same sentences the products
+            screen shows, because it is the same fact. */}
+        {status === 'no-account' && <NoAccountNotice />}
 
         {ready && products.length === 0 &&
         <EmptyState
