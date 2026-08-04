@@ -276,6 +276,30 @@ const DUPLICATE_SKU_MESSAGE =
 'You already have a product with that code. Product codes have to be unique, so give this one ' +
 'a different code.';
 
+/**
+ * The Postgres schema holding the Batchlabel domain.
+ *
+ * `products` and `specifications` used to live in `public`, alongside `brands`,
+ * `profiles` and `brand_memberships` — which are shared by every Orchestrate
+ * brand. Those two are not shared: they are candles. The next product is
+ * inventory software, and it will want a table called `products` meaning stock.
+ * 20260804120000 moved them out before that collision could happen with real
+ * data in the way.
+ *
+ * SCOPED ON THE BINDING RATHER THAN PER CALL, and NOT via the client's global
+ * `db.schema` option, because the same client still reads `public` — the
+ * entitlements view, consent, membership. Only the domain reads move.
+ *
+ * PostgREST serves only the schemas listed in `[api] schemas` in
+ * supabase/config.toml (in the www repo). If these reads start 404ing, that list
+ * is the first thing to check: the table exists and the client is asking the
+ * right question, but the API has not been told the schema is servable.
+ */
+const DOMAIN_SCHEMA = 'batchlabel';
+
+/** The domain-scoped client, or null when Supabase is not configured at all. */
+const domainClient = () => (supabase ? supabase.schema(DOMAIN_SCHEMA) : null);
+
 const NOT_CONFIGURED_MESSAGE =
 'This app is not connected to its database, so nothing can be saved. This is us, not you.';
 
@@ -668,7 +692,7 @@ export function toProduct(product: ProductRow, spec: SpecificationRow): Product 
  * Archived rows are excluded, matching the meter's own definition of live.
  */
 export async function fetchProducts(accountId: string | null): Promise<ReadResult> {
-  const client = supabase;
+  const client = domainClient();
   if (!client) return { ok: false, message: NOT_CONFIGURED_MESSAGE };
 
   // A NULL ID MEANS DO NOT READ. It does not mean read without a filter.
@@ -893,7 +917,7 @@ export async function createProduct(
 input: NewProductInput,
 accountId: string | null = null)
 : Promise<WriteResult<Product>> {
-  const client = supabase;
+  const client = domainClient();
   if (!client) return { ok: false, reason: 'not_configured', message: NOT_CONFIGURED_MESSAGE };
 
   const category = categoryById(input.categoryId);
@@ -1018,7 +1042,7 @@ export async function saveComposition(
 product: Product,
 spec: Spec)
 : Promise<WriteResult<void>> {
-  const client = supabase;
+  const client = domainClient();
   if (!client) return { ok: false, reason: 'not_configured', message: NOT_CONFIGURED_MESSAGE };
   if (!product.specificationId) {
     return { ok: false, reason: 'failed', message: GENERIC_WRITE_FAILURE };
