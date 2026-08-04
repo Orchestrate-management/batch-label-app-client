@@ -1,5 +1,15 @@
 import { supabase } from './supabase';
 import { ARTEFACT_LABELS, CategoryPack, categoryById, categoryForKind } from './categories';
+/**
+ * The record log. Two lines are written from this file, deliberately.
+ *
+ * Creating a product and changing a composition are two of the things a maker looks back for
+ * on the log, and the second is load-bearing for a recall: a composition change is what makes
+ * a label version already on a shelf out of date. Writing them from here rather than from a
+ * "log it" button is the whole point — see the note above `logProductCreated` in lib/records.ts
+ * for why both are best-effort and what that costs.
+ */
+import { logCompositionChanged, logProductCreated } from './records';
 import {
   ARTEFACT_NOT_PRODUCED,
   ARTEFACT_NO_PRINT_DATE,
@@ -968,7 +978,9 @@ accountId: string | null = null)
     maybeSingle();
 
     if (!lookupError && existing) {
-      return { ok: true, value: toProduct(existing as ProductRow, specRow as SpecificationRow) };
+      const recovered = toProduct(existing as ProductRow, specRow as SpecificationRow);
+      void logProductCreated(accountId, recovered);
+      return { ok: true, value: recovered };
     }
 
     const refused = isDefiniteRefusal(productError);
@@ -996,10 +1008,12 @@ accountId: string | null = null)
     return { ok: false, reason: 'unknown', message: UNKNOWN_OUTCOME_MESSAGE };
   }
 
-  return {
-    ok: true,
-    value: toProduct(productRow as ProductRow, specRow as SpecificationRow)
-  };
+  const created = toProduct(productRow as ProductRow, specRow as SpecificationRow);
+  // AFTER the product is known to exist, and not awaited. The log line is a record OF this
+  // write; it is not part of it, and a create that succeeded must not be reported as a failure
+  // because a second insert did not land.
+  void logProductCreated(accountId, created);
+  return { ok: true, value: created };
 }
 
 /**
@@ -1040,7 +1054,14 @@ accountId: string | null = null)
  */
 export async function saveComposition(
 product: Product,
-spec: Spec)
+spec: Spec,
+/**
+ * The entitlement's account id, for the log line only. Optional, and absent means the change
+ * is saved and not logged rather than not saved: a composition edit that refused to commit
+ * because we could not tell which account to file its log entry under would be the tail
+ * wagging the dog.
+ */
+accountId: string | null = null)
 : Promise<WriteResult<void>> {
   const client = domainClient();
   if (!client) return { ok: false, reason: 'not_configured', message: NOT_CONFIGURED_MESSAGE };
@@ -1078,5 +1099,8 @@ spec: Spec)
     return { ok: false, reason: 'partial_save', message: PARTIAL_SAVE_MESSAGE };
   }
 
+  // Both halves are stored. This is the line that lets a maker looking at a label version
+  // recorded last month see that the recipe behind it moved on the 14th — see lib/records.ts.
+  void logCompositionChanged(accountId, product);
   return { ok: true, value: undefined };
 }

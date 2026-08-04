@@ -85,6 +85,13 @@ export default defineConfig({
         // SKUs it reads as data loss.
         'src/lib/products.ts',
         'src/lib/product-store.tsx',
+        // The record log. On this list under the third clause and under the first: a recall
+        // search that answers "no batch used this lot" when it had no batches to look in is a
+        // false negative on the one screen somebody opens the morning a supplier withdraws a
+        // drum, and the difference between that sentence and "there was nothing to search" is
+        // one number this file is responsible for carrying. Everything it writes is
+        // append-only, so a write reported wrongly cannot be undone by anybody.
+        'src/lib/records.ts',
         // The two the shell stream left for whoever next opened this list (TODO entry 6's
         // follow-up). Both meet the rule above on the third clause rather than the first two:
         // `hasErrorSink()` drives a sentence the crash screen says to a customer about whether

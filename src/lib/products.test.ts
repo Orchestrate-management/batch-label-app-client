@@ -125,6 +125,32 @@ const db = vi.hoisted(() => {
 
 vi.mock('./supabase', () => ({ supabase: db.supabase, isSupabaseConfigured: true }));
 
+/**
+ * The record log, stubbed, and stubbed for two reasons rather than one.
+ *
+ * The first is isolation: `createProduct` and `saveComposition` now write a line to
+ * `batchlabel.record_events` when they succeed, and the fake above answers every table the
+ * same way — so an unstubbed log insert lands in `productPayload` and every assertion about
+ * what a product INSERT sent starts reading the log entry instead.
+ *
+ * The second is that the calls themselves are worth asserting. A create that saved and did not
+ * appear in the log is a hole in a compliance record, and a REFUSED create that appeared in it
+ * would be a record of something that never happened — which is worse. Both are checked below.
+ */
+const recordLog = vi.hoisted(() => ({
+  created: [] as Array<[string | null, {id: string;name: string;}]>,
+  changed: [] as Array<[string | null, {id: string;name: string;}]>
+}));
+
+vi.mock('./records', () => ({
+  logProductCreated: async (accountId: string | null, product: {id: string;name: string;}) => {
+    recordLog.created.push([accountId, product]);
+  },
+  logCompositionChanged: async (accountId: string | null, product: {id: string;name: string;}) => {
+    recordLog.changed.push([accountId, product]);
+  }
+}));
+
 import {
   blankSpec,
   classifyWriteError,
@@ -613,6 +639,45 @@ describe('creating a product', () => {
     db.state.archived = [];
   });
 
+  beforeEach(() => {
+    recordLog.created.length = 0;
+    recordLog.changed.length = 0;
+  });
+
+  it('writes a line to the record log for a product that was actually created', async () => {
+    const result = await createProduct(input, 'acct-1111');
+
+    expect(result.ok).toBe(true);
+    expect(recordLog.created).toHaveLength(1);
+    const [accountId, product] = recordLog.created[0];
+    // The account comes from the entitlement, exactly as the two INSERTs' does. There is no
+    // second source for it anywhere in this file.
+    expect(accountId).toBe('acct-1111');
+    expect(product.id).toBe('prod-1');
+  });
+
+  it('writes no log line for a create the database refused', async () => {
+    db.state.specInsert = { data: null, error: { code: 'P0001', hint: 'sku_limit_reached' } };
+
+    const result = await createProduct(input, 'acct-1111');
+
+    expect(result.ok).toBe(false);
+    // A record of a product that was never created is worse than a missing record: the log is
+    // append-only, so nobody could ever take it back out.
+    expect(recordLog.created).toHaveLength(0);
+  });
+
+  it('writes the log line for a create recovered from a lost response, because it did happen', async () => {
+    db.state.productInsert = { data: null, error: { message: 'Failed to fetch' } };
+    db.state.lookup = { data: PRODUCT, error: null };
+
+    const result = await createProduct(input, 'acct-1111');
+
+    expect(result.ok).toBe(true);
+    expect(recordLog.created).toHaveLength(1);
+  });
+
+
   it('sends the account id it was given, on both rows', async () => {
     await createProduct(input, 'acct-1111');
     expect(db.state.specPayload?.account_id).toBe('acct-1111');
@@ -921,6 +986,41 @@ describe('saving a composition', () => {
     db.state.updated = [];
     db.state.updatePayloads = [];
   });
+
+  beforeEach(() => {
+    recordLog.changed.length = 0;
+  });
+
+  it('records a composition change once both halves are stored', async () => {
+    const result = await saveComposition(product, product.spec, 'acct-1111');
+
+    expect(result.ok).toBe(true);
+    expect(recordLog.changed).toHaveLength(1);
+    expect(recordLog.changed[0][0]).toBe('acct-1111');
+  });
+
+  it('records nothing when only half of the edit landed', async () => {
+    // A partial save DID commit the composition, so a log line would not be false — but the
+    // maker is being asked to press save again, and two entries for one edit would read as
+    // two edits. The successful save writes the line.
+    db.state.productUpdate = { data: [], error: null };
+
+    const result = await saveComposition(product, product.spec, 'acct-1111');
+
+    expect(result.ok === false && result.reason).toBe('partial_save');
+    expect(recordLog.changed).toHaveLength(0);
+  });
+
+  it('still saves when no account was passed, and simply does not log it', async () => {
+    const result = await saveComposition(product, product.spec);
+
+    expect(result.ok).toBe(true);
+    // The stub records the call; the real implementation returns early on a null account. A
+    // composition edit refusing to commit because we could not file its log entry would be the
+    // tail wagging the dog.
+    expect(recordLog.changed[0]?.[0] ?? null).toBeNull();
+  });
+
 
   it('stores an unchosen material and an unstated quantity as null, never as blank', async () => {
     // Both halves of this are label copy. A net quantity of 0 is a DECLARATION — the average
