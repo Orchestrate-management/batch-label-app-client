@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { categoryById } from './categories';
+import { publishMaterialStatus, publishMaterials, resetMaterials } from './material-index';
+import { FIXTURE_MATERIALS } from './fixtures';
 import { derive } from './derive';
 import { Product } from './model';
 import { Stage, StageId, stagesFor } from './pipeline';
@@ -106,9 +108,75 @@ describe('the Outputs stage, whose outputs have never been produced', () => {
 
 describe('the stages that do check something', () => {
   it('are marked as checked, so a tick still means what it means', () => {
+    // The register has to have answered before classification can be one of them; see below.
+    publishMaterials('acct-1', FIXTURE_MATERIALS);
     const checked = stages(freshProduct('home-fragrance')).
     filter((stage) => stage.id !== 'documents');
     expect(checked).toHaveLength(3);
     for (const stage of checked) expect(stage.checked).toBe(true);
+  });
+});
+
+/**
+ * THE CLASSIFICATION STAGE CANNOT TICK BEFORE THE MATERIALS REGISTER HAS ANSWERED.
+ *
+ * `checked` exists because "we found nothing wrong" and "we did not look" used to render as
+ * the same green tick, and materials moving out of the bundle and into Supabase created a new
+ * way to not look: the read has not landed, or it failed. Every lookup misses, the derivation
+ * produces nothing, the issue list is empty — and an empty issue list is what earns the tick.
+ *
+ * A maker watching their own product screen would see "Classification settled" for the few
+ * hundred milliseconds before the register arrived, and would see it permanently if the read
+ * failed. That is a compliance claim made by a pending request.
+ */
+describe('the classification stage while the materials register is unsettled', () => {
+  afterEach(() => resetMaterials());
+
+  it('is not checked and not settled before the register has loaded', () => {
+    publishMaterialStatus('loading', 'acct-1');
+    const stage = stages(freshProduct('home-fragrance')).find((s) => s.id === 'classification');
+    expect(stage?.checked).toBe(false);
+    expect(stage?.settled).toBe(false);
+    expect(stage?.summary).toMatch(/has not loaded/i);
+  });
+
+  it('is not checked and not settled when the register could not be read', () => {
+    publishMaterialStatus('error', 'acct-1');
+    const stage = stages(freshProduct('home-fragrance')).find((s) => s.id === 'classification');
+    expect(stage?.checked).toBe(false);
+    expect(stage?.settled).toBe(false);
+  });
+
+  it('raises no issues from a register it has not read, either', () => {
+    // The other direction, and it matters as much: a pending read must not manufacture
+    // "material not in your register" rows for every slot on the composition.
+    publishMaterialStatus('loading', 'acct-1');
+    const stage = stages(freshProduct('home-fragrance')).find((s) => s.id === 'classification');
+    expect(stage?.issues).toEqual([]);
+  });
+});
+
+/**
+ * A material a composition names and the register cannot produce.
+ *
+ * The dangerous case, and the one that did not exist while materials were a shipped constant:
+ * archiving a material leaves every composition that used it pointing at an id that resolves
+ * to nothing, and a derivation with no inputs produces no hazards — which renders as a product
+ * that needs none.
+ */
+describe('a composition naming a material that is not in the register', () => {
+  afterEach(() => resetMaterials());
+
+  it('raises it as an issue rather than classifying around it', () => {
+    publishMaterials('acct-1', FIXTURE_MATERIALS);
+    const product = freshProduct('home-fragrance');
+    const spec = { ...product.spec, fragranceId: 'ing-archived-last-year' };
+    if (spec.kind !== 'mixture') throw new Error('expected a mixture');
+    const withMissing = { ...product, spec };
+    const stage = stagesFor(withMissing, derive(spec, withMissing, 'GB'), 'GB').
+    find((entry) => entry.id === 'classification');
+
+    expect(stage?.settled).toBe(false);
+    expect(stage?.issues.map((issue) => issue.label).join(' ')).toMatch(/not in your materials register/i);
   });
 });

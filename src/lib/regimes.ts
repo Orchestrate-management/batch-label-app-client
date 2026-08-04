@@ -1,5 +1,5 @@
 import { ArtefactType, Market, Product, RegimeId } from './model';
-import { ingredientById } from './catalog';
+import { ingredientById, materialsSettled } from './material-index';
 
 /**
  * A regime contributes exactly three things and nothing else: the artefact
@@ -87,8 +87,16 @@ export const REGIMES: Regime[] = [
     id: 'clp-classification',
     regimeId: 'clp',
     label: 'Classification complete',
-    doneText: 'Every component has a current classification from a document on file.',
-    missingText: 'One or more components have no classification on file.',
+    // Not "from a document on file". No document of the maker's is held — there is no storage
+    // bucket — and what this actually checks is that the fragrance oil on the composition
+    // carries hazard rows in the register.
+    doneText: 'The fragrance oil on this composition carries a hazard classification.',
+    missingText:
+    'The fragrance oil on this composition carries no hazard classification, so nothing has ' +
+    'been derived from it.',
+    untrackedText:
+    'Your materials register has not loaded, so this has not been checked. It is not a ' +
+    'finding about your product.',
     to: '/products/:id'
   },
   {
@@ -302,7 +310,20 @@ export const REGIMES: Regime[] = [
     label: 'Material declaration for every component',
     doneText: 'Every component in the bill of materials has a declaration on file.',
     missingText: 'One or more components have no material declaration on file.',
-    to: '/materials/component'
+    /*
+     * NOT TRACKED, AND ITS RESOLVE LINK WENT WITH THE SCREEN IT POINTED AT.
+     *
+     * It pointed at /materials/component, which no longer exists: components are deleted
+     * (Rhys's ruling, and `materials_class_check` refuses the class), so there is nothing to
+     * hold a declaration against and nothing that could ever mark this met. It read the RoHS
+     * status off five shipped constants and reported "one or more components have no material
+     * declaration" as an outstanding finding about the maker's own technical file — which is
+     * the survey's own example of a finding nothing checked.
+     */
+    untrackedText:
+    'Batchlabel does not hold your components or their declarations, so it cannot tell you ' +
+    'whether this is done. The duty is real and it is yours to evidence in your technical file.',
+    to: '/products/:id'
   },
   {
     id: 'rohs-en63000',
@@ -476,6 +497,10 @@ const NOT_TRACKED: ReadonlySet<string> = new Set([
   // Needs stored artefacts. Nothing stores one.
   'clp-artefact-current',
   'en15494-safety-text',
+  // Needs component materials, which are deleted rather than deferred. Nothing holds a
+  // component, a declaration or a test report, and the database refuses the material class —
+  // so this can never be observed here, and it was reporting a finding read off a constant.
+  'rohs-component-declarations',
   // Needs a recorded submission. Batchlabel neither submits nor records.
   'clp-ufi',
   'clp-pcn-eu',
@@ -510,6 +535,21 @@ function classificationComplete(product: Product): boolean {
 export function obligationState(product: Product, obligationId: string): ObligationState {
   if (NOT_TRACKED.has(obligationId)) return 'not-tracked';
   if (obligationId === 'clp-classification') {
+    /*
+     * THE REGISTER HAS TO HAVE ANSWERED BEFORE THIS ONE CAN.
+     *
+     * `classificationComplete` resolves the fragrance oil out of the materials register.
+     * Materials used to be a constant in the bundle, so the lookup could not fail and this
+     * obligation was always answerable. They are rows read from Supabase now, and before that
+     * read lands — or if it fails — the lookup misses and this obligation would report
+     * OUTSTANDING: a compliance finding, in a work queue, under the maker's own product name,
+     * produced by a read that had not finished.
+     *
+     * `not-tracked` is the state that already exists for exactly this — a duty that is real
+     * and that we are not the ones checking — and its copy says so rather than implying the
+     * maker owes work.
+     */
+    if (!materialsSettled()) return 'not-tracked';
     return classificationComplete(product) ? 'met' : 'outstanding';
   }
   return product.obligations[obligationId] === true ? 'met' : 'outstanding';

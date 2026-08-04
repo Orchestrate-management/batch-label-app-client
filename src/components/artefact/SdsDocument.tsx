@@ -238,7 +238,12 @@ function Section({ section }: {section: SdsSection;}) {
                           .
                         </div>
                 }
-                      <div style={{ marginTop: '0.5mm' }}>Source: {row.source}.</div>
+                      {row.source ?
+                <div style={{ marginTop: '0.5mm' }}>Source: {row.source}.</div> :
+                <div style={{ marginTop: '0.5mm' }}>
+                          No supplier document reference is recorded for this material.
+                        </div>
+                }
                     </td>
                   </tr>
             }

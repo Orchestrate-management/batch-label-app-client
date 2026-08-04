@@ -8,6 +8,7 @@ import { AuthProvider, RequireAuth } from './lib/auth';
 import { EntitlementProvider } from './lib/entitlement';
 import { lazyScreen } from './lib/lazy-screen';
 import { MetaTrackingProvider } from './lib/meta-consent';
+import { MaterialsProvider } from './lib/materials-store';
 import { ProductsProvider } from './lib/product-store';
 import { WorkspaceProvider } from './lib/workspace';
 import { BillingReturn } from './pages/BillingReturn';
@@ -101,9 +102,15 @@ export function App() {
         <RequireAuth>
           <MetaTrackingProvider>
             <EntitlementProvider>
+              {/* Inside the entitlement for the same reason ProductsProvider is: the account
+                  to scope the read to is the one the entitlement resolved for this brand.
+                  Outside ProductsProvider only because nothing in the products read depends on
+                  materials; the two fire in parallel. */}
+              <MaterialsProvider>
               <ProductsProvider>
                 <AppRoutes />
               </ProductsProvider>
+              </MaterialsProvider>
             </EntitlementProvider>
           </MetaTrackingProvider>
         </RequireAuth>

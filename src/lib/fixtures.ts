@@ -2,7 +2,10 @@ import {
   Attention,
   ConformityDocument,
   DocumentRevision,
+  IngredientMaterial,
   InboxDocument,
+  Material,
+  PackagingMaterial,
   Product,
   ProductionRecord,
   TeamMember } from
@@ -918,3 +921,652 @@ export const DOCUMENT_HISTORY: Record<string, DocumentRevision[]> = {
 export function documentHistory(materialId: string): DocumentRevision[] {
   return DOCUMENT_HISTORY[materialId] ?? [];
 }
+
+/* --------------------------------------------------- the invented catalogue */
+
+/**
+ * WHAT USED TO BE src/lib/catalog.ts, AND WHY IT IS IN THIS FILE NOW.
+ *
+ * Fourteen ingredients and seven packs, with hazard classifications, specific concentration
+ * limits, allergen percentages and IFRA maxima — shipped in the bundle, read by the
+ * derivation, and printed onto labels and safety data sheets as fact. Every figure in it was
+ * invented. Rhys's ruling on the materials round says it plainly: "a shipped catalogue has to
+ * be either genuinely real or obviously and honestly a starter set. Do not ship more invented
+ * hazard classifications dressed as reference data."
+ *
+ * So the data did not get better; it changed jobs. It is test data now, in the one file
+ * nothing that ships may import (fixtures.guard.test.ts enforces that, and it is the reason
+ * this file exists). The derivation, safety data sheet and regime tests need materials with
+ * real shape to reason about — a fragrance oil with a supplier specific concentration limit,
+ * an allergen that sits just under the declaration threshold — and inventing a second set for
+ * the tests would have been the same work for the same coverage.
+ *
+ * WHAT SHIPS INSTEAD: nothing. `batchlabel.reference_materials` is empty, and a row in it
+ * requires a `provenance` — two of whose three values demand a named document, and whose
+ * third means "made up to show the shape" and must be labelled as such wherever it renders.
+ * These entries carry that third value, which is the truthful one for them.
+ *
+ * A TEST THAT WANTS THEM PUBLISHES THEM: `publishMaterials(accountId, FIXTURE_MATERIALS)`
+ * from lib/material-index.ts. Nothing publishes them at import time, so a test that forgets
+ * gets the empty register a real new account has — which is the state most of these tests
+ * should be reasoning about anyway.
+ */
+
+export const FIXTURE_INGREDIENTS: IngredientMaterial[] =
+[
+{
+  id: 'ing-black-fig',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'ingredient',
+  role: 'Fragrance oil',
+  name: 'Black Fig and Cassis',
+  supplier: 'Aurelia Fragrances',
+  supplierCode: 'FO-4471',
+  categories: ['home-fragrance', 'cosmetics'],
+  inci: 'Parfum',
+  inciFunction: 'Perfuming',
+  document: {
+    kind: 'Safety data sheet',
+    reference: 'aurelia-fo-4471-sds',
+    version: '4.2',
+    date: '2025-11-14'
+  },
+  hazards: [
+  {
+    code: 'H317',
+    statement: 'May cause an allergic skin reaction.',
+    hazardClass: 'Skin Sens. 1',
+    gcl: 1,
+    scl: 0.4,
+    pictogram: 'GHS07',
+    signal: 'Warning'
+  },
+  {
+    code: 'H319',
+    statement: 'Causes serious eye irritation.',
+    hazardClass: 'Eye Irrit. 2',
+    gcl: 10,
+    pictogram: 'GHS07',
+    signal: 'Warning'
+  },
+  {
+    code: 'H411',
+    statement: 'Toxic to aquatic life with long lasting effects.',
+    hazardClass: 'Aquatic Chronic 2',
+    gcl: 25,
+    pictogram: 'GHS09'
+  },
+  {
+    code: 'H412',
+    statement: 'Harmful to aquatic life with long lasting effects.',
+    hazardClass: 'Aquatic Chronic 3',
+    gcl: 2.5,
+    derivation: 'Summation method, Aquatic Chronic 2 counted at ten times its concentration.'
+  }],
+
+  allergens: [
+  { name: 'linalool', pct: 3.1 },
+  { name: 'limonene', pct: 6.4 },
+  { name: 'citronellol', pct: 1.2 },
+  { name: 'geraniol', pct: 0.6 },
+  { name: 'eugenol', pct: 0.2 }],
+
+  ifra: [
+  { category: 'Category 12', description: 'Non-skin contact, candles and diffusers', max: 100 },
+  { category: 'Category 5A', description: 'Body lotion and face oil, leave-on', max: 1.4 },
+  { category: 'Category 9', description: 'Rinse-off, soaps', max: 6.2 }],
+
+  notes: 'Supplier gives a specific concentration limit of 0.4 percent for skin sensitisation.'
+},
+{
+  id: 'ing-smoked-vetiver',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'ingredient',
+  role: 'Fragrance oil',
+  name: 'Smoked Vetiver',
+  supplier: 'Halden Aromatics',
+  supplierCode: 'FO-2210',
+  categories: ['home-fragrance'],
+  inci: 'Parfum',
+  inciFunction: 'Perfuming',
+  document: {
+    kind: 'Safety data sheet',
+    reference: 'halden-fo-2210-sds',
+    version: '2.1',
+    date: '2026-01-09'
+  },
+  hazards: [
+  {
+    code: 'H317',
+    statement: 'May cause an allergic skin reaction.',
+    hazardClass: 'Skin Sens. 1',
+    gcl: 1,
+    pictogram: 'GHS07',
+    signal: 'Warning'
+  },
+  {
+    code: 'H411',
+    statement: 'Toxic to aquatic life with long lasting effects.',
+    hazardClass: 'Aquatic Chronic 2',
+    gcl: 25,
+    pictogram: 'GHS09'
+  },
+  {
+    code: 'H412',
+    statement: 'Harmful to aquatic life with long lasting effects.',
+    hazardClass: 'Aquatic Chronic 3',
+    gcl: 2.5,
+    derivation: 'Summation method, Aquatic Chronic 2 counted at ten times its concentration.'
+  }],
+
+  allergens: [
+  { name: 'eugenol', pct: 1.9 },
+  { name: 'linalool', pct: 1.4 },
+  { name: 'limonene', pct: 0.5 },
+  { name: 'citronellol', pct: 0.3 }],
+
+  ifra: [
+  { category: 'Category 12', description: 'Non-skin contact, candles and diffusers', max: 100 },
+  { category: 'Category 9', description: 'Rinse-off, soaps', max: 3.8 }]
+
+},
+{
+  id: 'ing-bergamot-sea-salt',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'ingredient',
+  role: 'Fragrance oil',
+  name: 'Bergamot and Sea Salt',
+  supplier: 'Coastwise Perfumery',
+  supplierCode: 'FO-8802',
+  categories: ['home-fragrance'],
+  inci: 'Parfum',
+  inciFunction: 'Perfuming',
+  document: {
+    kind: 'Safety data sheet',
+    reference: 'coastwise-fo-8802-sds',
+    version: '3.0',
+    date: '2025-08-21'
+  },
+  hazards: [
+  {
+    code: 'H317',
+    statement: 'May cause an allergic skin reaction.',
+    hazardClass: 'Skin Sens. 1B',
+    gcl: 1,
+    scl: 0.8,
+    pictogram: 'GHS07',
+    signal: 'Warning'
+  },
+  {
+    code: 'H319',
+    statement: 'Causes serious eye irritation.',
+    hazardClass: 'Eye Irrit. 2',
+    gcl: 10,
+    pictogram: 'GHS07',
+    signal: 'Warning'
+  },
+  {
+    code: 'H412',
+    statement: 'Harmful to aquatic life with long lasting effects.',
+    hazardClass: 'Aquatic Chronic 3',
+    gcl: 2.5
+  }],
+
+  allergens: [
+  { name: 'limonene', pct: 12.4 },
+  { name: 'linalool', pct: 4.8 },
+  { name: 'geraniol', pct: 0.9 },
+  { name: 'citronellol', pct: 0.4 }],
+
+  ifra: [
+  { category: 'Category 12', description: 'Non-skin contact, candles and diffusers', max: 100 },
+  { category: 'Category 9', description: 'Rinse-off, soaps', max: 4.4 }]
+
+},
+{
+  id: 'ing-wild-damson',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'ingredient',
+  role: 'Fragrance oil',
+  name: 'Wild Damson and Bay',
+  supplier: 'Nightjar Fragrance Co.',
+  supplierCode: 'FO-1330',
+  categories: ['home-fragrance'],
+  inci: 'Parfum',
+  inciFunction: 'Perfuming',
+  document: {
+    kind: 'Safety data sheet',
+    reference: 'nightjar-fo-1330-sds',
+    version: '1.4',
+    date: '2026-03-02'
+  },
+  hazards: [
+  {
+    code: 'H317',
+    statement: 'May cause an allergic skin reaction.',
+    hazardClass: 'Skin Sens. 1',
+    gcl: 1,
+    pictogram: 'GHS07',
+    signal: 'Warning'
+  },
+  {
+    code: 'H412',
+    statement: 'Harmful to aquatic life with long lasting effects.',
+    hazardClass: 'Aquatic Chronic 3',
+    gcl: 2.5
+  }],
+
+  allergens: [
+  { name: 'linalool', pct: 2.2 },
+  { name: 'limonene', pct: 1.1 },
+  { name: 'eugenol', pct: 0.8 }],
+
+  ifra: [
+  { category: 'Category 12', description: 'Non-skin contact, candles and diffusers', max: 100 }]
+
+},
+{
+  id: 'ing-crw45',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'ingredient',
+  role: 'Wax',
+  name: 'Coconut and rapeseed wax CRW-45',
+  supplier: 'Kerax',
+  supplierCode: 'CRW-45',
+  categories: ['home-fragrance'],
+  document: {
+    kind: 'Safety data sheet',
+    reference: 'kerax-crw45-sds',
+    version: '5.0',
+    date: '2025-04-30'
+  },
+  hazards: [],
+  allergens: [],
+  ifra: [],
+  notes: 'Not classified as hazardous.'
+},
+{
+  id: 'ing-soy-c3',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'ingredient',
+  role: 'Wax',
+  name: 'Soy container wax C-3',
+  supplier: 'Ecowax Supplies',
+  supplierCode: 'C-3',
+  categories: ['home-fragrance'],
+  document: {
+    kind: 'Safety data sheet',
+    reference: 'ecowax-c3-sds',
+    version: '2.6',
+    date: '2025-02-11'
+  },
+  hazards: [],
+  allergens: [],
+  ifra: [],
+  notes: 'Not classified as hazardous.'
+},
+{
+  id: 'ing-dpg',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'ingredient',
+  role: 'Carrier',
+  name: 'Diffuser base, dipropylene glycol',
+  supplier: 'Halden Aromatics',
+  supplierCode: 'DPG-99',
+  categories: ['home-fragrance'],
+  document: {
+    kind: 'Safety data sheet',
+    reference: 'halden-dpg99-sds',
+    version: '3.3',
+    date: '2025-10-06'
+  },
+  hazards: [],
+  allergens: [],
+  ifra: [],
+  notes: 'Not classified as hazardous.'
+},
+{
+  id: 'ing-alcohol',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'ingredient',
+  role: 'Carrier',
+  name: "Perfumer's alcohol, denatured 96 percent",
+  supplier: 'Mercia Solvents',
+  supplierCode: 'PA-96',
+  categories: ['home-fragrance'],
+  document: {
+    kind: 'Safety data sheet',
+    reference: 'mercia-pa96-sds',
+    version: '7.1',
+    date: '2026-02-18'
+  },
+  hazards: [
+  {
+    code: 'H226',
+    statement: 'Flammable liquid and vapour.',
+    hazardClass: 'Flam. Liq. 3',
+    gcl: 25,
+    pictogram: 'GHS02',
+    signal: 'Warning'
+  },
+  {
+    code: 'H319',
+    statement: 'Causes serious eye irritation.',
+    hazardClass: 'Eye Irrit. 2',
+    gcl: 50,
+    pictogram: 'GHS07',
+    signal: 'Warning'
+  }],
+
+  allergens: [],
+  ifra: []
+},
+{
+  id: 'ing-no-dye',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'ingredient',
+  role: 'Dye',
+  name: 'No dye',
+  supplier: '—',
+  supplierCode: '—',
+  categories: ['home-fragrance'],
+  document: { kind: 'Safety data sheet', reference: '—', version: '—', date: '—' },
+  hazards: [],
+  allergens: [],
+  ifra: []
+},
+{
+  id: 'ing-dye-terracotta',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'ingredient',
+  role: 'Dye',
+  name: 'Wax dye chip, terracotta',
+  supplier: 'Kerax',
+  supplierCode: 'DYE-TC',
+  categories: ['home-fragrance'],
+  document: {
+    kind: 'Safety data sheet',
+    reference: 'kerax-dyetc-sds',
+    version: '1.2',
+    date: '2025-09-01'
+  },
+  hazards: [],
+  allergens: [],
+  ifra: [],
+  notes: 'Not classified below 1 percent in wax.'
+},
+{
+  id: 'ing-rosehip',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'ingredient',
+  role: 'Plant oil',
+  name: 'Rosehip seed oil, cold pressed',
+  supplier: 'Verdant Botanicals',
+  supplierCode: 'BOT-RH01',
+  categories: ['cosmetics'],
+  inci: 'Rosa Canina Fruit Oil',
+  inciFunction: 'Skin conditioning',
+  cas: '84696-47-9',
+  document: {
+    kind: 'INCI and allergen certificate',
+    reference: 'verdant-rh01-inci',
+    version: '2.0',
+    date: '2026-02-04'
+  },
+  hazards: [],
+  allergens: [],
+  ifra: []
+},
+{
+  id: 'ing-meadowfoam',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'ingredient',
+  role: 'Plant oil',
+  name: 'Meadowfoam seed oil',
+  supplier: 'Verdant Botanicals',
+  supplierCode: 'BOT-MF02',
+  categories: ['cosmetics'],
+  inci: 'Limnanthes Alba Seed Oil',
+  inciFunction: 'Skin conditioning',
+  cas: '153065-40-8',
+  document: {
+    kind: 'INCI and allergen certificate',
+    reference: 'verdant-mf02-inci',
+    version: '1.3',
+    date: '2025-12-12'
+  },
+  hazards: [],
+  allergens: [],
+  ifra: []
+},
+{
+  id: 'ing-jojoba',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'ingredient',
+  role: 'Plant oil',
+  name: 'Jojoba oil, golden',
+  supplier: 'Verdant Botanicals',
+  supplierCode: 'BOT-JJ04',
+  categories: ['cosmetics'],
+  inci: 'Simmondsia Chinensis Seed Oil',
+  inciFunction: 'Skin conditioning',
+  cas: '90045-98-0',
+  document: {
+    kind: 'INCI and allergen certificate',
+    reference: 'verdant-jj04-inci',
+    version: '1.1',
+    date: '2025-07-08'
+  },
+  hazards: [],
+  allergens: [],
+  ifra: []
+},
+{
+  id: 'ing-tocopherol',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'ingredient',
+  role: 'Antioxidant',
+  name: 'Natural vitamin E, mixed tocopherols',
+  supplier: 'Mercia Solvents',
+  supplierCode: 'TOC-70',
+  categories: ['cosmetics'],
+  inci: 'Tocopherol',
+  inciFunction: 'Antioxidant',
+  cas: '1406-18-4',
+  document: {
+    kind: 'INCI and allergen certificate',
+    reference: 'mercia-toc70-inci',
+    version: '3.1',
+    date: '2026-01-27'
+  },
+  hazards: [],
+  allergens: [],
+  ifra: []
+}];
+
+export const FIXTURE_PACKAGING: PackagingMaterial[] =
+[
+{
+  id: 'pkg-tumbler-250',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'packaging',
+  name: 'Amber glass tumbler, 250 ml',
+  supplier: 'Bellhurst Glass',
+  supplierCode: 'GT-250A',
+  categories: ['home-fragrance'],
+  format: 'Tumbler with tin lid',
+  capacityMl: 250,
+  labelAreaMm: { width: 72, height: 60 },
+  foodContact: false,
+  childResistant: false,
+  document: {
+    kind: 'Technical drawing',
+    reference: 'bellhurst-gt250a-drawing',
+    version: '2',
+    date: '2025-06-18'
+  }
+},
+{
+  id: 'pkg-diffuser-100',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'packaging',
+  name: 'Clear glass diffuser bottle, 100 ml',
+  supplier: 'Bellhurst Glass',
+  supplierCode: 'DB-100C',
+  categories: ['home-fragrance'],
+  format: 'Bottle with reeds and collar',
+  capacityMl: 100,
+  labelAreaMm: { width: 58, height: 78 },
+  foodContact: false,
+  childResistant: false,
+  document: {
+    kind: 'Technical drawing',
+    reference: 'bellhurst-db100c-drawing',
+    version: '1',
+    date: '2025-03-09'
+  }
+},
+{
+  id: 'pkg-spray-100',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'packaging',
+  name: 'Frosted glass bottle, 100 ml, fine mist pump',
+  supplier: 'Corbel Packaging',
+  supplierCode: 'SP-100F',
+  categories: ['home-fragrance'],
+  format: 'Bottle with pump',
+  capacityMl: 100,
+  labelAreaMm: { width: 60, height: 80 },
+  foodContact: false,
+  childResistant: false,
+  document: {
+    kind: 'Technical drawing',
+    reference: 'corbel-sp100f-drawing',
+    version: '3',
+    date: '2026-01-15'
+  }
+},
+{
+  id: 'pkg-clamshell',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'packaging',
+  name: 'Wax melt clamshell, six segment',
+  supplier: 'Corbel Packaging',
+  supplierCode: 'CS-6',
+  categories: ['home-fragrance'],
+  format: 'Clamshell',
+  capacityMl: 90,
+  labelAreaMm: { width: 80, height: 40 },
+  foodContact: false,
+  childResistant: false,
+  document: {
+    kind: 'Technical drawing',
+    reference: 'corbel-cs6-drawing',
+    version: '1',
+    date: '2024-11-21'
+  }
+},
+{
+  id: 'pkg-dropper-30',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'packaging',
+  name: 'Amber dropper bottle, 30 ml',
+  supplier: 'Corbel Packaging',
+  supplierCode: 'DR-30A',
+  categories: ['cosmetics'],
+  format: 'Bottle with pipette',
+  capacityMl: 30,
+  labelAreaMm: { width: 44, height: 62 },
+  foodContact: false,
+  childResistant: false,
+  document: {
+    kind: 'Technical drawing',
+    reference: 'corbel-dr30a-drawing',
+    version: '2',
+    date: '2026-04-02'
+  }
+},
+{
+  id: 'pkg-carton-30',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'packaging',
+  name: 'Folding carton, 35 × 35 × 95 mm',
+  supplier: 'Marsh Print',
+  supplierCode: 'FC-3595',
+  categories: ['cosmetics', 'electronics'],
+  format: 'Folding carton',
+  capacityMl: 116,
+  labelAreaMm: { width: 90, height: 60 },
+  foodContact: false,
+  childResistant: false,
+  document: {
+    kind: 'Technical drawing',
+    reference: 'marsh-fc3595-drawing',
+    version: '1',
+    date: '2026-03-30'
+  }
+},
+{
+  id: 'pkg-device-box',
+  source: 'reference',
+  provenance: 'illustrative-example',
+  editable: false,
+  class: 'packaging',
+  name: 'Device carton, 120 × 90 × 70 mm',
+  supplier: 'Marsh Print',
+  supplierCode: 'DC-1209',
+  categories: ['electronics'],
+  format: 'Corrugated carton with insert',
+  capacityMl: 756,
+  labelAreaMm: { width: 110, height: 80 },
+  foodContact: false,
+  childResistant: false,
+  document: {
+    kind: 'Technical drawing',
+    reference: 'marsh-dc1209-drawing',
+    version: '2',
+    date: '2026-05-11'
+  }
+}];
+
+export const FIXTURE_MATERIALS: Material[] = [...FIXTURE_INGREDIENTS, ...FIXTURE_PACKAGING];

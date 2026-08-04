@@ -9,7 +9,43 @@ export type CategoryId = 'home-fragrance' | 'cosmetics' | 'electronics';
 
 export type RegimeId = 'clp' | 'en15494' | 'cpr' | 'ce' | 'rohs' | 'weee' | 'gpsr';
 
-export type MaterialClass = 'ingredient' | 'packaging' | 'component';
+/**
+ * WHAT A MATERIAL CAN BE, AND WHY 'component' IS NOT ONE OF THEM.
+ *
+ * Rhys: components are "not going to be a priority for a long time, better to just get rid of
+ * it". The COMPONENTS array in lib/catalog.ts, the RoHS status it carried, the conformity
+ * document store on the materials screen and the "<component> has no material declaration"
+ * pipeline branch all went with it. The database says the same thing and says it harder:
+ * `materials_class_check` and `reference_materials_class_check` list two values, so the row
+ * cannot come back through a side door either.
+ *
+ * A bill of materials still EXISTS as a specification shape — BomSpec below — because the
+ * electronics category is still a category. What it no longer has is materials to point at,
+ * and deriveBom now says that plainly instead of reading conformity facts off a constant.
+ */
+export type MaterialClass = 'ingredient' | 'packaging';
+
+/**
+ * Whose record this is: the maker's own, or the catalogue Batchlabel ships.
+ *
+ * THE PRECEDENCE RULE, which every screen showing a material has to be able to state: the
+ * maker's own row wins, unconditionally, whenever both describe the same thing. It is decided
+ * once, in the `batchlabel.resolved_materials` view, and never re-implemented here — see
+ * lib/materials.ts, which reads that view rather than merging two lists in the browser.
+ */
+export type MaterialSource = 'account' | 'reference';
+
+/**
+ * Where a REFERENCE material's classification came from. Not null in the database, on purpose.
+ *
+ * 'illustrative-example' means made up to show the shape. It exists so that importing the old
+ * invented catalogue is possible only by declaring what it is — and a screen rendering one has
+ * to label it, which is what `ReferenceProvenanceNote` on the materials screen does.
+ */
+export type MaterialProvenance =
+'supplier-document' |
+'regulatory-source' |
+'illustrative-example';
 
 /**
  * The two outputs. 'sds' is the finished-product safety data sheet; everything
@@ -70,17 +106,37 @@ export type SupplierDocument = {
 };
 
 export type Allergen = {
+  /**
+   * The child row's own id, on a material the account owns.
+   *
+   * Carried so that a remove control has something to delete. It used to be absent, and the
+   * consequence was a control that could not act — a bin icon beside a hazard statement with
+   * nothing behind it is the same defect as a Resolve link to a screen that cannot resolve.
+   * Undefined on a reference material, whose figures live in an immutable version document
+   * and cannot be removed by anybody.
+   */
+  rowId?: string;
   name: string;
   /** Percentage present in the raw material at 100 percent. */
   pct: number;
 };
 
 export type HazardAt100 = {
+  /** The child row's own id, on a material the account owns. See Allergen.rowId. */
+  rowId?: string;
   code: string;
   statement: string;
   hazardClass: string;
-  /** Generic concentration limit, as a percentage of the material in the finished mixture. */
-  gcl: number;
+  /**
+   * Generic concentration limit, as a percentage of the material in the finished mixture.
+   *
+   * OPTIONAL, BECAUSE A SUPPLIER DOES NOT ALWAYS STATE ONE. `material_hazards.gcl` is nullable
+   * for that reason, and the column comment says what a reader must do with the null: "a null
+   * must be rendered as unknown and never as zero". Zero would transfer the hazard at every
+   * load; a hundred would transfer it at none. Both are answers, and we do not have one — so
+   * the derivation reports the hazard as undecidable rather than deciding it.
+   */
+  gcl?: number;
   /** Specific concentration limit given by the supplier, where stated. */
   scl?: number;
   pictogram?: 'GHS07' | 'GHS09' | 'GHS02';
@@ -89,28 +145,87 @@ export type HazardAt100 = {
 };
 
 export type IfraLimit = {
+  /** The child row's own id, on a material the account owns. See Allergen.rowId. */
+  rowId?: string;
   category: string;
   description: string;
   max: number;
 };
 
-export type IngredientRole =
-'Fragrance oil' |
-'Wax' |
-'Carrier' |
-'Dye' |
-'Additive' |
-'Plant oil' |
-'Antioxidant';
+/**
+ * The part a material plays in a composition.
+ *
+ * A STRING, NOT A CLOSED UNION, since materials became the maker's own rows. `role` is a free
+ * text column on batchlabel.materials, so a closed union here would be a type asserting
+ * something about data this app does not control — and the first maker to type "Fragrance
+ * concentrate" would have their row silently mistyped rather than rejected. INGREDIENT_ROLES
+ * is what the picker offers; a stored value outside it still renders.
+ */
+export type IngredientRole = string;
+
+export const INGREDIENT_ROLES = [
+'Fragrance oil',
+'Wax',
+'Carrier',
+'Dye',
+'Additive',
+'Plant oil',
+'Antioxidant',
+'Preservative',
+'Emulsifier',
+'Other'] as
+const;
 
 type MaterialBase = {
+  /**
+   * The account material's uuid, or — for a reference material — its catalogue slug.
+   *
+   * One id space, because a specification stores exactly one string per composition slot
+   * (`specifications.fragrance_id` and friends) and a lookup has to be able to resolve it
+   * without being told which half of the register it came from. `source` says which it was.
+   */
   id: string;
+  source: MaterialSource;
+  /** Set on a reference material. Absent on the maker's own, whose provenance is themselves. */
+  provenance?: MaterialProvenance;
+  /** The reference material this own-row stands in place of, when it stands in for one. */
+  overridesReferenceId?: string;
+  /**
+   * The catalogue row's own uuid, on a reference material.
+   *
+   * Carried separately from `id` because `id` is the slug — the string a specification stores
+   * — and the override link is a foreign key to the uuid. A screen offering "hold my own
+   * version of this" needs the second, and guessing it from the first is not possible.
+   */
+  referenceMaterialId?: string;
+  /** The immutable reference version this row's figures were published in. */
+  referenceVersionId?: string;
+  referenceVersion?: number;
+  /** The maker's own stable id for this material, where they set one. */
+  slug?: string;
   name: string;
-  supplier: string;
-  supplierCode: string;
-  document: SupplierDocument;
+  supplier?: string;
+  supplierCode?: string;
+  /**
+   * The document this material's figures were read from, WHERE ONE IS RECORDED.
+   *
+   * OPTIONAL, AND THAT IS THE CHANGE. It used to be required, because every material was a
+   * shipped catalogue row with a document written into the bundle beside it. A maker's own
+   * material may have no document at all — and a citation is the one thing that must never be
+   * invented, so an absent document means every "Source:" line derived from it is omitted
+   * rather than filled with a plausible one. See `materialCitation` in lib/material-index.ts.
+   */
+  document?: SupplierDocument;
+  /**
+   * Whether a FILE is actually held for that document, as opposed to the maker having typed
+   * its reference and date. `material_documents.storage_path` null means no file is held, and
+   * a screen may not render a document row as though something had been received.
+   */
+  documentFileHeld?: boolean;
   categories: CategoryId[];
   notes?: string;
+  /** True when this material is the maker's own and can therefore be edited or archived. */
+  editable: boolean;
 };
 
 export type IngredientMaterial = MaterialBase & {
@@ -126,23 +241,15 @@ export type IngredientMaterial = MaterialBase & {
 
 export type PackagingMaterial = MaterialBase & {
   class: 'packaging';
-  format: string;
-  capacityMl: number;
-  labelAreaMm: {width: number;height: number;};
-  foodContact: boolean;
-  childResistant: boolean;
+  format?: string;
+  /** Millilitres. Absent when the maker has not recorded one — never defaulted to a number. */
+  capacityMl?: number;
+  labelAreaMm?: {width: number;height: number;};
+  foodContact?: boolean;
+  childResistant?: boolean;
 };
 
-export type ComponentMaterial = MaterialBase & {
-  class: 'component';
-  partNumber: string;
-  rohsStatus: 'Compliant' | 'Compliant with exemption' | 'Not declared';
-  rohsExemption?: string;
-  standards: string[];
-  certificateExpiry: string;
-};
-
-export type Material = IngredientMaterial | PackagingMaterial | ComponentMaterial;
+export type Material = IngredientMaterial | PackagingMaterial;
 
 /* ---------------------------------------------------------------- specs */
 

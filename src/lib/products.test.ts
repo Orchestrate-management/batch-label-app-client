@@ -406,22 +406,54 @@ describe('the composition a new product starts from', () => {
     expect(blankSpec(homeFragrance, 'Room spray').netUnit).toBe('ml');
   });
 
-  it('starts each home fragrance type in its own base and its own packaging', () => {
-    const diffuser = blankSpec(homeFragrance, 'Reed diffuser');
-    const spray = blankSpec(homeFragrance, 'Room spray');
-    const melt = blankSpec(homeFragrance, 'Wax melt');
-    const candle = blankSpec(homeFragrance, 'Container candle');
+  /**
+   * THE ASSERTION HERE IS THE OPPOSITE OF THE ONE IT REPLACES, and the reversal is the point.
+   *
+   * It used to require that each product type start in a specific base and a specific pack —
+   * 'ing-dpg' for a diffuser, 'pkg-tumbler-250' for a candle — on the reasoning that a
+   * diffuser base in a candle is a product that cannot be made. That reasoning was sound and
+   * the conclusion was still wrong: the maker was never asked. The new-product dialog collects
+   * a name, a code, a category and a type, and the INSERT behind it carried one particular
+   * coconut-and-rapeseed wax from a supplier they may never have bought from, in one
+   * particular 250 ml amber tumbler, at 100 g. All three print: the wax into the
+   * classification, the tumbler's capacity into the CLP minimum label size, the 100 g onto the
+   * label itself.
+   *
+   * Those defaults existed because there was nowhere else to point — materials were a shipped
+   * catalogue and an empty base derived silently to nothing. Materials are the maker's own
+   * rows now, an unresolved id is reported rather than skipped, and the pickers are populated
+   * from the register. So the composition starts empty and stays empty until somebody chooses.
+   */
+  it('seeds no base, no packaging, no dye and no quantity — nobody has chosen one', () => {
+    for (const type of ['Container candle', 'Wax melt', 'Reed diffuser', 'Room spray']) {
+      const spec = blankSpec(homeFragrance, type);
+      expect(spec.packagingId).toBe('');
+      expect(spec.netQuantity).toBe(0);
+      if (spec.kind === 'mixture') {
+        expect(spec.baseId).toBe('');
+        expect(spec.dyeId).toBe('');
+        expect(spec.additive).toBe('');
+      }
+    }
+  });
 
-    // A diffuser base in a candle, or wax in a spray bottle, is a product that cannot be
-    // made — and the maker would be the one to find out.
-    if (diffuser.kind === 'mixture') expect(diffuser.baseId).toBe('ing-dpg');
-    if (spray.kind === 'mixture') expect(spray.baseId).toBe('ing-alcohol');
-    if (melt.kind === 'mixture') expect(melt.baseId).toBe('ing-crw45');
+  it('leaves a cosmetic and a device empty of packaging too', () => {
+    const cosmetic = blankSpec(categoryById('cosmetics'), 'Face oil');
+    const device = blankSpec(categoryById('electronics'), 'Wax warmer');
+    expect(cosmetic.packagingId).toBe('');
+    expect(device.packagingId).toBe('');
+    expect(cosmetic.netQuantity).toBe(0);
+    expect(device.netQuantity).toBe(0);
+  });
 
-    expect(diffuser.packagingId).toBe('pkg-diffuser-100');
-    expect(spray.packagingId).toBe('pkg-spray-100');
-    expect(melt.packagingId).toBe('pkg-clamshell');
-    expect(candle.packagingId).toBe('pkg-tumbler-250');
+  it('carries no id from the deleted catalogue anywhere in a new composition', () => {
+    // The catalogue's ids had a shape — 'ing-', 'pkg-', 'cmp-' — and the cheapest way for one
+    // to come back is a default somebody restores because a screen looked empty without it.
+    for (const category of ['home-fragrance', 'cosmetics', 'electronics'] as const) {
+      const pack = categoryById(category);
+      const json = JSON.stringify(blankSpec(pack, pack.productTypes[0]));
+      expect(json).not.toMatch(/"(ing|pkg|cmp)-/);
+    }
   });
 
   it('starts a fragrance load at zero rather than at a plausible number', () => {

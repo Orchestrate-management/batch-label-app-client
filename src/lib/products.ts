@@ -607,8 +607,14 @@ function toSpec(spec: SpecificationRow, product: ProductRow, category: CategoryP
     baseId: str(spec.base_id),
     fragranceId: str(spec.fragrance_id),
     load: num(spec.load, 0),
-    dyeId: str(spec.dye_id, 'ing-no-dye'),
-    additive: str(spec.additive, 'None'),
+    // NOT 'ing-no-dye'. That was a sentinel row in the shipped catalogue — a material called
+    // "No dye", with a supplier of '—' — and every derivation had to know to skip it by id.
+    // The catalogue is gone; an absent dye is an absent dye, and an empty string is what the
+    // pickers and the derivation both now read as one.
+    dyeId: str(spec.dye_id),
+    // Not 'None'. A stored null means the maker has not said; "None" is them saying there
+    // is no additive, and the two print differently on a specification screen.
+    additive: str(spec.additive),
     ...pack
   };
   return mixture;
@@ -766,6 +772,34 @@ export async function fetchProducts(accountId: string | null): Promise<ReadResul
 /* ----------------------------------------------------------------- write */
 
 /** The composition a brand new product starts from: enough to be legal to store, no more. */
+/**
+ * The composition a brand new product starts from.
+ *
+ * IT USED TO SEED A RECIPE THE MAKER NEVER CHOSE, and that is what this rewrite removes. The
+ * new-product dialog asks four questions — name, code, category, type — and the INSERT behind
+ * it also carried `baseId: 'ing-crw45'` (one specific coconut-and-rapeseed wax, from a
+ * supplier the maker has never bought from), `packagingId: 'pkg-tumbler-250'` (a particular
+ * 250 ml amber tumbler), `dyeId: 'ing-no-dye'`, `netQuantity: 100` and `additive: 'None'`.
+ *
+ * Every one of those was invented, and none of them was invisible: the wax and the pack
+ * printed into the classification, the net quantity printed onto the label, and the capacity
+ * of that tumbler decided which row of CLP Annex I Table 1.3 the label was sized against. A
+ * maker who created a candle, set a fragrance load and printed would have got a compliant
+ * looking label describing somebody else's product.
+ *
+ * They existed because there was nothing else they could point at: materials were a shipped
+ * catalogue, so an empty base was an id that resolved to nothing and a derivation that
+ * silently produced no hazards. Materials are the maker's own rows now, the pickers on the
+ * specification screen are populated from them, and `derive` reports an id it cannot resolve
+ * instead of skipping it — so an empty composition is finally something the app can render
+ * honestly, and the maker fills it in themselves.
+ *
+ * WHAT IS STILL SET, and why each one is not a claim about the product: the SHAPE of the
+ * composition (a mixture has a base and a fragrance; a cosmetic has phases), and the phase
+ * names, which are a starting structure the maker edits. `netUnit` follows the product type
+ * because grams and millilitres are a property of what a candle is rather than of this
+ * product; `netQuantity` is 0, which packColumns writes as NULL rather than as a quantity.
+ */
 export function blankSpec(
 category: CategoryPack,
 productType: string,
@@ -775,26 +809,15 @@ fragranceId?: string)
     return {
       kind: 'mixture',
       productType,
-      baseId:
-      productType === 'Reed diffuser' ?
-      'ing-dpg' :
-      productType === 'Room spray' ?
-      'ing-alcohol' :
-      'ing-crw45',
+      baseId: '',
       fragranceId: fragranceId ?? '',
       load: 0,
-      dyeId: 'ing-no-dye',
-      additive: 'None',
-      netQuantity: 100,
+      dyeId: '',
+      // Not 'None'. "None" is an answer, and nobody has been asked the question yet.
+      additive: '',
+      netQuantity: 0,
       netUnit: productType === 'Container candle' || productType === 'Wax melt' ? 'g' : 'ml',
-      packagingId:
-      productType === 'Reed diffuser' ?
-      'pkg-diffuser-100' :
-      productType === 'Room spray' ?
-      'pkg-spray-100' :
-      productType === 'Wax melt' ?
-      'pkg-clamshell' :
-      'pkg-tumbler-250'
+      packagingId: ''
     };
   }
   if (category.specKind === 'phased') {
@@ -807,9 +830,9 @@ fragranceId?: string)
 
       application: 'Leave-on',
       paoMonths: 12,
-      netQuantity: 30,
+      netQuantity: 0,
       netUnit: 'ml',
-      packagingId: 'pkg-dropper-30'
+      packagingId: ''
     };
   }
   return {
@@ -832,9 +855,9 @@ fragranceId?: string)
      * the same view of the model, which is the other field the plate carries.
      */
     ratings: { voltage: '—', current: '—', power: '—' },
-    netQuantity: 400,
+    netQuantity: 0,
     netUnit: 'g',
-    packagingId: 'pkg-device-box'
+    packagingId: ''
   };
 }
 

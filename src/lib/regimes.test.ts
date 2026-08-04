@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Product } from './model';
-import { PRODUCTS } from './fixtures';
+import { FIXTURE_MATERIALS, PRODUCTS } from './fixtures';
+import { publishMaterialStatus, publishMaterials, resetMaterials } from './material-index';
 import { categoryById } from './categories';
 import { artefactsFor, blankSpec } from './products';
 import { obligationSatisfied, outstandingObligations,
@@ -24,6 +25,17 @@ import { obligationSatisfied, outstandingObligations,
 function withObligations(overrides: Record<string, boolean>): Product {
   return { ...PRODUCTS[0], obligations: { ...PRODUCTS[0].obligations, ...overrides } };
 }
+
+/**
+ * The register these obligations are reasoned about.
+ *
+ * DECLARED RATHER THAN ASSUMED. `clp-classification` resolves the composition's fragrance oil
+ * out of the materials register, which is a database read now rather than a constant in the
+ * bundle — so a test that publishes nothing is testing the "we have not looked" path, which
+ * is a real path and has its own tests below.
+ */
+beforeEach(() => publishMaterials('acct-1', FIXTURE_MATERIALS));
+afterEach(() => resetMaterials());
 
 describe('the UFI obligation', () => {
   it('is not satisfied even when a product claims it is', () => {
@@ -108,5 +120,56 @@ describe('artefacts derived for a stored product', () => {
     const device = artefactsFor(categoryById('electronics'), 'bom');
     expect(fragrance.some((a) => a.type === 'sds')).toBe(true);
     expect(device.some((a) => a.type === 'sds')).toBe(false);
+  });
+});
+
+/**
+ * WHAT THE CLASSIFICATION OBLIGATION SAYS BEFORE THE REGISTER HAS ANSWERED.
+ *
+ * `outstandingObligations` feeds work queues — Studio's "N things outstanding across M
+ * products" and the product pipeline — and a queue row is a finding: something this software
+ * established the maker has not done. Materials moved from a bundled constant to a Supabase
+ * read, so there is now a window (and, on a failed read, a permanent state) in which the
+ * fragrance oil resolves to nothing through no fault of the composition.
+ *
+ * Reporting that as OUTSTANDING would be a compliance finding produced by a pending request,
+ * under the maker's own product name, on the first screen after sign-in. `not-tracked` is the
+ * state that already exists for a duty we are not the ones checking.
+ */
+describe('the classification obligation while the materials register is unsettled', () => {
+  it('is not tracked rather than outstanding while the register is loading', () => {
+    publishMaterialStatus('loading', 'acct-1');
+    expect(obligationState(PRODUCTS[0], 'clp-classification')).toBe('not-tracked');
+    expect(outstandingObligations(PRODUCTS[0]).map((o) => o.id)).not.toContain('clp-classification');
+  });
+
+  it('is not tracked rather than outstanding when the register could not be read', () => {
+    publishMaterialStatus('error', 'acct-1');
+    expect(obligationState(PRODUCTS[0], 'clp-classification')).toBe('not-tracked');
+  });
+
+  it('says why, rather than leaving the row unexplained', () => {
+    publishMaterialStatus('error', 'acct-1');
+    const row = untrackedObligations(PRODUCTS[0]).find((o) => o.id === 'clp-classification');
+    expect(row?.untrackedText).toMatch(/has not loaded/i);
+    // And it does not claim the product is at fault.
+    expect(row?.untrackedText).toMatch(/not a finding about your product/i);
+  });
+
+  it('answers properly once the register has landed', () => {
+    publishMaterials('acct-1', FIXTURE_MATERIALS);
+    // PRODUCTS[0] is a mixture whose fragrance oil carries hazards in the fixture register.
+    expect(obligationState(PRODUCTS[0], 'clp-classification')).toBe('met');
+  });
+
+  it('is outstanding when the register HAS answered and the oil carries no hazards', () => {
+    // The finding this obligation exists for, told apart from the two states above: a real
+    // gap, in a register we have actually read.
+    publishMaterials('acct-1', FIXTURE_MATERIALS);
+    const product: Product = {
+      ...PRODUCTS[0],
+      spec: { ...PRODUCTS[0].spec, fragranceId: 'ing-crw45' } as Product['spec']
+    };
+    expect(obligationState(product, 'clp-classification')).toBe('outstanding');
   });
 });
