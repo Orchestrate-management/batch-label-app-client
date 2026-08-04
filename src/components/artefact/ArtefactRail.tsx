@@ -75,7 +75,8 @@ export function ArtefactRail(props: RailProps) {
           }>
           
             {item.label}
-            {!item.current && <span className="ml-1.5 text-clay">·</span>}
+            {item.currency === 'out-of-date' &&
+            <span className="ml-1.5 text-clay" title="No longer matches this composition">·</span>}
           </button>);
 
     })}
@@ -91,9 +92,17 @@ export function ArtefactRail(props: RailProps) {
         </span>
       </Pill>
       <Pill tone="quiet">{market === 'GB' ? 'GB' : 'EU and NI'}</Pill>
-      <Pill tone={artefact.current ? 'quiet' : 'warn'}>
+      {/* THREE READINGS, NOT TWO. `artefact.current` was true for every surface nobody had
+          produced, so this pill read as a quiet, reassuring version number on a product with
+          no artefact behind it at all. It now says which of the four states this is, and only
+          `out-of-date` is a warning — `unknown` is a failure to check, not a finding. */}
+      <Pill tone={artefact.currency === 'out-of-date' ? 'warn' : 'quiet'}>
         {artefact.version}
-        {artefact.current ? '' : ', out of date'}
+        {artefact.currency === 'out-of-date' ?
+        ', no longer matches' :
+        artefact.currency === 'unknown' ?
+        ', currency unknown' :
+        ''}
       </Pill>
     </div>;
 
@@ -122,10 +131,18 @@ export function ArtefactRail(props: RailProps) {
               page.
             </p>
           }
-          {!artefact.current &&
+          {artefact.currency === 'out-of-date' &&
           <p className="mt-3 rounded-control border border-clay/30 bg-clay-tint px-3 py-2 text-2xs leading-relaxed text-clay-dark">
-              The composition changed after this version was produced, so what is on the shelf no
-              longer matches what is on screen.
+              The composition, the pack, a pinned material or your printed business details
+              changed after you recorded printing this version, so what is on the shelf no longer
+              matches what is on screen.
+            </p>
+          }
+          {artefact.currency === 'unknown' &&
+          <p className="mt-3 rounded-control border border-paper-line bg-paper px-3 py-2 text-2xs leading-relaxed text-ink-tertiary">
+              A print of this was recorded, but we could not work out what this product would be
+              produced from just now, so we cannot say whether it still matches. Nothing has
+              changed — reload and it will check again.
             </p>
           }
         </div>

@@ -4,6 +4,7 @@ import {
   DocumentRevision,
   InboxDocument,
   Product,
+  ProductEvidence,
   ProductionRecord,
   TeamMember } from
 './model';
@@ -42,6 +43,32 @@ import {
 /* -------------------------------------------------------------- products */
 
 /**
+ * The fixtures' old `obligations: Record<string, boolean>` map, as evidence entries.
+ *
+ * `Product.obligations` was read from a jsonb column nothing ever wrote, so it was replaced by
+ * `Product.evidence`, which comes from the append-only log and has a write path. These fixtures
+ * predate that and express the same idea as booleans; converting them here keeps the four
+ * non-trivial compositions the derivation and regime tests depend on, without teaching a new
+ * reader that a boolean map is a shape the app still deals in.
+ *
+ * A `false` entry becomes NO entry, which is the point: the absence of evidence is how "not
+ * recorded" is represented now, and there is deliberately no way to store a recorded negative.
+ */
+function evidenceFrom(satisfied: Record<string, boolean>): ProductEvidence {
+  const obligations: ProductEvidence['obligations'] = {};
+  for (const [id, done] of Object.entries(satisfied)) {
+    if (!done) continue;
+    obligations[id] = {
+      id: `fixture-evidence-${id}`,
+      recordedAt: '2026-06-30T00:00:00.000Z',
+      reference: null,
+      summary: `Fixture evidence for ${id}.`
+    };
+  }
+  return { obligations, sdsSections: {} };
+}
+
+/**
  * No product carries a UFI, and none marks `clp-ufi` or a poison centre
  * notification as done. Batchlabel generates no UFI, and a notification dossier
  * is keyed on one, so seeding either would be the app asserting compliance work
@@ -77,7 +104,8 @@ const BASE_PRODUCTS: Product[] = [
     heightMm: 74,
     version: 'v4',
     printedOn: '2026-05-12',
-    current: false,
+    currency: 'out-of-date',
+    isPlaceholder: false,
     driftNote:
     'Fragrance load raised from 7 percent to 8 percent on 22 July. Label v4 was printed at 7 percent.'
   },
@@ -88,11 +116,12 @@ const BASE_PRODUCTS: Product[] = [
     heightMm: 60,
     version: 'v2',
     printedOn: '2026-05-12',
-    current: false,
+    currency: 'out-of-date',
+    isPlaceholder: false,
     driftNote: 'The listing still shows the classification calculated at 7 percent.'
   }],
 
-  obligations: {
+  evidence: evidenceFrom({
     'clp-classification': true,
     'clp-artefact-current': false,
     'clp-ufi': false,
@@ -102,7 +131,7 @@ const BASE_PRODUCTS: Product[] = [
     'gpsr-traceability': true,
     'gpsr-eu-responsible-person': false,
     'gpsr-online-disclosure': false
-  }
+  })
 },
 {
   id: 'p-smoked-vetiver',
@@ -132,7 +161,8 @@ const BASE_PRODUCTS: Product[] = [
     heightMm: 74,
     version: 'v2',
     printedOn: '2026-06-30',
-    current: true
+    currency: 'current',
+    isPlaceholder: false
   },
   {
     type: 'listing',
@@ -141,17 +171,18 @@ const BASE_PRODUCTS: Product[] = [
     heightMm: 60,
     version: 'v2',
     printedOn: '2026-06-30',
-    current: true
+    currency: 'current',
+    isPlaceholder: false
   }],
 
-  obligations: {
+  evidence: evidenceFrom({
     'clp-classification': true,
     'clp-artefact-current': true,
     'clp-ufi': false,
     'clp-pcn-gb': false,
     'gpsr-traceability': true,
     'gpsr-online-disclosure': true
-  }
+  })
 },
 {
   id: 'p-bergamot-sea-salt',
@@ -181,7 +212,8 @@ const BASE_PRODUCTS: Product[] = [
     heightMm: 74,
     version: 'v3',
     printedOn: '2026-07-02',
-    current: true
+    currency: 'current',
+    isPlaceholder: false
   },
   {
     type: 'listing',
@@ -190,10 +222,11 @@ const BASE_PRODUCTS: Product[] = [
     heightMm: 60,
     version: 'v1',
     printedOn: '2026-07-02',
-    current: true
+    currency: 'current',
+    isPlaceholder: false
   }],
 
-  obligations: {
+  evidence: evidenceFrom({
     'clp-classification': true,
     'clp-artefact-current': true,
     'clp-ufi': false,
@@ -202,7 +235,7 @@ const BASE_PRODUCTS: Product[] = [
     'gpsr-traceability': true,
     'gpsr-eu-responsible-person': true,
     'gpsr-online-disclosure': false
-  }
+  })
 },
 {
   id: 'p-wild-damson',
@@ -232,7 +265,8 @@ const BASE_PRODUCTS: Product[] = [
     heightMm: 74,
     version: 'v1',
     printedOn: '2026-04-18',
-    current: true
+    currency: 'current',
+    isPlaceholder: false
   },
   {
     type: 'listing',
@@ -241,10 +275,11 @@ const BASE_PRODUCTS: Product[] = [
     heightMm: 60,
     version: 'v1',
     printedOn: '2026-04-18',
-    current: true
+    currency: 'current',
+    isPlaceholder: false
   }],
 
-  obligations: {
+  evidence: evidenceFrom({
     'clp-classification': true,
     'clp-artefact-current': true,
     'clp-ufi': false,
@@ -252,7 +287,7 @@ const BASE_PRODUCTS: Product[] = [
     'en15494-safety-text': true,
     'gpsr-traceability': true,
     'gpsr-online-disclosure': true
-  }
+  })
 },
 {
   id: 'p-rosehip-face-oil',
@@ -296,7 +331,8 @@ const BASE_PRODUCTS: Product[] = [
     heightMm: 62,
     version: 'v2',
     printedOn: '2026-07-06',
-    current: true
+    currency: 'current',
+    isPlaceholder: false
   },
   {
     type: 'carton',
@@ -305,7 +341,8 @@ const BASE_PRODUCTS: Product[] = [
     heightMm: 58,
     version: 'v1',
     printedOn: '2026-06-14',
-    current: false,
+    currency: 'out-of-date',
+    isPlaceholder: false,
     driftNote:
     'Jojoba raised from 17.9 percent to 18.4 percent on 12 July, which changed the ingredient order. Carton v1 was printed before that change.'
   },
@@ -316,10 +353,11 @@ const BASE_PRODUCTS: Product[] = [
     heightMm: 60,
     version: 'v2',
     printedOn: '2026-07-06',
-    current: true
+    currency: 'current',
+    isPlaceholder: false
   }],
 
-  obligations: {
+  evidence: evidenceFrom({
     'cpr-pif': true,
     'cpr-safety-assessment': true,
     'cpr-cpnp': false,
@@ -330,7 +368,7 @@ const BASE_PRODUCTS: Product[] = [
     'gpsr-traceability': true,
     'gpsr-eu-responsible-person': true,
     'gpsr-online-disclosure': true
-  }
+  })
 },
 {
   id: 'p-warmer',
@@ -368,7 +406,8 @@ const BASE_PRODUCTS: Product[] = [
     heightMm: 25,
     version: 'v1',
     printedOn: '2026-06-08',
-    current: true
+    currency: 'current',
+    isPlaceholder: false
   },
   {
     type: 'carton',
@@ -377,7 +416,8 @@ const BASE_PRODUCTS: Product[] = [
     heightMm: 70,
     version: 'v1',
     printedOn: '2026-06-08',
-    current: true
+    currency: 'current',
+    isPlaceholder: false
   },
   {
     type: 'leaflet',
@@ -386,7 +426,8 @@ const BASE_PRODUCTS: Product[] = [
     heightMm: 148,
     version: 'v1',
     printedOn: '2026-06-08',
-    current: true
+    currency: 'current',
+    isPlaceholder: false
   },
   {
     type: 'listing',
@@ -395,10 +436,11 @@ const BASE_PRODUCTS: Product[] = [
     heightMm: 60,
     version: 'v1',
     printedOn: '2026-06-08',
-    current: true
+    currency: 'current',
+    isPlaceholder: false
   }],
 
-  obligations: {
+  evidence: evidenceFrom({
     'ce-doc-signed': false,
     'ce-standards': true,
     'ce-test-reports': false,
@@ -409,7 +451,7 @@ const BASE_PRODUCTS: Product[] = [
     'gpsr-traceability': true,
     'gpsr-eu-responsible-person': true,
     'gpsr-online-disclosure': false
-  }
+  })
 }];
 
 
@@ -422,7 +464,7 @@ const BASE_PRODUCTS: Product[] = [
 function withSafetyDataSheet(product: Product): Product {
   if (product.spec.kind === 'bom') return product;
   if (product.artefacts.some((artefact) => artefact.type === 'sds')) return product;
-  const staleLabel = product.artefacts.find((artefact) => !artefact.current);
+  const staleLabel = product.artefacts.find((artefact) => artefact.currency === 'out-of-date');
   return {
     ...product,
     artefacts: [
@@ -434,7 +476,8 @@ function withSafetyDataSheet(product: Product): Product {
       heightMm: 297,
       version: staleLabel ? 'v3' : 'v2',
       printedOn: staleLabel ? '2026-05-12' : '2026-06-30',
-      current: !staleLabel,
+      currency: staleLabel ? 'out-of-date' : 'current',
+      isPlaceholder: false,
       driftNote: staleLabel ? staleLabel.driftNote : undefined
     }]
 

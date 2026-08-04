@@ -1,18 +1,25 @@
-import { supabase } from './supabase';
+import { DOMAIN_SCHEMA, NOT_CONFIGURED_MESSAGE, domainClient } from './domain';
 import { ARTEFACT_LABELS, CategoryPack, categoryById, categoryForKind } from './categories';
 import {
   ARTEFACT_NOT_PRODUCED,
   ARTEFACT_NO_PRINT_DATE,
+  ArtefactCurrency,
   ArtefactInstance,
+  ArtefactType,
   BomSpec,
   CategoryId,
   Market,
   MixtureSpec,
+  NO_EVIDENCE,
   PhasedSpec,
   Product,
+  ProductEvidence,
+  RecordedEvidence,
   RegimeId,
   Spec } from
 './model';
+
+export { DOMAIN_SCHEMA, domainClient };
 
 /**
  * Products and specifications, read from and written to Supabase.
@@ -277,33 +284,6 @@ const DUPLICATE_SKU_MESSAGE =
 'a different code.';
 
 /**
- * The Postgres schema holding the Batchlabel domain.
- *
- * `products` and `specifications` used to live in `public`, alongside `brands`,
- * `profiles` and `brand_memberships` — which are shared by every Orchestrate
- * brand. Those two are not shared: they are candles. The next product is
- * inventory software, and it will want a table called `products` meaning stock.
- * 20260804120000 moved them out before that collision could happen with real
- * data in the way.
- *
- * SCOPED ON THE BINDING RATHER THAN PER CALL, and NOT via the client's global
- * `db.schema` option, because the same client still reads `public` — the
- * entitlements view, consent, membership. Only the domain reads move.
- *
- * PostgREST serves only the schemas listed in `[api] schemas` in
- * supabase/config.toml (in the www repo). If these reads start 404ing, that list
- * is the first thing to check: the table exists and the client is asking the
- * right question, but the API has not been told the schema is servable.
- */
-const DOMAIN_SCHEMA = 'batchlabel';
-
-/** The domain-scoped client, or null when Supabase is not configured at all. */
-const domainClient = () => (supabase ? supabase.schema(DOMAIN_SCHEMA) : null);
-
-const NOT_CONFIGURED_MESSAGE =
-'This app is not connected to its database, so nothing can be saved. This is us, not you.';
-
-/**
  * Said when a read came back holding more than one account's products and we had no id to
  * choose between them. See `fetchProducts`.
  *
@@ -426,11 +406,76 @@ export type ProductRow = {
   created_at: string | null;
 };
 
+/**
+ * One produced artefact — `batchlabel.artefacts`. An artefact IS a version: nothing here is
+ * ever updated in place, so a row cannot drift and "Current" is a comparison rather than a flag.
+ */
+export type ArtefactRow = {
+  id: string;
+  product_id: string;
+  artefact_type: string;
+  version: number | string | null;
+  width_mm: number | string | null;
+  height_mm: number | string | null;
+  produced_at: string | null;
+  printed_at: string | null;
+  specification_hash: string | null;
+  is_placeholder: boolean | null;
+  notes: string | null;
+};
+
+/** One line of the append-only log — `batchlabel.record_events`. */
+export type RecordEventRow = {
+  id: string;
+  kind: string | null;
+  product_id: string | null;
+  occurred_at: string | null;
+  obligation_id: string | null;
+  reference: string | null;
+  summary: string | null;
+};
+
 const SPECIFICATION_COLUMNS =
 'id, account_id, name, category_id, kind, product_type, fragrance_id, base_id, dye_id, load, additive, markets, regimes, ufi, data';
 
+/**
+ * `obligations` is deliberately NOT read any more.
+ *
+ * The column still exists and is still empty on every row, because nothing has ever written to
+ * it. It used to be mapped onto `Product.obligations` and consulted by `obligationState`, which
+ * is how fifteen obligations came to be permanently outstanding on every product of every
+ * account. The evidence now comes from `batchlabel.record_events.obligation_id`, which has a
+ * write path. Selecting a column nobody reads is a small cost; the reason to drop it is that
+ * the next person to see it in this list will wonder which of the two sources wins.
+ */
 const PRODUCT_COLUMNS =
-'id, account_id, specification_id, name, sku, net_quantity, net_unit, packaging_id, identifiers, obligations, data, created_at';
+'id, account_id, specification_id, name, sku, net_quantity, net_unit, packaging_id, identifiers, data, created_at';
+
+const ARTEFACT_COLUMNS =
+'id, product_id, artefact_type, version, width_mm, height_mm, produced_at, printed_at, specification_hash, is_placeholder, notes';
+
+const RECORD_EVENT_COLUMNS = 'id, kind, product_id, occurred_at, obligation_id, reference, summary';
+
+/**
+ * The event kinds that are evidence about a product, and the only ones this read asks for.
+ *
+ * Anything carrying an `obligation_id` is evidence for that obligation whatever its kind —
+ * signing a declaration, submitting a notification and assigning a UFI are all discharges of a
+ * named duty — so the list is the compliance half of the kind enum rather than one kind.
+ * `batch.produced` and the artefact kinds are the Records screen's to render and are not read
+ * here: this function assembles a product, not a history.
+ */
+const EVIDENCE_KINDS = [
+'compliance.evidence_recorded',
+'compliance.sds_section_reviewed',
+'compliance.ufi_assigned',
+'compliance.pcn_submitted',
+'compliance.npis_submitted',
+'compliance.declaration_signed'];
+
+
+/** The one kind whose `reference` is a safety data sheet section number rather than a document. */
+export const SDS_REVIEW_KIND = 'compliance.sds_section_reviewed';
 
 /* -------------------------------------------------------------- coercion */
 
@@ -483,15 +528,6 @@ function regimes(value: unknown, category: CategoryPack): RegimeId[] {
   return list.length ? list : category.regimes;
 }
 
-function obligations(value: unknown): Record<string, boolean> {
-  if (!value || typeof value !== 'object') return {};
-  const out: Record<string, boolean> = {};
-  for (const [key, entry] of Object.entries(value as Json)) {
-    if (typeof entry === 'boolean') out[key] = entry;
-  }
-  return out;
-}
-
 function categoryFor(row: SpecificationRow): CategoryPack {
   const stored = str(row.category_id);
   const known = ['home-fragrance', 'cosmetics', 'electronics'].includes(stored);
@@ -505,42 +541,151 @@ function categoryFor(row: SpecificationRow): CategoryPack {
 
 /* ------------------------------------------------------------- artefacts */
 
-/**
- * The outputs a product has, derived from its category on every read.
- *
- * NOT STORED, AND NOT INVENTED. There is no artefacts table, so there is no version history
- * and no print date to report. Every artefact therefore says "Not yet produced" with no date,
- * and every one is `current` — a surface that has never been printed cannot be out of date
- * relative to the composition, and telling a maker their label is stale when they have never
- * had one is a false statement about their compliance, not a harmless placeholder.
- */
-export function artefactsFor(category: CategoryPack, kind: Spec['kind']): ArtefactInstance[] {
-  const surfaces: ArtefactInstance[] = category.artefacts.map((type) => ({
-    type,
-    label: ARTEFACT_LABELS[type],
-    widthMm: type === 'listing' ? 96 : type === 'carton' ? 88 : type === 'rating-plate' ? 40 : 52,
-    heightMm: type === 'listing' ? 60 : type === 'carton' ? 58 : type === 'rating-plate' ? 25 : 74,
-    version: ARTEFACT_NOT_PRODUCED,
-    printedOn: ARTEFACT_NO_PRINT_DATE,
-    current: true
-  }));
+/** The default surface size for a type, used until a produced row says what was actually made. */
+export function defaultArtefactSize(type: ArtefactType): {widthMm: number;heightMm: number;} {
+  if (type === 'sds') return { widthMm: 210, heightMm: 297 };
+  if (type === 'listing') return { widthMm: 96, heightMm: 60 };
+  if (type === 'carton') return { widthMm: 88, heightMm: 58 };
+  if (type === 'rating-plate') return { widthMm: 40, heightMm: 25 };
+  return { widthMm: 52, heightMm: 74 };
+}
 
+/** The surfaces a product's category requires, in order, with the sheet where one is due. */
+export function artefactTypesFor(category: CategoryPack, kind: Spec['kind']): ArtefactType[] {
   // The safety data sheet is the second output of the same derivation, so every product that
   // is a mixture carries one alongside its label surfaces. A device is an article rather than
   // a mixture and has no sheet to issue.
-  if (kind === 'bom') return surfaces;
-  return [
-  ...surfaces,
-  {
-    type: 'sds',
-    label: ARTEFACT_LABELS.sds,
-    widthMm: 210,
-    heightMm: 297,
-    version: ARTEFACT_NOT_PRODUCED,
-    printedOn: ARTEFACT_NO_PRINT_DATE,
-    current: true
-  }];
+  return kind === 'bom' ? [...category.artefacts] : [...category.artefacts, 'sds'];
+}
 
+/**
+ * The outputs a product has: the shape from its category, the facts from `batchlabel.artefacts`.
+ *
+ * WHAT CHANGED, AND WHY IT MATTERED. This used to derive the whole thing from the category and
+ * stamp every surface `version: 'Not yet produced'`, no print date, `current: true` — because
+ * there was no artefacts table. Two of those three were fine. The third was a boolean standing
+ * in for four different facts, and it resolved to the reassuring one: a surface nobody has
+ * printed cannot have drifted, which is true, but "cannot have drifted" is not "is up to date",
+ * and every screen read it as the latter. `ArtefactCurrency` replaced the boolean so the four
+ * cases have four names, and this function no longer has to pick a comforting default.
+ *
+ * `liveHash` is what `batchlabel.artefact_source_fingerprint(product_id)` returns NOW.
+ * Null means we could not get one — the RPC failed, or the product was not visible to it — and
+ * a produced artefact then reads `unknown` rather than borrowing either answer. An artefact
+ * whose stored hash equals the live one is current; that is a comparison of two database
+ * values, which is the only kind of "up to date" this app is entitled to state.
+ */
+export function artefactsFor(
+category: CategoryPack,
+kind: Spec['kind'],
+rows: ArtefactRow[] = [],
+liveHash: string | null = null)
+: ArtefactInstance[] {
+  // An artefact IS a version, so the row that describes a surface today is its highest one.
+  const latest = new Map<string, ArtefactRow>();
+  for (const row of rows) {
+    const type = str(row.artefact_type);
+    if (!type) continue;
+    const held = latest.get(type);
+    if (!held || num(row.version, 0) > num(held.version, 0)) latest.set(type, row);
+  }
+
+  return artefactTypesFor(category, kind).map((type) => {
+    const size = defaultArtefactSize(type);
+    const row = latest.get(type);
+
+    if (!row) {
+      return {
+        type,
+        label: ARTEFACT_LABELS[type],
+        ...size,
+        version: ARTEFACT_NOT_PRODUCED,
+        printedOn: ARTEFACT_NO_PRINT_DATE,
+        currency: 'not-produced' as ArtefactCurrency,
+        // Nothing was produced, so nothing was generated either. True, and it keeps every
+        // reader on one rule: never call a row produced without reading this column.
+        isPlaceholder: true
+      };
+    }
+
+    const storedHash = str(row.specification_hash);
+    const currency: ArtefactCurrency =
+    !liveHash || !storedHash ? 'unknown' : storedHash === liveHash ? 'current' : 'out-of-date';
+
+    return {
+      type,
+      label: ARTEFACT_LABELS[type],
+      widthMm: num(row.width_mm, size.widthMm),
+      heightMm: num(row.height_mm, size.heightMm),
+      version: `v${num(row.version, 1)}`,
+      // The print date, falling back to the production date. Both are real timestamps on the
+      // row; neither is invented when the other is absent.
+      printedOn: str(row.printed_at) || str(row.produced_at) || ARTEFACT_NO_PRINT_DATE,
+      currency,
+      // NOT defaulted to false. The column is NOT NULL DEFAULT TRUE in the schema, so a null
+      // here means a shape this build does not understand — and the safe reading of "we are
+      // not sure whether Batchlabel generated this file" is that it did not.
+      isPlaceholder: row.is_placeholder !== false,
+      driftNote:
+      currency === 'out-of-date' ?
+      'The composition, the pack, a pinned material or the printed business identity changed after this version was produced.' :
+      undefined
+    };
+  });
+}
+
+/**
+ * The evidence rows for one account, grouped by product.
+ *
+ * Latest wins, which is why the read below orders by `occurred_at` descending: the log is
+ * append-only, so a correction is a second event and the one a screen should show is the most
+ * recent thing the maker said about that duty. The earlier entries are not lost — the Records
+ * screen renders the whole log — they are simply not what "where does this stand" means.
+ */
+export function evidenceByProduct(rows: RecordEventRow[]): Map<string, ProductEvidence> {
+  const out = new Map<string, ProductEvidence>();
+
+  const forProduct = (productId: string): ProductEvidence => {
+    const held = out.get(productId);
+    if (held) return held;
+    const fresh: ProductEvidence = { obligations: {}, sdsSections: {} };
+    out.set(productId, fresh);
+    return fresh;
+  };
+
+  for (const row of rows) {
+    const productId = str(row.product_id);
+    // An event with no product is account-level — an identity change, a data request — and is
+    // the Records screen's to show. It is evidence about no product in particular, and
+    // attaching it to all of them would be an invented finding on every one.
+    if (!productId) continue;
+
+    const entry: RecordedEvidence = {
+      id: row.id,
+      recordedAt: str(row.occurred_at),
+      reference: str(row.reference) || null,
+      summary: str(row.summary)
+    };
+
+    const obligationId = str(row.obligation_id);
+    if (obligationId) {
+      const bucket = forProduct(productId).obligations;
+      if (!(obligationId in bucket)) bucket[obligationId] = entry;
+      continue;
+    }
+
+    if (row.kind === SDS_REVIEW_KIND) {
+      const section = Number(str(row.reference));
+      // A review of section "seven" or of no section at all reviews nothing this screen can
+      // point at. Dropped rather than guessed: marking the wrong section signed off is worse
+      // than showing it still outstanding.
+      if (!Number.isInteger(section) || section < 1 || section > 16) continue;
+      const bucket = forProduct(productId).sdsSections;
+      if (!(section in bucket)) bucket[section] = entry;
+    }
+  }
+
+  return out;
 }
 
 /* --------------------------------------------------------------- mapping */
@@ -572,7 +717,9 @@ function toSpec(spec: SpecificationRow, product: ProductRow, category: CategoryP
       productType,
       phases,
       application: data.application === 'Rinse-off' ? 'Rinse-off' : 'Leave-on',
-      paoMonths: num(data.paoMonths, 12),
+      // Zero, not twelve. Unset is a state a cosmetic label has to be able to be in, and the
+      // twelve that used to be defaulted here printed "12M" onto the preview.
+      paoMonths: num(data.paoMonths, 0),
       ...pack
     };
     return phased;
@@ -583,7 +730,10 @@ function toSpec(spec: SpecificationRow, product: ProductRow, category: CategoryP
     const bom: BomSpec = {
       kind: 'bom',
       productType,
-      model: str(data.model, 'Not yet assigned'),
+      // Empty, not "Not yet assigned". The model and type reference is what a rating plate is
+      // printed from and what a declaration of conformity names, so a stored blank has to stay
+      // a blank the editor shows as empty rather than a sentence that could reach a plate.
+      model: str(data.model),
       items: Array.isArray(data.items) ?
       (data.items as BomSpec['items']).map((item) => ({
         materialId: str(item?.materialId),
@@ -607,15 +757,29 @@ function toSpec(spec: SpecificationRow, product: ProductRow, category: CategoryP
     baseId: str(spec.base_id),
     fragranceId: str(spec.fragrance_id),
     load: num(spec.load, 0),
-    dyeId: str(spec.dye_id, 'ing-no-dye'),
-    additive: str(spec.additive, 'None'),
+    // Both empty rather than 'ing-no-dye' / 'None'. A stored NULL means the maker has not said,
+    // and "No dye" and "None" are answers — the first of which is a component of the
+    // classification and the second of which a maker may be asked to justify.
+    dyeId: str(spec.dye_id),
+    additive: str(spec.additive),
     ...pack
   };
   return mixture;
 }
 
-/** One product row plus its specification row, as the screens expect a Product. */
-export function toProduct(product: ProductRow, spec: SpecificationRow): Product {
+/**
+ * One product row plus its specification row, as the screens expect a Product.
+ *
+ * `recorded` carries what the account has entered in the append-only log about this product,
+ * and `liveHash` what the composition fingerprints to now. Both default to "nothing recorded"
+ * so that a caller assembling a product from two rows alone — a create, a test — gets a
+ * product that claims no evidence and no produced artefact, which is the true answer for one.
+ */
+export function toProduct(
+product: ProductRow,
+spec: SpecificationRow,
+recorded: {artefacts?: ArtefactRow[];evidence?: ProductEvidence;liveHash?: string | null;} = {})
+: Product {
   const category = categoryFor(spec);
   const composition = toSpec(spec, product, category);
   const identifiers = (product.identifiers ?? {}) as Json;
@@ -629,7 +793,12 @@ export function toProduct(product: ProductRow, spec: SpecificationRow): Product 
     markets: markets(spec.markets),
     regimes: regimes(spec.regimes, category),
     spec: composition,
-    artefacts: artefactsFor(category, composition.kind),
+    artefacts: artefactsFor(
+      category,
+      composition.kind,
+      recorded.artefacts ?? [],
+      recorded.liveHash ?? null
+    ),
     identifiers: {
       // The UFI is read from the SPECIFICATION, which is where CLP Annex VIII puts it and
       // where the schema put the column: one composition, one UFI, however many pack sizes.
@@ -640,7 +809,7 @@ export function toProduct(product: ProductRow, spec: SpecificationRow): Product 
       weeeRegistration: str(identifiers.weee_registration ?? identifiers.weeeRegistration) || undefined,
       modelYear: str(identifiers.model_year ?? identifiers.modelYear) || undefined
     },
-    obligations: obligations(product.obligations)
+    evidence: recorded.evidence ?? NO_EVIDENCE
   };
 }
 
@@ -718,7 +887,16 @@ export async function fetchProducts(accountId: string | null): Promise<ReadResul
   // Always filtered. RLS is the boundary; this is the narrowing, and the two are not
   // substitutes — RLS answers "may I see this row", the filter answers "is this the account
   // whose workspace I am rendering".
-  const [productsResponse, specificationsResponse] = await Promise.all([
+  //
+  // FOUR READS NOW, NOT TWO, AND ALL FOUR MUST SUCCEED. Artefacts and the evidence log joined
+  // the pair because a product is not describable without them: the artefact rows are what
+  // turn "Not yet produced" into a version and a date, and the log is what turns fifteen
+  // permanently-outstanding obligations into ones with an answer. Failing the whole read when
+  // either comes back empty-handed is deliberate. The alternative — products with no evidence —
+  // renders as "you have recorded nothing against any of these", which is a specific and false
+  // claim about the maker's compliance, and it is indistinguishable from the true version.
+  const [productsResponse, specificationsResponse, artefactsResponse, eventsResponse] =
+  await Promise.all([
   client.
   from('products').
   select(PRODUCT_COLUMNS).
@@ -729,10 +907,26 @@ export async function fetchProducts(accountId: string | null): Promise<ReadResul
   from('specifications').
   select(SPECIFICATION_COLUMNS).
   is('archived_at', null).
-  eq('account_id', accountId)]
+  eq('account_id', accountId),
+  client.
+  from('artefacts').
+  select(ARTEFACT_COLUMNS).
+  eq('account_id', accountId).
+  order('version', { ascending: true }),
+  client.
+  from('record_events').
+  select(RECORD_EVENT_COLUMNS).
+  eq('account_id', accountId).
+  in('kind', EVIDENCE_KINDS).
+  order('occurred_at', { ascending: false })]
   );
 
-  if (productsResponse.error || specificationsResponse.error) {
+  if (
+  productsResponse.error ||
+  specificationsResponse.error ||
+  artefactsResponse.error ||
+  eventsResponse.error)
+  {
     // Deliberately not the Postgres message. A read failure is us, and the screen says so
     // and offers a retry — what it must never do is render as "you have no products", which
     // is indistinguishable from a new account and reads as data loss.
@@ -750,6 +944,27 @@ export async function fetchProducts(accountId: string | null): Promise<ReadResul
     specifications.set(row.id, row);
   }
 
+  const artefacts = new Map<string, ArtefactRow[]>();
+  for (const row of (artefactsResponse.data ?? []) as ArtefactRow[]) {
+    const list = artefacts.get(row.product_id);
+    if (list) list.push(row);else
+    artefacts.set(row.product_id, [row]);
+  }
+
+  const evidence = evidenceByProduct((eventsResponse.data ?? []) as RecordEventRow[]);
+
+  // ONE RPC PER PRODUCT THAT HAS PRODUCED SOMETHING, AND NONE FOR THE REST.
+  //
+  // The fingerprint is the only way to answer "is this label still the one for this
+  // composition", and Postgres is the only thing that can compute it — it is an md5 over
+  // fifteen stored columns plus the pinned materials plus the printed identity, and a
+  // reimplementation here would agree until the day it did not, which is the day a maker is
+  // told their label is fine. There is no set-returning wrapper to call once, so this is a
+  // call per product; a brand new account makes none, and an account at the top of the
+  // largest plan makes at most forty-five, in parallel, on a screen that is already waiting
+  // on four other queries.
+  const fingerprints = await liveFingerprints(client, [...artefacts.keys()]);
+
   const products: Product[] = [];
   for (const row of productRows) {
     const spec = specifications.get(row.specification_id);
@@ -757,15 +972,88 @@ export async function fetchProducts(accountId: string | null): Promise<ReadResul
     // composition, so no classification, no label and no sheet. Dropping it silently would
     // be wrong, but so would rendering a blank row, and the composite foreign key means the
     // only way to reach this is a specification archived out from under a live product.
-    if (spec) products.push(toProduct(row, spec));
+    if (spec) {
+      products.push(
+        toProduct(row, spec, {
+          artefacts: artefacts.get(row.id) ?? [],
+          evidence: evidence.get(row.id) ?? NO_EVIDENCE,
+          liveHash: fingerprints.get(row.id) ?? null
+        })
+      );
+    }
   }
 
   return { ok: true, products };
 }
 
+type DomainClient = NonNullable<ReturnType<typeof domainClient>>;
+
+/**
+ * What each product's label and sheet would be produced FROM, right now.
+ *
+ * A null entry is "we could not tell", never "it has not changed". Every failure lands there:
+ * an RPC that errored, a product the function could not see (it is SECURITY INVOKER, so RLS
+ * applies and a row outside the caller's account returns null rather than an answer), and a
+ * response of an unexpected shape. `artefactsFor` renders those as `unknown`, which is a state
+ * with its own sentence rather than one of the two answers.
+ */
+async function liveFingerprints(
+client: DomainClient,
+productIds: string[])
+: Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  if (productIds.length === 0) return out;
+
+  const answers = await Promise.all(
+    productIds.map(async (id) => {
+      try {
+        const { data, error } = await client.rpc('artefact_source_fingerprint', {
+          p_product_id: id
+        });
+        if (error) return [id, null] as const;
+        return [id, typeof data === 'string' && data.trim() !== '' ? data : null] as const;
+      } catch {
+        // A transport failure is not an answer either. Swallowed rather than thrown because
+        // one unreachable fingerprint must not cost the maker the whole products list.
+        return [id, null] as const;
+      }
+    })
+  );
+
+  for (const [id, hash] of answers) out.set(id, hash);
+  return out;
+}
+
 /* ----------------------------------------------------------------- write */
 
-/** The composition a brand new product starts from: enough to be legal to store, no more. */
+/**
+ * The composition a brand new product starts from: NOTHING THE MAKER DID NOT CHOOSE.
+ *
+ * WHAT THIS USED TO SEED, AND WHY IT HAD TO STOP. The new-product form asks four questions —
+ * name, code, category, product type. The composition it inserted answered nine. A container
+ * candle arrived holding `ing-crw45` (one specific paraffin container wax, from one named
+ * supplier, in Batchlabel's shipped catalogue), `pkg-tumbler-250`, 100 g net, `ing-no-dye` and
+ * the additive "None". Every one of those is a fact about the maker's product that the maker
+ * never stated, and three of them print: the net quantity is a CLP Article 17 label element,
+ * the packaging fixes the pictogram size the label is checked against, and the base wax is a
+ * component of the classification the label carries. A maker who created a soy candle and
+ * printed a label got a paraffin wax's classification and a net weight nobody had weighed.
+ *
+ * It was not even a harmless default in the ordinary sense, because it was invisible: the form
+ * that "asked four questions" answered nine silently, and there was no screen anywhere saying
+ * "we picked these for you". The composition screen then rendered them as the maker's own.
+ *
+ * SO EVERY FIELD IS NOW GENUINELY EMPTY, and the screens say so. `''` for a material or a
+ * packaging id means "not chosen yet" and the editors render a "Not chosen yet" option;
+ * `deriveMixture` already skips components it cannot resolve, so an empty base contributes
+ * nothing to the classification instead of contributing somebody else's; and the composition
+ * pipeline stage raises the gap as outstanding work, which is the honest place for it.
+ *
+ * `netUnit` IS THE ONE EXCEPTION AND IT IS NOT A CLAIM. It is a unit, not a quantity, and it
+ * follows from the product type the maker did pick: candles and melts are sold by weight and
+ * everything else here by volume. `netQuantity` stays 0, so nothing is asserted about how much
+ * is in the pack — a unit with no number beside it prints nothing.
+ */
 export function blankSpec(
 category: CategoryPack,
 productType: string,
@@ -775,26 +1063,14 @@ fragranceId?: string)
     return {
       kind: 'mixture',
       productType,
-      baseId:
-      productType === 'Reed diffuser' ?
-      'ing-dpg' :
-      productType === 'Room spray' ?
-      'ing-alcohol' :
-      'ing-crw45',
+      baseId: '',
       fragranceId: fragranceId ?? '',
       load: 0,
-      dyeId: 'ing-no-dye',
-      additive: 'None',
-      netQuantity: 100,
+      dyeId: '',
+      additive: '',
+      netQuantity: 0,
       netUnit: productType === 'Container candle' || productType === 'Wax melt' ? 'g' : 'ml',
-      packagingId:
-      productType === 'Reed diffuser' ?
-      'pkg-diffuser-100' :
-      productType === 'Room spray' ?
-      'pkg-spray-100' :
-      productType === 'Wax melt' ?
-      'pkg-clamshell' :
-      'pkg-tumbler-250'
+      packagingId: ''
     };
   }
   if (category.specKind === 'phased') {
@@ -806,16 +1082,27 @@ fragranceId?: string)
       { name: 'Cool down', items: [] }],
 
       application: 'Leave-on',
-      paoMonths: 12,
-      netQuantity: 30,
+      /**
+       * NOT 12, WHICH IS WHAT THIS SEEDED UNTIL NOW.
+       *
+       * A period after opening is a legal marking on a cosmetic and it is one the maker has to
+       * justify from stability data. Twelve months was a constant here, it printed as "12M" on
+       * the label preview at actual size, and the obligations list on the same screen read
+       * "Neither a period after opening nor a date of minimum durability is shown" — the screen
+       * contradicting itself over a number nothing had measured. Zero means unset, `derive`
+       * renders it as unset rather than as a figure, and `cpr-pao` reads the same field, so the
+       * two halves of the screen cannot disagree again.
+       */
+      paoMonths: 0,
+      netQuantity: 0,
       netUnit: 'ml',
-      packagingId: 'pkg-dropper-30'
+      packagingId: ''
     };
   }
   return {
     kind: 'bom',
     productType,
-    model: 'Not yet assigned',
+    model: '',
     items: [],
     /**
      * NOT 5 V / 2 A / 10 W, WHICH IS WHAT THIS SEEDED UNTIL NOW.
@@ -832,9 +1119,9 @@ fragranceId?: string)
      * the same view of the model, which is the other field the plate carries.
      */
     ratings: { voltage: '—', current: '—', power: '—' },
-    netQuantity: 400,
+    netQuantity: 0,
     netUnit: 'g',
-    packagingId: 'pkg-device-box'
+    packagingId: ''
   };
 }
 

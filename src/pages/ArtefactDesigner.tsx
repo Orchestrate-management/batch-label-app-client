@@ -6,6 +6,7 @@ import {
   DownloadIcon,
   PackageIcon,
   RefreshCwIcon,
+  StampIcon,
   TriangleAlertIcon } from
 'lucide-react';
 import { toast } from 'sonner';
@@ -25,7 +26,8 @@ import {
 '../components/ui/Primitives';
 import { useEntitlement } from '../lib/entitlement';
 import { ArtefactRenderer } from '../components/artefact/ArtefactRenderer';
-import { ArtefactType, Market, Product } from '../lib/model';
+import { ArtefactType, Market, Product, formatDate } from '../lib/model';
+import { recordArtefactPrinted } from '../lib/evidence';
 import {
   MIN_FONT_PT,
   MIN_LINE_SPACING,
@@ -36,7 +38,7 @@ import {
 import { packagingById } from '../lib/catalog';
 import { ARTEFACT_LABELS, STOCK, categoryById } from '../lib/categories';
 import { addressForMarket } from '../lib/identity';
-import { useProduct } from '../lib/product-store';
+import { useProduct, useProducts } from '../lib/product-store';
 import { blocksFor, regimeById } from '../lib/regimes';
 import { useCategorySurface } from '../lib/workspace';
 
@@ -158,6 +160,7 @@ function ArtefactDesignerView({ product }: {product: Product;}) {
   const [fontPt, setFontPt] = useState(6);
   const [lineSpacing, setLineSpacing] = useState(1.18);
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
+  const [recording, setRecording] = useState(false);
 
   const openSurface = (type: ArtefactType) => {
     const firstStock = STOCK.find((s) => s.artefactType === type);
@@ -211,6 +214,11 @@ function ArtefactDesignerView({ product }: {product: Product;}) {
         description="Arrange the blocks the active regimes require. The canvas is at actual size, and the checks below state the rule and its source."
         actions={
         <>
+            {/* THE PRIMARY ACTION IS THE ONE THAT WRITES. The two export buttons keep their
+                plan gate and their honest toasts, but they are no longer the most prominent
+                thing on the screen, because neither of them produces anything. What a maker
+                can actually do today — print from their own process and have Batchlabel
+                remember which recipe it was printed from — is now the primary. */}
             <Button
             variant="secondary"
             disabled={!canExport}
@@ -233,7 +241,7 @@ function ArtefactDesignerView({ product }: {product: Product;}) {
               Export sheet
             </Button>
             <Button
-            variant="primary"
+            variant="secondary"
             disabled={!canExport}
             aria-describedby={canExport ? undefined : 'export-plan-notice'}
             onClick={() =>
@@ -245,6 +253,10 @@ function ArtefactDesignerView({ product }: {product: Product;}) {
             }>
 
               Export PDF
+            </Button>
+            <Button variant="primary" onClick={() => setRecording(true)}>
+              <StampIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
+              Record a print
             </Button>
           </>
         }
@@ -260,11 +272,30 @@ function ArtefactDesignerView({ product }: {product: Product;}) {
         } />
 
 
+      {recording &&
+      <RecordPrintDialog
+        product={product}
+        artefactType={artefact.type}
+        widthMm={widthMm}
+        heightMm={heightMm}
+        stockName={stock?.name}
+        onClose={() => setRecording(false)} />
+
+      }
+
       {!canExport &&
       <div id="export-plan-notice" className="px-6 pt-6 lg:px-10">
           <PlanNotice feature="Exporting a finished artefact" />
         </div>
       }
+
+      {/* Said once, in plain sight, on the screen whose entire promise is that the canvas is
+          what will be printed. The two export buttons above are honest when pressed, but a
+          toast is only read by somebody who pressed the button — and the state of this
+          artefact is worth knowing before you decide what to do with it. */}
+      <div className="px-6 pt-6 lg:px-10">
+        <PrintState product={product} artefactType={artefact.type} />
+      </div>
 
       <div className="grid gap-8 px-6 py-8 lg:px-10 xl:grid-cols-[330px_minmax(0,1fr)]">
         <section aria-label="Blocks and settings" className="space-y-5">
@@ -293,7 +324,12 @@ function ArtefactDesignerView({ product }: {product: Product;}) {
                       }>
                       
                       {item.label}
-                      {!item.current && <span className="ml-1.5 text-clay">·</span>}
+                      {item.currency === 'out-of-date' &&
+                      <span
+                        className="ml-1.5 text-clay"
+                        title="The last print you recorded no longer matches this composition">
+                          ·
+                        </span>}
                     </button>);
 
                 })}
@@ -485,6 +521,185 @@ function ArtefactDesignerView({ product }: {product: Product;}) {
         </section>
       </div>
     </main>);
+
+}
+
+/**
+ * What Batchlabel knows about this surface having been printed. Four states, four sentences.
+ *
+ * NOTHING HERE CLAIMS A FILE EXISTS. `is_placeholder` is TRUE on every artefact row this app
+ * writes, because no exporter has been built — a print record says the MAKER printed something
+ * and which composition it was printed from, and that is a genuinely useful fact (it is what
+ * answers "which of my labels stopped being right when I corrected my address") without being
+ * a claim that Batchlabel produced anything.
+ */
+function PrintState({ product, artefactType }: {product: Product;artefactType: ArtefactType;}) {
+  const artefact = product.artefacts.find((item) => item.type === artefactType);
+  if (!artefact) return null;
+
+  if (artefact.currency === 'not-produced') {
+    return (
+      <Callout tone="info" title="No print recorded for this surface">
+        <p className="max-w-prose leading-relaxed">
+          Batchlabel does not generate the file yet, so nothing here has been produced. When you
+          print this label from your own setup, record it — we keep the version and a fingerprint
+          of the composition it was printed from, and tell you if the composition later moves.
+        </p>
+      </Callout>);
+
+  }
+
+  if (artefact.currency === 'out-of-date') {
+    return (
+      <Callout tone="warn" role="alert" title={`${artefact.version} no longer matches this product`}>
+        <p className="max-w-prose leading-relaxed">
+          You recorded printing {artefact.version} on {formatDate(artefact.printedOn)}. The
+          composition, the pack, a pinned material or your printed business details have changed
+          since. What is on screen is the current version; what is on your jars is not.
+        </p>
+      </Callout>);
+
+  }
+
+  if (artefact.currency === 'unknown') {
+    return (
+      <Callout tone="info" title="We could not check this one">
+        <p className="max-w-prose leading-relaxed">
+          {artefact.version} was recorded as printed on {formatDate(artefact.printedOn)}, but we
+          could not work out what this product would be produced from just now, so we will not
+          say whether it still matches. Nothing has changed — reload and it will try again.
+        </p>
+      </Callout>);
+
+  }
+
+  return (
+    <Callout tone="info" title={`${artefact.version} still matches this composition`}>
+      <p className="max-w-prose leading-relaxed">
+        You recorded printing it on {formatDate(artefact.printedOn)}, and nothing that goes onto
+        the label has changed since. Batchlabel did not generate the file — this is a record of
+        your print, checked against the composition.
+      </p>
+    </Callout>);
+
+}
+
+/**
+ * Records a print. One row in `batchlabel.artefacts`, one line in the append-only log.
+ *
+ * THE DIALOG SAYS WHAT IT IS RECORDING BEFORE IT RECORDS IT, because "Record a print" could
+ * easily be read as "print it for me" on a screen with two export buttons beside it. The
+ * sentence at the top is the one that has to survive somebody skim-reading.
+ */
+function RecordPrintDialog({
+  product,
+  artefactType,
+  widthMm,
+  heightMm,
+  stockName,
+  onClose
+}: {
+  product: Product;
+  artefactType: ArtefactType;
+  widthMm: number;
+  heightMm: number;
+  stockName?: string;
+  onClose: () => void;
+}) {
+  const entitlement = useEntitlement();
+  const { reload } = useProducts();
+  const [notes, setNotes] = useState('');
+  const [when, setWhen] = useState(() => new Date().toISOString().slice(0, 10));
+  const [saving, setSaving] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (saving) return;
+    setSaving(true);
+    setFailure(null);
+    const result = await recordArtefactPrinted({
+      accountId: entitlement.accountId,
+      product,
+      artefactType,
+      widthMm,
+      heightMm,
+      notes: notes.trim() || (stockName ? `Printed on ${stockName}.` : null),
+      // Midday, so a date typed here cannot land on the previous day once stored as an instant.
+      occurredAt: when ? new Date(`${when}T12:00:00`).toISOString() : undefined
+    });
+    setSaving(false);
+
+    if (!result.ok) {
+      setFailure(result.message);
+      // A partial save DID store the artefact version, so the list on every other screen is now
+      // stale and the drift check will already be using it. Reloading is what stops this screen
+      // contradicting the one the maker goes to next.
+      if (result.reason === 'partial_save') await reload();
+      return;
+    }
+
+    await reload();
+    onClose();
+    toast(`Recorded ${ARTEFACT_LABELS[artefactType].toLowerCase()} v${result.value.version}`, {
+      description:
+      'Stored with a fingerprint of the composition it was printed from. Batchlabel did not generate a file.'
+    });
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-center justify-center bg-ink/20 px-6"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Record a print">
+
+      <Card className="max-h-[90vh] w-full max-w-lg overflow-y-auto px-6 py-6">
+        <h2 className="font-display text-lg font-medium text-ink">Record a print</h2>
+        <p className="mt-1 max-w-prose text-sm leading-relaxed text-ink-secondary">
+          This does not print anything and does not make a file — Batchlabel cannot do either
+          yet. It records that you printed the{' '}
+          {ARTEFACT_LABELS[artefactType].toLowerCase()} at {widthMm} × {heightMm} mm, and stores
+          a fingerprint of the composition it was printed from, so we can tell you if that
+          composition later changes.
+        </p>
+
+        <div className="mt-5 space-y-4">
+          <Field label="When you printed it" hint="Not when you are typing this in.">
+            <input
+              type="date"
+              value={when}
+              onChange={(event) => setWhen(event.target.value)}
+              aria-label="Date printed"
+              className="tabular w-full rounded-control border border-paper-line bg-paper px-3 py-2 text-sm text-ink" />
+
+          </Field>
+          <Field label="Note" hint="Optional. Which printer, which stock, how many.">
+            <input
+              value={notes}
+              placeholder={stockName ? `Printed on ${stockName}` : 'Anything worth remembering'}
+              onChange={(event) => setNotes(event.target.value)}
+              aria-label="Note"
+              className="w-full rounded-control border border-paper-line bg-paper px-3 py-2 text-sm text-ink" />
+
+          </Field>
+
+          {failure &&
+          <Callout tone="warn" role="alert" title="That did not record">
+              <p className="max-w-prose leading-relaxed">{failure}</p>
+            </Callout>
+          }
+
+          <div className="flex justify-end gap-2 pt-1">
+            <Button type="button" variant="quiet" onClick={onClose} disabled={saving}>
+              Cancel
+            </Button>
+            <Button type="button" variant="primary" onClick={submit} disabled={saving}>
+              {saving ? 'Recording…' : 'Record it'}
+            </Button>
+          </div>
+        </div>
+      </Card>
+    </div>);
 
 }
 

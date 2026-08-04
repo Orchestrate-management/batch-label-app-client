@@ -48,7 +48,7 @@ const product: Product = {
   },
   artefacts: [],
   identifiers: {},
-  obligations: {}
+  evidence: { obligations: {}, sdsSections: {} }
 };
 
 describe('an app that is not connected to its database', () => {

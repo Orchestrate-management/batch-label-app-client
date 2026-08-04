@@ -406,7 +406,17 @@ export function derivePhased(spec: PhasedSpec): Derivation {
   allergenItems.sort((a, b) => a.text.localeCompare(b.text));
 
   const inciNames = [...inciItems.map((i) => i.text), ...allergenItems.map((a) => a.text)];
-  const pao = `${spec.paoMonths}M`;
+  /**
+   * EMPTY WHEN NOTHING IS SET, and the empty string is what the label renderer checks.
+   *
+   * This was `${spec.paoMonths}M` unconditionally, over a `paoMonths` that `blankSpec` seeded
+   * to 12 — so a brand new cosmetic printed "12M" beside an open-jar symbol on the preview, at
+   * actual size, while the obligations list on the same screen read "Neither a period after
+   * opening nor a date of minimum durability is shown". A period after opening is a legal
+   * marking and nothing here has measured one. Zero is now unset, at the seed, on the label, in
+   * the derivation and in `cpr-pao`, all reading this one field.
+   */
+  const pao = spec.paoMonths > 0 ? `${spec.paoMonths}M` : '';
   const warnings = [
   'Avoid contact with the eyes. If contact occurs, rinse with water.',
   'Discontinue use if irritation occurs.',
@@ -438,7 +448,13 @@ export function derivePhased(spec: PhasedSpec): Derivation {
     id: 'durability',
     title: 'Period after opening',
     regimeId: 'cpr',
-    items: [
+    // The group is EMPTY rather than absent when nothing is set, so the panel says the duty
+    // exists and that this composition does not answer it — which is a different sentence from
+    // the regime not applying.
+    emptyText:
+    'No period after opening is set on this composition, so the label prints no open jar figure. Nothing here has measured one; it is yours to set and to justify from your own stability data.',
+    items: pao ?
+    [
     {
       code: pao,
       text: `Use within ${spec.paoMonths} months of opening.`,
@@ -448,8 +464,9 @@ export function derivePhased(spec: PhasedSpec): Derivation {
         meta: `${spec.paoMonths} months, which is the value set on this composition. Nothing has measured it: there is no stability or challenge testing behind this number and no safety report holding one, so it is yours to set and to justify.`
       }]
 
-    }]
+    }] :
 
+    []
   },
   {
     id: 'precautions',
@@ -474,7 +491,7 @@ export function derivePhased(spec: PhasedSpec): Derivation {
     summary: [
     { label: 'Formula total', value: `${total} %` },
     { label: 'Ingredients declared', value: String(inciNames.length) },
-    { label: 'Period after opening', value: pao }],
+    { label: 'Period after opening', value: pao || 'Not set' }],
 
     groups,
     proximity,
@@ -511,7 +528,10 @@ export function daysUntil(iso: string, from: Date = today()): number | null {
 
 export function deriveBom(spec: BomSpec, product?: Product): Derivation {
   const proximity: ProximityNote[] = [];
-  const declarationSigned = product?.obligations['ce-doc-signed'] ?? false;
+  // From the append-only log, not from a jsonb column nothing wrote. `ce-doc-signed` is the
+  // maker's own recorded statement that they signed it — which is why the wording below says
+  // signed and dated rather than claiming Batchlabel saw the document.
+  const declarationSigned = Boolean(product?.evidence.obligations['ce-doc-signed']);
 
   const standards = Array.from(
     new Set(

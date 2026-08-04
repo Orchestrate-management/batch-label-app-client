@@ -92,7 +92,7 @@ function productNamed(name: string): Product {
     },
     artefacts: [],
     identifiers: {},
-    obligations: {}
+    evidence: { obligations: {}, sdsSections: {} }
   };
 }
 

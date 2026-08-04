@@ -36,7 +36,7 @@ function freshDevice(): Product {
     spec,
     artefacts: artefactsFor(category, spec.kind),
     identifiers: {},
-    obligations: {}
+    evidence: { obligations: {}, sdsSections: {} }
   };
 }
 
@@ -111,7 +111,7 @@ function freshCosmetic(): Product {
     spec,
     artefacts: artefactsFor(category, spec.kind),
     identifiers: {},
-    obligations: {}
+    evidence: { obligations: {}, sdsSections: {} }
   };
 }
 
@@ -123,8 +123,33 @@ describe('what a brand new cosmetics product is allowed to cite', () => {
     );
   });
 
-  it('attributes the period after opening to the composition, not to a study', () => {
+  /**
+   * A BRAND NEW COSMETIC NOW SHOWS NO PERIOD AFTER OPENING AT ALL, which is the correction.
+   *
+   * This group used to emit an item unconditionally, from `spec.paoMonths`, which `blankSpec`
+   * seeded to 12 — so the label preview rendered "12M" beside an open jar symbol at actual
+   * size while the obligations list on the same screen read "Neither a period after opening nor
+   * a date of minimum durability is shown". A period after opening is a legal marking on a
+   * cosmetic and nothing in this application has measured one.
+   *
+   * The group stays, with `emptyText`, so the panel still says the duty exists.
+   */
+  it('shows no period after opening until one has been set', () => {
     const derivation = derive(freshCosmetic().spec, freshCosmetic(), 'GB');
+    const durability = derivation.groups.find((group) => group.id === 'durability');
+    if (!durability) throw new Error('no durability group');
+    expect(durability.items).toEqual([]);
+    expect(durability.emptyText).toMatch(/no period after opening is set/i);
+    // Nothing anywhere in the group may read as a figure a label could carry.
+    expect(JSON.stringify(durability)).not.toMatch(/\d+M\b/);
+    expect(derivation.cosmetic?.pao).toBe('');
+  });
+
+  it('attributes a period after opening that HAS been set to the composition, not to a study', () => {
+    const product = freshCosmetic();
+    if (product.spec.kind !== 'phased') throw new Error('expected a phased spec');
+    const withPao = { ...product, spec: { ...product.spec, paoMonths: 6 } };
+    const derivation = derive(withPao.spec, withPao, 'GB');
     const durability = derivation.groups.find((group) => group.id === 'durability');
     if (!durability) throw new Error('no durability group');
     const line = durability.items[0].why[0];
@@ -133,6 +158,7 @@ describe('what a brand new cosmetics product is allowed to cite', () => {
     // The lead asserted a minimum durability of more than thirty months. Nothing has measured
     // the durability at all, so there is no number for it to be more than.
     expect(JSON.stringify(durability)).not.toMatch(/30 months/i);
+    expect(derivation.cosmetic?.pao).toBe('6M');
   });
 
   it('does not describe every cosmetic as a leave-on facial product', () => {

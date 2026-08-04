@@ -8,6 +8,7 @@ import {
   MixtureSpec,
   PhasedSpec,
   Product,
+  formatDate,
   round } from
 './model';
 
@@ -262,14 +263,20 @@ export function buildSds(product: Product, derivation: Derivation, market: Marke
   const clp = derivation.clp;
   const rows = componentRows(product);
   const sdsArtefact = product.artefacts.find((artefact) => artefact.type === 'sds');
-  // Null on a real account, always: nothing stores artefacts, so no sheet has a revision or an
-  // issue date. Section 16 then prints no revision line at all, rather than printing the
-  // placeholders — "Revision Not yet produced, issued —." on the face of the document is worse
-  // than an absent line, and a revision history is a regulatory claim. The branch stays rather
-  // than being deleted, because the day artefacts are stored a real revision MUST be stated.
+  // Null until a sheet has actually been recorded as produced, and then a real revision.
+  //
+  // "Revision Not yet produced, issued —." on the face of a sixteen-section safety data sheet
+  // somebody may hand to a regulator is worse than an absent line, and a revision history is a
+  // regulatory claim. That case is still guarded. What changed is that the other branch is now
+  // reachable: `batchlabel.artefacts` holds a version and a date, so a produced sheet states a
+  // real one.
+  //
+  // THE DATE IS FORMATTED. `printedOn` is a timestamptz off the row, so this printed
+  // "issued 2026-07-01T09:00:00.000Z." — a machine timestamp, in the one section of the
+  // document a person reads for provenance.
   const revisionLine =
   sdsArtefact && sdsArtefact.version !== ARTEFACT_NOT_PRODUCED ?
-  `Revision ${sdsArtefact.version}, issued ${sdsArtefact.printedOn}.` :
+  `Revision ${sdsArtefact.version}, issued ${formatDate(sdsArtefact.printedOn)}.` :
   null;
 
   const sections: SdsSection[] = [

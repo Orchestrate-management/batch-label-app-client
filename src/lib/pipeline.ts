@@ -80,22 +80,69 @@ market: Market)
 
   /* ---------------------------------------------------------- composition */
   const compositionIssues: StageIssue[] = [];
+  const to = `/products/${product.id}`;
+
+  /**
+   * THE GAPS `blankSpec` USED TO FILL IN SILENTLY.
+   *
+   * A new product no longer arrives holding a paraffin wax, a 250 ml tumbler and 100 g of
+   * something nobody weighed, so those fields are genuinely empty until the maker sets them —
+   * and an empty field that drives a label has to be visible work rather than a quiet blank.
+   * Each of these is a CLP Article 17 element or a component of the classification the label
+   * carries, which is why they are raised here and not merely left to look unfilled on a form.
+   */
   if (product.spec.kind === 'mixture') {
+    if (!product.spec.baseId) {
+      compositionIssues.push({
+        label: 'No base wax or carrier chosen yet',
+        detail:
+        'The base is most of what is in the pack, and its classification is part of the label. Nothing is assumed for you — pick the one you actually use.',
+        to
+      });
+    }
     if (!product.spec.fragranceId) {
       compositionIssues.push({
         label: 'No fragrance chosen yet',
         detail:
         'Pick a fragrance oil from the materials register. Nothing can be classified until the composition has something hazardous in it.',
-        to: `/products/${product.id}`
+        to
       });
     } else if (product.spec.load === 0) {
       compositionIssues.push({
         label: 'Fragrance load is 0 percent',
         detail:
         'Set the load and the classification will follow. Both outputs redraw as you change it.',
-        to: `/products/${product.id}`
+        to
       });
     }
+  }
+
+  if (product.spec.kind !== 'bom') {
+    if (product.spec.netQuantity <= 0) {
+      compositionIssues.push({
+        label: 'No net quantity set',
+        detail:
+        'The nominal quantity is a required label element. It is not filled in for you, because how much you put in the pack is not something this app can know.',
+        to
+      });
+    }
+    if (!product.spec.packagingId) {
+      compositionIssues.push({
+        label: 'No packaging chosen yet',
+        detail:
+        'The pack fixes the printable area and, under CLP, the minimum pictogram size the label is checked against. Both checks are waiting on it.',
+        to
+      });
+    }
+  }
+
+  if (product.spec.kind === 'phased' && product.spec.paoMonths <= 0) {
+    compositionIssues.push({
+      label: 'No period after opening set',
+      detail:
+      'A cosmetic label carries a period after opening or a date of minimum durability. Nothing here has measured one, so it is yours to set and to justify.',
+      to
+    });
   }
   if (product.spec.kind === 'phased') {
     const total = product.spec.phases.reduce(
@@ -118,8 +165,13 @@ market: Market)
     for (const item of undeclared) {
       compositionIssues.push({
         label: `${materialById(item.materialId)?.name} has no material declaration`,
-        detail: 'The declaration of conformity cannot be signed while a component is undeclared.',
-        to: '/materials/component'
+        detail:
+        'Batchlabel\'s reference data for this part carries no declaration, so it contributes nothing to the RoHS assessment. Record what your supplier has given you against the RoHS obligation on this product.',
+        // WAS '/materials/component'. That screen showed the shipped catalogue's own
+        // `rohsStatus` constant and toasted "Saving a material is not built yet" at anybody
+        // who tried to change it, so the Resolve link led somewhere that could not resolve
+        // anything. The product screen has a control that writes.
+        to: `/products/${product.id}`
       });
     }
   }
@@ -137,32 +189,56 @@ market: Market)
   }));
 
   /* ---------------------------------------------------------------- outputs */
-  // Nothing stores artefacts, so nothing a real account holds is ever out of date: an output
-  // that has never been produced cannot have drifted from the composition. The branch stays
-  // because a fixture product in the test suite does carry stale artefacts, and because the
-  // day artefacts are stored this is where "out of date" comes back.
-  const stale = product.artefacts.filter((artefact) => !artefact.current);
+  //
+  // `out-of-date` AND ONLY `out-of-date`. This read `!artefact.current` over a boolean that was
+  // `true` for every unproduced surface, so the branch was unreachable on a real account and
+  // would have fired on all four states the day it was not. `ArtefactCurrency` has four names
+  // now: an artefact nobody produced is not stale, and one whose fingerprint we could not
+  // compute is not stale either — it is unknown, and this queue is a list of things we have
+  // established are wrong.
+  const stale = product.artefacts.filter((artefact) => artefact.currency === 'out-of-date');
+  const produced = product.artefacts.filter((artefact) => artefact.currency !== 'not-produced');
   const sds = product.artefacts.some((artefact) => artefact.type === 'sds') ?
   buildSds(product, derivation, market) :
   null;
   const outstanding = outstandingObligations(product);
 
+  /**
+   * Sections of the sheet still waiting on a competent person, MINUS the ones signed off.
+   *
+   * `sds.outstanding` was always 4. Sections 4, 8, 11 and 13 are hardcoded `kind: 'needs-you'`
+   * in lib/sds.ts, so every mixture and every phased product carried this row from the moment
+   * it was created, forever, and its Resolve link went to a screen that listed the same four
+   * and offered no control to sign any of them off. It was a permanent line in a work queue
+   * that no amount of work could clear.
+   *
+   * There is a control now, on the specification screen, and it writes a
+   * `compliance.sds_section_reviewed` event per section. This counts what is left.
+   */
+  const sectionsAwaitingReview = sds ?
+  sds.sections.
+  filter((section) => section.kind === 'needs-you').
+  filter((section) => !(section.number in product.evidence.sdsSections)) :
+  [];
+
   const outputIssues: StageIssue[] = [
   ...(stale.length ?
   [
   {
-    label: `${stale.length} output${stale.length === 1 ? '' : 's'} out of date`,
-    detail: 'The composition changed after these were produced.',
+    label: `${stale.length} recorded print${stale.length === 1 ? '' : 's'} no longer match${stale.length === 1 ? 'es' : ''} this composition`,
+    detail:
+    'The composition, the pack, a pinned material or your printed business details changed after these were printed. Reprint, then record the new print.',
     to: `/products/${product.id}`
   }] :
 
   []),
-  ...(sds && sds.outstanding ?
+  ...(sectionsAwaitingReview.length ?
   [
   {
-    label: `${sds.outstanding} sections of the safety data sheet need a competent person`,
-    detail:
-    'First aid, exposure controls, toxicological information and disposal cannot be derived from the composition.',
+    label: `${sectionsAwaitingReview.length} section${sectionsAwaitingReview.length === 1 ? '' : 's'} of the safety data sheet ${sectionsAwaitingReview.length === 1 ? 'needs' : 'need'} a competent person`,
+    detail: `${sectionsAwaitingReview.
+    map((section) => section.title.toLowerCase()).
+    join(', ')} cannot be derived from the composition. Record the review once somebody competent has confirmed the wording.`,
     to: `/products/${product.id}`
   }] :
 
@@ -218,12 +294,15 @@ market: Market)
     label: 'Outputs',
     checked: true,
     settled: outputIssues.length === 0,
-    // NOT "all current". `artefactsFor` gives every artefact version "Not yet produced" and
-    // no print date, precisely because there is no artefacts table and nothing has been
-    // produced — so "current" was describing the currency of documents that do not exist.
-    // What IS settled here is the work the maker owed: the obligations are ticked and the
-    // sheet has no section left needing a competent person.
-    summary: `${product.artefacts.length} outputs, none produced yet`,
+    // COUNTED, not asserted. This said "none produced yet" unconditionally, which was true
+    // while nothing could be produced and would have gone on being said afterwards. `produced`
+    // is the number of surfaces with a recorded print behind them, and the sentence still
+    // refuses to call any of them generated — Batchlabel writes no file, and every one of
+    // these rows carries `is_placeholder`.
+    summary:
+    produced.length === 0 ?
+    `${product.artefacts.length} outputs, no print recorded yet` :
+    `${product.artefacts.length} outputs, ${produced.length} with a recorded print`,
     issues: outputIssues
   }];
 

@@ -4,6 +4,7 @@ import { derive } from './derive';
 import { Product } from './model';
 import { Stage, StageId, stagesFor } from './pipeline';
 import { artefactsFor, blankSpec } from './products';
+import { obligationsFor } from './regimes';
 
 /**
  * What each stage of the pipeline is allowed to claim.
@@ -40,7 +41,7 @@ function freshProduct(categoryId: 'home-fragrance' | 'electronics'): Product {
     spec,
     artefacts: artefactsFor(category, spec.kind),
     identifiers: {},
-    obligations: {}
+    evidence: { obligations: {}, sdsSections: {} }
   };
 }
 
@@ -81,16 +82,27 @@ describe('the Outputs stage, whose outputs have never been produced', () => {
     const product = freshProduct('electronics');
     const ticked: Product = {
       ...product,
-      obligations: Object.fromEntries(
-        stages(product).
-        flatMap((stage) => stage.issues).
-        map((issue) => [issue.label, true])
-      )
+      evidence: {
+        obligations: Object.fromEntries(
+          obligationsFor(product).map((obligation) => [
+          obligation.id,
+          {
+            id: `ev-${obligation.id}`,
+            recordedAt: '2026-07-01T00:00:00.000Z',
+            reference: null,
+            summary: 'Recorded in a test.'
+          }]
+          )
+        ),
+        sdsSections: {}
+      }
     };
     const outputs = stageOf(ticked, 'outputs');
 
     expect(outputs.summary).not.toMatch(/all current/i);
-    expect(outputs.summary).toMatch(/none produced yet/i);
+    // Still "no print recorded", because ticking every obligation records no print — and the
+    // summary must not start counting produced artefacts on the strength of unrelated evidence.
+    expect(outputs.summary).toMatch(/no print recorded yet/i);
   });
 
   it('agrees with what the artefacts themselves say', () => {
@@ -100,7 +112,7 @@ describe('the Outputs stage, whose outputs have never been produced', () => {
       expect(artefact.version).toBe('Not yet produced');
       expect(artefact.printedOn).toBe('—');
     }
-    expect(stageOf(product, 'outputs').summary).toContain('none produced yet');
+    expect(stageOf(product, 'outputs').summary).toContain('no print recorded yet');
   });
 });
 
@@ -110,5 +122,134 @@ describe('the stages that do check something', () => {
     filter((stage) => stage.id !== 'documents');
     expect(checked).toHaveLength(3);
     for (const stage of checked) expect(stage.checked).toBe(true);
+  });
+});
+
+/**
+ * The safety data sheet row that no amount of work could clear.
+ *
+ * `sds.outstanding` was always 4. Sections 4, 8, 11 and 13 are hardcoded `kind: 'needs-you'`
+ * in lib/sds.ts, so every mixture and every phased product carried "4 sections of the safety
+ * data sheet need a competent person" from the moment it was created, forever — and its
+ * Resolve link went to a screen that listed the same four and offered no control to sign any
+ * of them off. A permanent row in a work queue teaches a maker to stop reading the queue.
+ */
+describe('the safety data sheet sections needing a competent person', () => {
+  const sdsIssue = (product: Product) =>
+  stageOf(product, 'outputs').issues.find((issue) => /safety data sheet/i.test(issue.label));
+
+  const reviewed = (product: Product, sections: number[]): Product => ({
+    ...product,
+    evidence: {
+      ...product.evidence,
+      sdsSections: Object.fromEntries(
+        sections.map((number) => [
+        number,
+        {
+          id: `ev-sds-${number}`,
+          recordedAt: '2026-07-01T00:00:00.000Z',
+          reference: String(number),
+          summary: `Section ${number} reviewed.`
+        }]
+        )
+      )
+    }
+  });
+
+  it('is raised on a brand new mixture, and names the sections', () => {
+    const issue = sdsIssue(freshProduct('home-fragrance'));
+    expect(issue?.label).toMatch(/4 sections/);
+    expect(issue?.detail).toMatch(/first aid/i);
+  });
+
+  it('counts down as reviews are recorded', () => {
+    const product = freshProduct('home-fragrance');
+    expect(sdsIssue(reviewed(product, [4]))?.label).toMatch(/3 sections/);
+    expect(sdsIssue(reviewed(product, [4, 8]))?.label).toMatch(/2 sections/);
+    expect(sdsIssue(reviewed(product, [4, 8, 11]))?.label).toMatch(/1 section /);
+  });
+
+  it('leaves the queue entirely once every section has been reviewed', () => {
+    // The whole point. Before the review events existed there was no state of the world in
+    // which this row disappeared.
+    const cleared = reviewed(freshProduct('home-fragrance'), [4, 8, 11, 13]);
+    expect(sdsIssue(cleared)).toBeUndefined();
+  });
+
+  it('sends the maker to a screen that can actually clear it', () => {
+    expect(sdsIssue(freshProduct('home-fragrance'))?.to).toBe('/products/prod-1');
+  });
+});
+
+/**
+ * The gaps `blankSpec` used to fill in silently.
+ *
+ * A new product no longer arrives holding a paraffin wax, a 250 ml tumbler and 100 g of
+ * something nobody weighed. Every one of those is a label element or a component of the
+ * classification, so an empty one has to be visible work rather than a quiet blank on a form.
+ */
+describe('the composition stage on a brand new product', () => {
+  const labels = (product: Product) =>
+  stageOf(product, 'composition').issues.map((issue) => issue.label);
+
+  it('names every field the create form did not ask about', () => {
+    const found = labels(freshProduct('home-fragrance'));
+    expect(found).toContain('No base wax or carrier chosen yet');
+    expect(found).toContain('No fragrance chosen yet');
+    expect(found).toContain('No net quantity set');
+    expect(found).toContain('No packaging chosen yet');
+    expect(stageOf(freshProduct('home-fragrance'), 'composition').settled).toBe(false);
+  });
+
+  it('settles once the maker has answered them', () => {
+    const product = freshProduct('home-fragrance');
+    if (product.spec.kind !== 'mixture') throw new Error('expected a mixture');
+    const filled: Product = {
+      ...product,
+      spec: {
+        ...product.spec,
+        baseId: 'ing-crw45',
+        fragranceId: 'ing-black-fig',
+        load: 8,
+        netQuantity: 220,
+        packagingId: 'pkg-tumbler-250'
+      }
+    };
+    expect(stageOf(filled, 'composition').issues).toEqual([]);
+    expect(stageOf(filled, 'composition').settled).toBe(true);
+  });
+});
+
+/**
+ * "Out of date" is a claim about a print that happened, and only about one.
+ */
+describe('the outputs stage on artefacts nobody has produced', () => {
+  it('calls nothing stale, whatever state the surfaces are in', () => {
+    const product = freshProduct('home-fragrance');
+    for (const currency of ['not-produced', 'unknown'] as const) {
+      const shaped: Product = {
+        ...product,
+        artefacts: product.artefacts.map((artefact) => ({ ...artefact, currency }))
+      };
+      expect(
+        stageOf(shaped, 'outputs').issues.some((issue) => /no longer match/i.test(issue.label))
+      ).toBe(false);
+    }
+  });
+
+  it('raises it exactly when a recorded print has stopped matching', () => {
+    const product = freshProduct('home-fragrance');
+    const drifted: Product = {
+      ...product,
+      artefacts: product.artefacts.map((artefact) =>
+      artefact.type === 'unit-label' ?
+      { ...artefact, version: 'v1', currency: 'out-of-date' as const } :
+      artefact
+      )
+    };
+    expect(
+      stageOf(drifted, 'outputs').issues.some((i) => /no longer match/i.test(i.label))
+    ).toBe(true);
+    expect(stageOf(drifted, 'outputs').summary).toMatch(/1 with a recorded print/);
   });
 });

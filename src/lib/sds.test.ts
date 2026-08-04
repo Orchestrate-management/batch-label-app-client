@@ -35,7 +35,7 @@ function freshMixture(): Product {
     spec: { ...spec, kind: 'mixture', load: 8 } as Product['spec'],
     artefacts: artefactsFor(category, 'mixture'),
     identifiers: {},
-    obligations: {}
+    evidence: { obligations: {}, sdsSections: {} }
   };
 }
 
@@ -84,6 +84,9 @@ describe('what section 16 claims about where the sheet came from', () => {
     sections.
     flatMap((section) => section.lines ?? []).
     join(' ');
-    expect(joined).toMatch(/Revision v2, issued 2026-07-01\./);
+    // The date is FORMATTED, not echoed. `printedOn` comes off a timestamptz column, so an
+    // unformatted line printed "issued 2026-07-01T09:00:00.000Z." in the one section of a
+    // safety data sheet a person reads for provenance.
+    expect(joined).toMatch(/Revision v2, issued 1 Jul 2026\./);
   });
 });

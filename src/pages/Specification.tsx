@@ -8,6 +8,7 @@ import {
   Card,
   EmptyState,
   Field,
+  FormError,
   Input,
   Pill,
   SectionTitle,
@@ -20,7 +21,7 @@ import { PlanNotice } from '../components/PlanNotice';
 import { ArtefactRail } from '../components/artefact/ArtefactRail';
 import { ArtefactRenderer, defaultArtefactOptions } from '../components/artefact/ArtefactRenderer';
 import {
-  ARTEFACT_NOT_PRODUCED,
+  ArtefactCurrency,
   BomSpec,
   Market,
   MixtureSpec,
@@ -37,8 +38,15 @@ import { COMPONENTS, INGREDIENTS, PACKAGING, componentById, ingredientById, pack
 import { categoryById } from '../lib/categories';
 import { addressForMarket } from '../lib/identity';
 import { saveComposition } from '../lib/products';
+import { recordEvidence, recordSdsSectionReviewed } from '../lib/evidence';
+import { useEntitlement } from '../lib/entitlement';
 import { useProduct, useProducts } from '../lib/product-store';
-import { regimeById } from '../lib/regimes';
+import {
+  Obligation,
+  obligationOutcome,
+  obligationsFor,
+  regimeById } from
+'../lib/regimes';
 import { useCategorySurface } from '../lib/workspace';
 
 /**
@@ -146,7 +154,7 @@ function SpecificationView({ product }: {product: Product;}) {
 
   const working: Product = { ...product, spec };
   const derivation = useMemo(() => derive(spec, working, market), [spec, market, product.id]);
-  const stale = product.artefacts.filter((artefact) => !artefact.current);
+  const stale = product.artefacts.filter((artefact) => artefact.currency === 'out-of-date');
 
   /**
    * The batch or serial marking on the preview. A PLACEHOLDER, and it says so on the label.
@@ -356,28 +364,31 @@ function SpecificationView({ product }: {product: Product;}) {
                           {artefact.version} · {formatDate(artefact.printedOn)}
                         </p>
                       </div>
-                      {/* THREE STATES, as ProductPipeline already does for an unrun check.
-                          `current` is true for an unproduced artefact on purpose — a surface
-                          nobody has printed cannot have drifted from the composition — so
-                          reading it as a two-state good/warn painted a green "Current" pill on
-                          every row of a list whose every row also says "Not yet produced". A
-                          maker scanning the pills saw four ticks and concluded their label and
-                          their sheet were up to date and in existence. Current and Out of date
-                          are now reserved for artefacts that have actually been produced. */}
-                      {artefact.version === ARTEFACT_NOT_PRODUCED ?
-                      <Pill tone="quiet">Not produced</Pill> :
-
-                      <Pill tone={artefact.current ? 'good' : 'warn'}>
-                          {artefact.current ? 'Current' : 'Out of date'}
-                        </Pill>
-                      }
+                      {/* FOUR STATES, ONE PILL EACH. This used to be a two-state good/warn over
+                          a boolean that was `true` for every unproduced artefact, so it painted
+                          a green "Current" on every row of a list whose every row also said
+                          "Not yet produced" — a maker scanning the pills saw four ticks and
+                          concluded their label and their sheet were up to date and in
+                          existence. Current is now a comparison of two md5s and nothing else
+                          may claim it. */}
+                      <ArtefactStatePill currency={artefact.currency} />
                     </li>);
 
                 })}
               </ul>
+              <p className="mt-4 max-w-prose text-2xs leading-relaxed text-ink-tertiary">
+                Batchlabel does not generate the files yet. What it records is that you printed
+                a surface and which composition it was printed from, so it can tell you when one
+                stops matching. Record a print from the label designer.
+              </p>
             </Card>
 
-            {sds && <SdsSummary sds={sds} />}
+            {sds && <SdsSummary sds={sds} product={product} onRecorded={reload} />}
+          </section>
+
+          <section aria-label="Compliance record" className="space-y-5">
+            <SectionTitle>Compliance record</SectionTitle>
+            <ComplianceRecord product={product} onRecorded={reload} />
           </section>
         </div>
 
@@ -447,21 +458,86 @@ function SpecificationView({ product }: {product: Product;}) {
 }
 
 /**
- * The sheet is a legal document, so what it cannot derive is stated rather than
- * quietly filled. This counts those sections and names them.
+ * One pill per artefact state, and there are four states.
+ *
+ * `unknown` gets its own quiet pill rather than being folded into either answer: a fingerprint
+ * we could not compute is a failure to check, and rendering it as "Current" is the exact shape
+ * of defect this screen keeps being corrected for.
  */
-function SdsSummary({ sds }: {sds: SdsDocumentModel;}) {
+function ArtefactStatePill({ currency }: {currency: ArtefactCurrency;}) {
+  if (currency === 'not-produced') return <Pill tone="quiet">No print recorded</Pill>;
+  if (currency === 'out-of-date') return <Pill tone="warn">No longer matches</Pill>;
+  if (currency === 'unknown') return <Pill tone="quiet">Could not check</Pill>;
+  return <Pill tone="good">Matches this composition</Pill>;
+}
+
+/**
+ * The sheet is a legal document, so what it cannot derive is stated rather than
+ * quietly filled. This counts those sections, names them, and — new — lets a review be recorded.
+ *
+ * WHY THE CONTROL HAD TO EXIST HERE. Sections 4, 8, 11 and 13 are hardcoded `needs-you` in
+ * lib/sds.ts, so `sds.outstanding` was always 4, on every mixture and every phased product,
+ * from the moment it was created, forever. Studio rendered that as "4 sections of the safety
+ * data sheet need a competent person" with a Resolve link to this screen — which listed the
+ * same four sections and offered nothing at all to do about them. A work queue row that cannot
+ * be cleared teaches a maker to stop reading the queue.
+ *
+ * What is recorded is a REVIEW, not an approval by Batchlabel: the app still does not sign the
+ * sheet, and the sentence below says so. The event is `compliance.sds_section_reviewed` on the
+ * append-only log, carrying the section number, so it survives and can be shown next to the
+ * section it belongs to.
+ */
+function SdsSummary({
+  sds,
+  product,
+  onRecorded
+}: {sds: SdsDocumentModel;product: Product;onRecorded: () => Promise<void>;}) {
+  const entitlement = useEntitlement();
   const needsYou = sds.sections.filter((section) => section.kind === 'needs-you');
   const derived = sds.sections.filter((section) => section.kind === 'derived');
+  const awaiting = needsYou.filter((section) => !(section.number in product.evidence.sdsSections));
+
+  const [open, setOpen] = useState<number | null>(null);
+  const [reviewer, setReviewer] = useState('');
+  const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  const submit = async (section: {number: number;title: string;}) => {
+    if (saving) return;
+    setSaving(true);
+    setFailure(null);
+    const result = await recordSdsSectionReviewed({
+      accountId: entitlement.accountId,
+      product,
+      section: section.number,
+      summary:
+      note.trim() ||
+      `Section ${section.number}, ${section.title}, reviewed for ${product.name}.`,
+      reviewer: reviewer.trim() || null
+    });
+    setSaving(false);
+    if (!result.ok) {
+      setFailure(result.message);
+      return;
+    }
+    setOpen(null);
+    setReviewer('');
+    setNote('');
+    // Re-read, so the row below this one is drawn from the stored event rather than from an
+    // optimistic guess. The whole reason this section exists is that a screen was claiming a
+    // state nothing had established; claiming it locally would be the same mistake in miniature.
+    await onRecorded();
+  };
 
   return (
     <Card className="px-5 py-5">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <SectionTitle>Safety data sheet, {sds.version}</SectionTitle>
-        <Pill tone={needsYou.length ? 'warn' : 'good'}>
-          {needsYou.length ?
-          `${needsYou.length} sections need you` :
-          'Every section complete'}
+        <Pill tone={awaiting.length ? 'warn' : 'good'}>
+          {awaiting.length ?
+          `${awaiting.length} ${awaiting.length === 1 ? 'section needs' : 'sections need'} a competent person` :
+          'Every section reviewed'}
         </Pill>
       </div>
       {/* NOT "the supplier sheets on file". No supplier document of this account's is held,
@@ -474,23 +550,288 @@ function SdsSummary({ sds }: {sds: SdsDocumentModel;}) {
         and shows its working, but does not sign it.
       </p>
       {needsYou.length > 0 &&
-      <ul className="mt-4 space-y-2.5">
-          {needsYou.map((section) =>
-        <li key={section.number} className="flex gap-3">
-              <span className="tabular mt-0.5 flex-none text-2xs font-medium text-clay-dark">
-                {String(section.number).padStart(2, '0')}
-              </span>
-              <span className="min-w-0">
-                <span className="block text-[0.8125rem] font-medium text-ink">{section.title}</span>
-                <span className="mt-0.5 block max-w-prose text-2xs leading-relaxed text-ink-tertiary">
-                  {section.prompt}
+      <ul className="mt-4 space-y-3">
+          {needsYou.map((section) => {
+          const recorded = product.evidence.sdsSections[section.number];
+          return (
+            <li key={section.number} className="flex gap-3">
+                <span
+                className={`tabular mt-0.5 flex-none text-2xs font-medium ${
+                recorded ? 'text-ink-tertiary' : 'text-clay-dark'}`
+                }>
+
+                  {String(section.number).padStart(2, '0')}
                 </span>
-              </span>
-            </li>
-        )}
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[0.8125rem] font-medium text-ink">
+                    {section.title}
+                  </span>
+                  <span className="mt-0.5 block max-w-prose text-2xs leading-relaxed text-ink-tertiary">
+                    {recorded ?
+                  `${recorded.summary} Recorded as reviewed on ${formatDate(recorded.recordedAt)}. Batchlabel has not checked the wording and does not sign the sheet.` :
+                  section.prompt}
+                  </span>
+
+                  {!recorded && open !== section.number &&
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(section.number);
+                    setFailure(null);
+                  }}
+                  className="mt-1.5 text-2xs font-medium text-teal hover:text-teal-hover">
+
+                      Record that this has been reviewed
+                    </button>
+                }
+
+                  {open === section.number &&
+                <div className="mt-2 space-y-2 rounded-control border border-paper-line bg-paper-panel/60 px-3 py-3">
+                      <Field label="Reviewed by" hint="The competent person's name. Optional.">
+                        <Input
+                      value={reviewer}
+                      placeholder="Who confirmed the wording"
+                      onChange={(event) => setReviewer(event.target.value)} />
+
+                      </Field>
+                      <Field label="What they confirmed" hint="This is the line your log shows.">
+                        <Input
+                      value={note}
+                      placeholder={`Section ${section.number} wording confirmed appropriate for this product`}
+                      onChange={(event) => setNote(event.target.value)} />
+
+                      </Field>
+                      {failure && <FormError>{failure}</FormError>}
+                      <div className="flex justify-end gap-2">
+                        <Button
+                      type="button"
+                      size="sm"
+                      variant="quiet"
+                      disabled={saving}
+                      onClick={() => setOpen(null)}>
+
+                          Cancel
+                        </Button>
+                        <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      disabled={saving}
+                      onClick={() => submit(section)}>
+
+                          {saving ? 'Recording…' : 'Record review'}
+                        </Button>
+                      </div>
+                    </div>
+                }
+                </span>
+              </li>);
+
+        })}
         </ul>
       }
     </Card>);
+
+}
+
+/**
+ * Every obligation this product's regimes place on it, what state it is in, and — where the
+ * maker can discharge it — a control that writes to the append-only log.
+ *
+ * THIS IS THE SCREEN THE "RESOLVE" LINKS WERE POINTING AT AND NOT FINDING. Fifteen obligations
+ * were permanently outstanding because the only thing that could satisfy them was
+ * `products.obligations`, a jsonb column written by nothing; nine of their Resolve links went
+ * to /settings, whose identity fields were `disabled readOnly` and bound to a constant. So the
+ * work queue sent a maker to a screen with nothing on it that could change the row that sent
+ * them there, and the row came back next time.
+ *
+ * WHAT A RECORDED ENTRY CLAIMS, EXACTLY. That the maker said they did it, on a date, with a
+ * reference. Not that Batchlabel saw a document, checked a portal or verified anything — the
+ * three states below are worded from lib/regimes.ts, where every `missingText` is now a
+ * sentence about our log rather than a finding about the business.
+ *
+ * THERE IS NO UNDO, AND THAT IS THE DESIGN. `record_events` is append-only in three separate
+ * ways, and a correction is another event: the reader takes the most recent entry per
+ * obligation, so recording again supersedes without destroying the earlier statement. A
+ * compliance log a maker can quietly edit is not evidence of anything.
+ */
+function ComplianceRecord({
+  product,
+  onRecorded
+}: {product: Product;onRecorded: () => Promise<void>;}) {
+  const entitlement = useEntitlement();
+  const obligations = obligationsFor(product);
+  const [open, setOpen] = useState<string | null>(null);
+
+  if (obligations.length === 0) {
+    return (
+      <Card className="px-5 py-8">
+        <p className="max-w-prose text-sm leading-relaxed text-ink-secondary">
+          None of this product&rsquo;s regimes place a recordable obligation on it.
+        </p>
+      </Card>);
+
+  }
+
+  return (
+    <Card className="px-5 py-5">
+      <ul className="divide-y divide-paper-line">
+        {obligations.map((obligation) => {
+          const outcome = obligationOutcome(product, obligation);
+          return (
+            <li key={obligation.id} className="py-4 first:pt-0 last:pb-0">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <span className="text-sm font-medium text-ink">{obligation.label}</span>
+                <span className="flex items-center gap-2">
+                  <span className="text-2xs text-ink-tertiary">
+                    {regimeById(obligation.regimeId).short}
+                  </span>
+                  <Pill
+                    tone={
+                    outcome.state === 'met' ?
+                    'good' :
+                    outcome.state === 'outstanding' ?
+                    'warn' :
+                    'quiet'
+                    }>
+
+                    {outcome.state === 'met' ?
+                    'Recorded' :
+                    outcome.state === 'outstanding' ?
+                    'Not recorded' :
+                    'Not checked here'}
+                  </Pill>
+                </span>
+              </div>
+              <p className="mt-1 max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
+                {outcome.text}
+              </p>
+              {outcome.evidence?.reference &&
+              <p className="tabular mt-1 text-2xs text-ink-tertiary">
+                  Reference: {outcome.evidence.reference}
+                </p>
+              }
+
+              {/* Offered only where recording it is a true thing to do. A derived obligation
+                  (the classification, the period after opening, whether the last recorded print
+                  still matches) has an answer already, and letting a maker assert one over the
+                  top of it would put back exactly the class of claim this work removed. */}
+              {obligation.recordable && open !== obligation.id &&
+              <button
+                type="button"
+                onClick={() => setOpen(obligation.id)}
+                className="mt-2 text-2xs font-medium text-teal hover:text-teal-hover">
+
+                  {outcome.state === 'met' ? 'Record this again' : 'Record this'}
+                </button>
+              }
+
+              {obligation.recordable && open === obligation.id &&
+              <EvidenceForm
+                product={product}
+                obligation={obligation}
+                accountId={entitlement.accountId}
+                onCancel={() => setOpen(null)}
+                onDone={async () => {
+                  setOpen(null);
+                  await onRecorded();
+                }} />
+
+              }
+            </li>);
+
+        })}
+      </ul>
+      <p className="mt-4 max-w-prose text-2xs leading-relaxed text-ink-tertiary">
+        Recording something here writes one line to your records log saying you did it and when.
+        Batchlabel does not hold your documents, submit your notifications or check any of this
+        — what it can tell you is what you have and have not recorded, and it will not say more
+        than that.
+      </p>
+    </Card>);
+
+}
+
+function EvidenceForm({
+  product,
+  obligation,
+  accountId,
+  onCancel,
+  onDone
+}: {
+  product: Product;
+  obligation: Obligation;
+  accountId: string | null;
+  onCancel: () => void;
+  onDone: () => Promise<void>;
+}) {
+  const [summary, setSummary] = useState('');
+  const [reference, setReference] = useState('');
+  // Defaulted to today, and editable, because `occurred_at` is when the thing HAPPENED and a
+  // maker writing up last month's submission today must not have the log claim it was today.
+  const [when, setWhen] = useState(() => new Date().toISOString().slice(0, 10));
+  const [saving, setSaving] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (saving) return;
+    setSaving(true);
+    setFailure(null);
+    const result = await recordEvidence({
+      accountId,
+      product,
+      obligationId: obligation.id,
+      summary: summary.trim() || `${obligation.label} recorded for ${product.name}.`,
+      reference: reference.trim() || null,
+      // Midday rather than midnight, so a date typed here cannot land on the previous day for
+      // anybody west of Greenwich once it is stored as an instant.
+      occurredAt: when ? new Date(`${when}T12:00:00`).toISOString() : undefined
+    });
+    setSaving(false);
+    if (!result.ok) {
+      setFailure(result.message);
+      return;
+    }
+    await onDone();
+  };
+
+  return (
+    <div className="mt-3 space-y-3 rounded-control border border-paper-line bg-paper-panel/60 px-4 py-4">
+      <Field label="What you did" hint="This is the line your records log shows.">
+        <Input
+          autoFocus
+          value={summary}
+          placeholder={obligation.label}
+          onChange={(event) => setSummary(event.target.value)} />
+
+      </Field>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Reference" hint="A document or submission number. Optional.">
+          <Input
+            className="tabular"
+            value={reference}
+            onChange={(event) => setReference(event.target.value)} />
+
+        </Field>
+        <Field label="When it happened" hint="Not when you are typing it in.">
+          <Input
+            type="date"
+            className="tabular"
+            value={when}
+            onChange={(event) => setWhen(event.target.value)} />
+
+        </Field>
+      </div>
+      {failure && <FormError>{failure}</FormError>}
+      <div className="flex justify-end gap-2">
+        <Button type="button" size="sm" variant="quiet" disabled={saving} onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="button" size="sm" variant="secondary" disabled={saving} onClick={submit}>
+          {saving ? 'Recording…' : 'Record it'}
+        </Button>
+      </div>
+    </div>);
 
 }
 
@@ -606,6 +947,41 @@ function DiffRow({
 
 /* --------------------------------------------------- mixture, fragrance */
 
+/**
+ * The hint under a material select.
+ *
+ * Three sentences, and the first is the one that was missing. `Reference library · ${supplier
+ * ?? ''}, read from document v${version ?? ''}` rendered as "Reference library · , read from
+ * document v" whenever nothing was selected — a supplier document reference with the supplier
+ * and the version cut out of it. Now the unchosen state says it is unchosen.
+ */
+function materialHint(id: string): string {
+  if (!id) return 'Nothing chosen yet. Nothing is assumed for you.';
+  const material = ingredientById(id);
+  if (!material) {
+    return 'This material is not in Batchlabel’s reference library, so nothing is known about it here.';
+  }
+  // "Read from", not "document v4.2" on its own: the version is the supplier document the
+  // reference library's data was taken from, and the bare phrasing read as a document held on
+  // this account's behalf. Nothing is held.
+  return `Reference library · ${material.supplier}, read from document v${material.document.version}`;
+}
+
+function packagingHint(id: string): string {
+  if (!id) return 'Nothing chosen yet. The pictogram size check is waiting on this.';
+  const pack = packagingById(id);
+  if (!pack) return 'This pack is not in Batchlabel’s reference library.';
+  return `Capacity ${pack.capacityMl} ml`;
+}
+
+/** Same rule for the cosmetics editor, whose hint printed "0 × 0 mm" with nothing selected. */
+function printableAreaHint(id: string): string {
+  if (!id) return 'Nothing chosen yet. The printable area check is waiting on this.';
+  const pack = packagingById(id);
+  if (!pack) return 'This pack is not in Batchlabel’s reference library.';
+  return `Printable area ${pack.labelAreaMm.width} × ${pack.labelAreaMm.height} mm`;
+}
+
 function MixtureEditor({
   spec,
   onChange
@@ -644,14 +1020,17 @@ function MixtureEditor({
           </Select>
         </Field>
 
-        <Field
-          label="Base wax or carrier"
-          /* "Read from", not "document v4.2" on its own: the version is the supplier document
-             the reference library's data was taken from, and the bare phrasing read as a
-             document held on this account's behalf. Nothing is held. */
-          hint={`Reference library · ${ingredientById(spec.baseId)?.supplier ?? ''}, read from document v${ingredientById(spec.baseId)?.document.version ?? ''}`}>
-          
+        {/* EVERY MATERIAL SELECT NOW CARRIES AN EMPTY OPTION, and it is selected on a brand
+            new product rather than a wax nobody picked. `blankSpec` used to seed `ing-crw45`,
+            one specific paraffin container wax from Batchlabel's shipped catalogue, into every
+            candle the moment it was created — so this control rendered somebody else's material
+            as the maker's own choice, and its classification went onto the label. The four
+            questions the create form asks do not include this one, so the honest starting
+            state is unanswered. `materialHint` says nothing about a supplier document when no
+            material is chosen, rather than printing "read from document v". */}
+        <Field label="Base wax or carrier" hint={materialHint(spec.baseId)}>
           <Select value={spec.baseId} onChange={(event) => set('baseId', event.target.value)}>
+            <option value="">Not chosen yet</option>
             {bases.map((base) =>
             <option key={base.id} value={base.id}>
                 {base.name}
@@ -660,14 +1039,12 @@ function MixtureEditor({
           </Select>
         </Field>
 
-        <Field
-          label="Fragrance oil"
-          hint={`Reference library · ${fragrance?.supplier ?? ''}, read from document v${fragrance?.document.version ?? ''}`}>
-          
+        <Field label="Fragrance oil" hint={materialHint(spec.fragranceId)}>
           <Select
             value={spec.fragranceId}
             onChange={(event) => set('fragranceId', event.target.value)}>
-            
+
+            <option value="">Not chosen yet</option>
             {oils.map((oil) =>
             <option key={oil.id} value={oil.id}>
                 {oil.name}
@@ -691,15 +1068,28 @@ function MixtureEditor({
             aria-label="Fragrance load percentage"
             className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-paper-line accent-teal" />
           
+          {/* The IFRA figure is a fact about a NAMED oil. With no oil chosen there is no
+              maximum to state, and "100 percent" — which is what the old `?? 100` printed —
+              is a restriction limit for a material nobody selected. */}
           <p className="mt-2 text-2xs text-ink-tertiary">
-            IFRA category 12 maximum for this oil is{' '}
-            <span className="tabular">{fragrance?.ifra[0]?.max ?? 100} percent</span>.
+            {fragrance?.ifra[0] ?
+            <>
+                IFRA category 12 maximum for this oil is{' '}
+                <span className="tabular">{fragrance.ifra[0].max} percent</span>.
+              </> :
+            fragrance ?
+            'Batchlabel holds no IFRA limit for this oil, so there is no maximum to check the load against.' :
+            'Choose a fragrance oil and its IFRA limit will be shown here.'}
           </p>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Dye">
             <Select value={spec.dyeId} onChange={(event) => set('dyeId', event.target.value)}>
+              {/* "Not chosen yet" is not the same answer as "No dye", and the seeded default
+                  used to be the latter. One is silence and the other is a statement about the
+                  composition that feeds the classification. */}
+              <option value="">Not chosen yet</option>
               {dyes.map((dye) =>
               <option key={dye.id} value={dye.id}>
                   {dye.name}
@@ -707,8 +1097,12 @@ function MixtureEditor({
               )}
             </Select>
           </Field>
-          <Field label="Additives">
-            <Input value={spec.additive} onChange={(event) => set('additive', event.target.value)} />
+          <Field label="Additives" hint="Leave empty if there are none.">
+            <Input
+              value={spec.additive}
+              placeholder="None"
+              onChange={(event) => set('additive', event.target.value)} />
+
           </Field>
           <Field label={`Net ${spec.netUnit === 'g' ? 'weight' : 'volume'}`}>
             <div className="flex items-center gap-2">
@@ -721,14 +1115,12 @@ function MixtureEditor({
               <span className="text-sm text-ink-tertiary">{spec.netUnit}</span>
             </div>
           </Field>
-          <Field
-            label="Packaging"
-            hint={`Capacity ${packagingById(spec.packagingId)?.capacityMl ?? 0} ml`}>
-            
+          <Field label="Packaging" hint={packagingHint(spec.packagingId)}>
             <Select
               value={spec.packagingId}
               onChange={(event) => set('packagingId', event.target.value)}>
-              
+
+              <option value="">Not chosen yet</option>
               {PACKAGING.filter((p) => p.categories.includes('home-fragrance')).map((item) =>
               <option key={item.id} value={item.id}>
                   {item.name}
@@ -748,29 +1140,55 @@ function MixtureEditor({
               <th scope="col" className="pb-2 text-right font-medium">Share</th>
             </tr>
           </thead>
+          {/* A ROW PER COMPONENT THE MAKER HAS ACTUALLY CHOSEN. Each of these used to render
+              unconditionally, so an unfilled composition showed three blank names against
+              precise percentages — "100.0 %" of nothing, and a dye share of 0.0 or 0.5 decided
+              by whether the id happened to equal 'ing-no-dye'. Percentages beside empty names
+              read as a rendering fault; worse, they read as a composition that totals. */}
           <tbody>
-            <tr className="border-t border-paper-line">
-              <td className="py-2 text-ink">{ingredientById(spec.baseId)?.name}</td>
-              <td className="tabular py-2 text-right text-ink-secondary">
-                {(100 - spec.load).toFixed(1)} %
-              </td>
-            </tr>
-            <tr className="border-t border-paper-line">
-              <td className="py-2 text-ink">{fragrance?.name}</td>
-              <td className="tabular py-2 text-right text-ink-secondary">
-                {spec.load.toFixed(1)} %
-              </td>
-            </tr>
-            <tr className="border-t border-paper-line">
-              <td className="py-2 text-ink-tertiary">{ingredientById(spec.dyeId)?.name}</td>
-              <td className="tabular py-2 text-right text-ink-tertiary">
-                {spec.dyeId === 'ing-no-dye' ? '0.0 %' : '0.5 %'}
-              </td>
-            </tr>
+            <CompositionRow
+              name={ingredientById(spec.baseId)?.name}
+              missing="No base chosen yet"
+              pct={100 - spec.load - (spec.dyeId ? 0.5 : 0)} />
+
+            <CompositionRow
+              name={fragrance?.name}
+              missing="No fragrance chosen yet"
+              pct={spec.load} />
+
+            <CompositionRow
+              name={ingredientById(spec.dyeId)?.name}
+              missing="No dye chosen yet"
+              pct={0.5}
+              quiet />
+
           </tbody>
         </table>
       </Card>
     </>);
+
+}
+
+/**
+ * One line of the composition table. Shows a share only when there is something to share.
+ *
+ * `pct` is deliberately not rendered when the component is missing: a percentage is a claim
+ * about how much of the pack is a named thing, and there is no named thing.
+ */
+function CompositionRow({
+  name,
+  missing,
+  pct,
+  quiet = false
+}: {name?: string;missing: string;pct: number;quiet?: boolean;}) {
+  const tone = quiet || !name ? 'text-ink-tertiary' : 'text-ink';
+  return (
+    <tr className="border-t border-paper-line">
+      <td className={`py-2 ${tone}`}>{name ?? missing}</td>
+      <td className="tabular py-2 text-right text-ink-tertiary">
+        {name ? `${pct.toFixed(1)} %` : '—'}
+      </td>
+    </tr>);
 
 }
 
@@ -852,23 +1270,36 @@ function PhasedEditor({
               <span className="text-sm text-ink-tertiary">{spec.netUnit}</span>
             </div>
           </Field>
-          <Field label="Period after opening" hint="Months">
+          <Field
+            label="Period after opening"
+            hint={
+            spec.paoMonths > 0 ?
+            'Months. Nothing here has measured it — it is yours to set and to justify.' :
+            'Months. Not set, so the label prints no open-jar figure.'
+            }>
+
+            {/* Zero means unset and the label renders it as unset. This used to be seeded to
+                12 by `blankSpec`, which printed "12M" onto the preview at actual size while
+                the obligations list on the same screen said no period after opening was
+                shown. Both halves read this one field now. */}
             <Input
               type="number"
+              min={0}
               className="tabular"
               value={spec.paoMonths}
               onChange={(event) => onChange({ ...spec, paoMonths: Number(event.target.value) })} />
-            
+
           </Field>
           <Field
             label="Packaging"
-            hint={`Printable area ${packagingById(spec.packagingId)?.labelAreaMm.width ?? 0} × ${packagingById(spec.packagingId)?.labelAreaMm.height ?? 0} mm`}
+            hint={printableAreaHint(spec.packagingId)}
             className="sm:col-span-2">
-            
+
             <Select
               value={spec.packagingId}
               onChange={(event) => onChange({ ...spec, packagingId: event.target.value })}>
-              
+
+              <option value="">Not chosen yet</option>
               {PACKAGING.filter((p) => p.categories.includes('cosmetics')).map((item) =>
               <option key={item.id} value={item.id}>
                   {item.name}
@@ -971,11 +1402,17 @@ function BomEditor({ spec, onChange }: {spec: BomSpec;onChange: (next: BomSpec) 
               )}
             </Select>
           </Field>
-          <Field label="Model and type reference">
+          <Field
+            label="Model and type reference"
+            hint="Printed on the rating plate and named on the declaration of conformity.">
+
+            {/* Empty until typed. It used to be seeded "Not yet assigned", which is a sentence
+                rather than a blank, and a sentence in this field reaches a rating plate. */}
             <Input
               value={spec.model}
+              placeholder="Not yet assigned"
               onChange={(event) => onChange({ ...spec, model: event.target.value })} />
-            
+
           </Field>
           <Field label="Supply voltage">
             <Input
@@ -1004,11 +1441,12 @@ function BomEditor({ spec, onChange }: {spec: BomSpec;onChange: (next: BomSpec) 
               } />
             
           </Field>
-          <Field label="Packaging">
+          <Field label="Packaging" hint={packagingHint(spec.packagingId)}>
             <Select
               value={spec.packagingId}
               onChange={(event) => onChange({ ...spec, packagingId: event.target.value })}>
-              
+
+              <option value="">Not chosen yet</option>
               {PACKAGING.filter((p) => p.categories.includes('electronics')).map((item) =>
               <option key={item.id} value={item.id}>
                   {item.name}

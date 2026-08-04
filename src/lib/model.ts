@@ -193,14 +193,36 @@ export type Spec = MixtureSpec | PhasedSpec | BomSpec;
 /**
  * What `version` and `printedOn` hold when nothing has been produced.
  *
- * There is no artefacts table, so on a real account every artefact carries these. They are
- * named here rather than written out at each site because two different files have to be able
- * to ASK whether an artefact has been produced: products.ts sets them, and sds.ts must not
- * print "Revision Not yet produced, issued —." onto the face of a sixteen-section safety data
- * sheet somebody may hand to a regulator.
+ * They are named here rather than written out at each site because two different files have to
+ * be able to ASK whether an artefact has been produced: products.ts sets them, and sds.ts must
+ * not print "Revision Not yet produced, issued —." onto the face of a sixteen-section safety
+ * data sheet somebody may hand to a regulator.
  */
 export const ARTEFACT_NOT_PRODUCED = 'Not yet produced';
 export const ARTEFACT_NO_PRINT_DATE = '—';
+
+/**
+ * Where an artefact stands against the composition it was produced from. FOUR STATES, and the
+ * two that are not `current`/`out-of-date` are the whole reason this replaced a boolean.
+ *
+ * `current: boolean` could not tell the difference between "we checked and it matches", "we
+ * checked and it does not", "nothing has ever been produced so there is nothing to check" and
+ * "we could not get an answer". Every reader had to pick one of two pills for four facts, and
+ * the pick that shipped was the worst one: every unproduced artefact was `current: true`, so
+ * the specification screen painted a green "Current" pill on every row of a list whose every
+ * row also said "Not yet produced".
+ *
+ *   not-produced  no artefact row exists for this surface. NOT a claim about currency.
+ *   current       a produced artefact exists and batchlabel.artefact_source_fingerprint still
+ *                 returns the hash stored on it. This is the only state that may be called up
+ *                 to date, and it is a database answer rather than an assumption.
+ *   out-of-date   a produced artefact exists and the fingerprint has moved. The composition,
+ *                 the pack, a pinned material or the printed business identity changed after
+ *                 it was produced.
+ *   unknown       an artefact exists and we could not compute the fingerprint — the RPC failed
+ *                 or returned null. Must never render as either of the two answers.
+ */
+export type ArtefactCurrency = 'not-produced' | 'current' | 'out-of-date' | 'unknown';
 
 export type ArtefactInstance = {
   type: ArtefactType;
@@ -209,10 +231,55 @@ export type ArtefactInstance = {
   heightMm: number;
   version: string;
   printedOn: string;
-  /** False when the specification changed after this artefact version was printed. */
-  current: boolean;
+  currency: ArtefactCurrency;
+  /**
+   * TRUE when Batchlabel did not generate the file, which today is every row there is.
+   *
+   * `batchlabel.artefacts.is_placeholder` defaults TRUE precisely so that a stub which writes
+   * a row is marked as a stub without having to remember to. A screen must read this before
+   * calling anything produced: what these rows record is that the MAKER printed something and
+   * which composition it was printed from, not that this app produced a file.
+   */
+  isPlaceholder: boolean;
   driftNote?: string;
 };
+
+/* --------------------------------------------------------------- record */
+
+/**
+ * One line of the append-only log, as a screen needs it.
+ *
+ * Every field here came from batchlabel.record_events. `recordedAt` is `occurred_at` — when
+ * the maker says the thing happened — and not `recorded_at`, which is when we learned of it;
+ * a batch written up on Friday must not claim to have been made on Friday, and the same
+ * applies to signing a declaration.
+ */
+export type RecordedEvidence = {
+  id: string;
+  /** `occurred_at`: when the maker says it happened. */
+  recordedAt: string;
+  /** A document number, a submission reference, a person's name. Optional by design. */
+  reference: string | null;
+  summary: string;
+};
+
+/**
+ * What the account has RECORDED about a product. Not what is true of it.
+ *
+ * THE DISTINCTION IS THE ENTIRE POINT. Batchlabel does not hold a product information file,
+ * has never seen a shop listing and cannot inspect a signed declaration. What it can hold is
+ * the maker's own entry in an append-only log saying they did it and when. So every sentence
+ * built from this must be about our record — "you have not recorded this" — and never about
+ * their business — "no product information file has been assembled".
+ */
+export type ProductEvidence = {
+  /** Keyed by obligation id; see src/lib/regimes.ts. */
+  obligations: Record<string, RecordedEvidence>;
+  /** Keyed by safety data sheet section number, 1 to 16. */
+  sdsSections: Record<number, RecordedEvidence>;
+};
+
+export const NO_EVIDENCE: ProductEvidence = { obligations: {}, sdsSections: {} };
 
 /* -------------------------------------------------------------- product */
 
@@ -252,8 +319,17 @@ export type Product = {
     weeeRegistration?: string;
     modelYear?: string;
   };
-  /** Keyed by obligation id. Missing means not satisfied. */
-  obligations: Record<string, boolean>;
+  /**
+   * What the maker has recorded against this product in the append-only log.
+   *
+   * THIS REPLACED `obligations: Record<string, boolean>`, which was read from the
+   * `products.obligations` jsonb column — a column written by nothing. createProduct inserted
+   * no key and no screen ever set one, so every obligation evaluated to "outstanding" forever
+   * on every product of every account, and fifteen of them said so in the voice of a finding
+   * about the maker's business. The column is no longer read; `batchlabel.record_events`,
+   * filtered on its typed `obligation_id`, is the source, and it has a write path.
+   */
+  evidence: ProductEvidence;
 };
 
 /* --------------------------------------------------------------- record */
