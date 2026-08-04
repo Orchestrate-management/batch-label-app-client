@@ -165,7 +165,67 @@ stated" state rather than a bare dash.
 device with an unassigned model", which asserts the model but deliberately does not assert the
 ratings — change the seed and that test still passes.
 
-### 4. Neither two-statement write is atomic, and both can half-land
+### 4. Neither two-statement write is atomic, and both can half-land — LOGGED, not fixed here
+
+**NOT DONE, and deliberately not worked around.** The entry's recommendation (a) is right, and it
+is a migration: this branch owns no schema. What this pass adds is the reading the entry asks for
+— what the schema actually offers — so the schema stream can act without rediscovering it, plus
+the finding that nothing at application level is worth doing in the meantime.
+
+**What the schema offers today.** Read against
+`supabase/migrations/20260803120000_account_data_schema.sql` (on the schema branch; this repo
+holds no `supabase/`). There is **no RPC that writes a specification and a product together**.
+The functions that exist are `is_member_of`, `current_account_id`, `sku_within_limit`,
+`account_sku_limit`, `enforce_sku_limit`, `pin_created_by`, `require_account_id`,
+`ensure_account`, `handle_new_user` — none of them a write surface for the app. PostgREST cannot
+span two tables in one request, and the order cannot be reversed (`products.specification_id` is
+`not null`), so there is no shape available from this side. The entry is correct that the RPC is
+the only real fix.
+
+**`SECURITY INVOKER`, as the entry says — not `DEFINER`.** Worth stating because the two are one
+word apart and the wrong one is a silent widening. Invoker keeps RLS on both tables, so
+`with check (public.is_member_of(account_id))` remains the isolation and the function needs no
+copy of the account check; definer bypasses RLS and would force the function to re-derive it,
+which is a second place for the rule to live. The migration reserves definer for the two cases
+that genuinely need it — the recursion trap in §3 and provisioning in §8 — and grants execute to
+`authenticated` while revoking from `public, anon`, which is the pattern the new function should
+follow.
+
+**What it must preserve, all of it verifiable from the migration:**
+
+- `enforce_sku_limit` is a BEFORE INSERT trigger on `products` and raises `P0001` with
+  `hint = 'sku_limit_reached'`. It still fires inside the function; a plpgsql body that catches
+  and re-raises must preserve the errcode AND the hint, because `classifyWriteError` matches the
+  hint and never the sentence — the trigger's own comment says to.
+- `pin_created_by` sets `created_by` from `auth.uid()`, which is a JWT claim and survives either
+  security mode. It is the RLS bypass that is the reason to prefer invoker, not this.
+- The return shape wants to be the two rows the app already maps (`SPECIFICATION_COLUMNS` /
+  `PRODUCT_COLUMNS`), so `toProduct` and the `Product` type do not move.
+- `products` cascades from `specifications` on delete, so the failure mode the current code
+  protects against — archiving a specification under a LIVE product — cannot arise inside a
+  transaction that either commits both or neither.
+
+**What lands on the app side when it exists.** `createProduct` loses its post-failure lookup and
+its archive-on-refusal branch; `saveComposition` loses `partial_save` entirely — with both
+updates in one transaction there is no half to report — and `PARTIAL_SAVE_MESSAGE` and the
+`'partial_save'` member of `WriteFailure` go with it. The two tests the entry names become
+assertions about one result rather than about a sequence.
+
+**One case the RPC does NOT remove, and the entry does not mention it.** A committed transaction
+whose *response* is lost still leaves the app not knowing what happened — the dropped socket, the
+proxy 5xx. That is the `unknown` reason and the "check the list first" copy, and both stay
+earned. Atomicity fixes what the database did; it does not fix what the browser was told.
+
+**Nothing done at application level, on purpose.** For `saveComposition` a compensating write
+(re-applying the old specification when the second update fails) is worse than reporting: it can
+itself fail, and if the product update had in fact committed with only its response lost, the
+compensation would destroy the recipe the maker DID approve. The current handling — name which
+half is stored, ask for one more press, reload so the screen matches the database — is the best
+answer available without a transaction.
+
+**Original entry follows.**
+
+### 4 (original). Neither two-statement write is atomic, and both can half-land
 
 **The gap.** Known and documented at length in the code; recording it here because it is a live
 data-integrity risk and had no entry.
@@ -453,6 +513,15 @@ worries about has one obvious call and a comment saying to use it rather than `r
 `refresh()`. Reading the code, `refresh()` is not enough on its own: it re-reads while leaving
 every screen free to keep stating the pre-write number for the whole round trip, which is exactly
 the bug 12 then patched. The seam has to carry the fact, not just the request.
+
+**And one premise is wrong.** 11 says "the browser holds no DELETE grant on `products`". Against
+`20260803120000_account_data_schema.sql` §7 it does: `grant select, insert, update, delete on
+public.products to authenticated`, with a matching policy `"products are deletable by account
+members"`. It is `specifications` that has no DELETE, deliberately, because deleting one cascades
+to its products. So a delete path is available to this client today and is simply not built —
+which makes the seam above a live concern rather than a hypothetical one. (Read from the schema
+branch's migration, which this repo does not contain; worth confirming against the deployed
+database before anything relies on it.)
 
 **The gap.** `entitlement.skuCount` is the database's own count and was read once at mount; until
 this stream, `BillingReturn` was the only caller of `refresh()` in the app. `NewProductDialog` now
