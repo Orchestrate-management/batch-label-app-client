@@ -226,6 +226,111 @@ export async function changePassword(input: {
   return { error: null, otherSessionsRemain: Boolean(revokeError) };
 }
 
+/* ----------------------------------------------------------------- email */
+
+/**
+ * The address a change is WAITING ON, straight off the session user.
+ *
+ * GoTrue puts the requested address on `new_email` from the moment `updateUser({ email })` is
+ * accepted until the last confirmation link is clicked. That makes it the one thing here that
+ * is a fact rather than a hope: the screen can say "waiting on x@y" because the auth server
+ * says so, instead of remembering that a form was submitted once.
+ *
+ * Read defensively because it is not on supabase-js's `User` type in every version, and a
+ * property that is absent must read as "no change pending" rather than throwing.
+ */
+export function pendingEmailChange(user: User | null): string | null {
+  const value = (user as {new_email?: unknown;} | null)?.new_email;
+  return typeof value === 'string' && value.trim() !== '' ? value : null;
+}
+
+export interface EmailChangeResult {
+  error: string | null;
+  /** The address a confirmation was sent to. Only set when `error` is null. */
+  pending?: string;
+}
+
+/**
+ * Asks to change the sign-in address. IT DOES NOT CHANGE IT.
+ *
+ * `updateUser({ email })` starts a confirmation flow and returns success as soon as the email
+ * is away. Nothing has moved at that point: the maker still signs in with the old address
+ * until every link is clicked. A screen that says "email updated" here is the same class of
+ * lie as the identity tab's old "Identity saved" toast, and a worse one, because the thing it
+ * is wrong about is how they get back in.
+ *
+ * HOW MANY EMAILS GO OUT IS A PROJECT SETTING WE CANNOT SEE. With Supabase's "Secure email
+ * change" on — the default — a link goes to BOTH the old and the new address and both must be
+ * clicked; with it off, only the new one. A browser cannot read that setting, so the copy on
+ * the screen may not claim a number. It names the new address, which we do know, and tells the
+ * maker to check both inboxes, which is true either way.
+ *
+ * The confirmation link lands on www, which owns every auth screen and is already the Supabase
+ * Site URL, so it needs no redirect allow-list entry of its own.
+ */
+export async function changeEmail(input: {
+  currentEmail: string | null;
+  nextEmail: string;
+}): Promise<EmailChangeResult> {
+  const client = supabase;
+  if (!client) return { error: 'Sign in is not connected.' };
+
+  const next = input.nextEmail.trim();
+  if (next === '') return { error: 'Please enter the address you want to use.' };
+  // Deliberately the loosest possible shape check. A browser guessing at what a valid address
+  // looks like is how people with perfectly good addresses get turned away; the auth server
+  // and the confirmation email are the real test, and a typo costs one unclicked link.
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(next)) {
+    return { error: 'That does not look like an email address.' };
+  }
+  if (input.currentEmail && next.toLowerCase() === input.currentEmail.toLowerCase()) {
+    return { error: 'That is already your address.' };
+  }
+
+  const { error } = await client.auth.updateUser(
+    { email: next },
+    { emailRedirectTo: marketingUrl('/') }
+  );
+
+  if (!error) return { error: null, pending: next };
+
+  if (isAuthRetryableFetchError(error)) {
+    return { error: 'We could not reach Batchlabel. Check your connection and try again.' };
+  }
+  if (error.status === 429 || error.code === 'over_email_send_rate_limit') {
+    return { error: 'We have sent one recently. Check your inbox, then try again in a few minutes.' };
+  }
+  if (error.code === 'email_exists' || error.code === 'email_address_not_authorized') {
+    return { error: 'That address cannot be used for this account.' };
+  }
+  return { error: 'We could not start that change just now. Please try again.' };
+}
+
+/* ------------------------------------------------------------- sessions */
+
+/**
+ * Ends every session for this user, THIS ONE INCLUDED.
+ *
+ * Distinct from the `scope: 'others'` revoke that follows a password change, and the
+ * difference is the whole point of having it: this is the control for somebody who thinks a
+ * device they cannot reach is signed in. Signing out only the others would leave the
+ * suspicious device signed out and this one signed in, which is the right answer after a
+ * password change and the wrong one here.
+ *
+ * A failure is reported rather than swallowed. "You have been signed out everywhere" when the
+ * revoke did not happen is the most dangerous false confirmation on this page.
+ */
+export async function signOutEverywhere(): Promise<{error: string | null;}> {
+  const client = supabase;
+  if (!client) return { error: 'Sign in is not connected.' };
+  const { error } = await client.auth.signOut({ scope: 'global' });
+  if (!error) return { error: null };
+  if (isAuthRetryableFetchError(error)) {
+    return { error: 'We could not reach Batchlabel, so nothing was signed out. Try again.' };
+  }
+  return { error: 'We could not sign your devices out just now. Please try again.' };
+}
+
 /**
  * Emails a link to set a password, for an account that has none.
  *

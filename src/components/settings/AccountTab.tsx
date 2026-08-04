@@ -17,12 +17,17 @@ import {
 import { useAuth } from '../../lib/auth';
 import { useEntitlement } from '../../lib/entitlement';
 import {
+  changeEmail,
   changePassword,
   hasEmailIdentity,
   MIN_PASSWORD_LENGTH,
+  pendingEmailChange,
   sendSetPasswordLink,
-  signInMethods } from
+  signInMethods,
+  signOutEverywhere } from
 '../../lib/account';
+import { useSettings } from '../../lib/settings-store';
+import type { DataRequestKind } from '../../lib/settings-data';
 import {
   fetchConsentPreferences,
   updateConsentPreference,
@@ -114,12 +119,104 @@ function IdentitySection() {
           </div>
         </dl>
 
+        <ChangeEmailForm />
+
         <p className="mt-5 max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
-          Changing your email address or business name is not self service yet. Email
-          hello@batchlabel.co.uk and we will do it for you.
+          Your business name here is the one on your plan. The name that PRINTS on a label is
+          the registered and trading name on the Identity tab, and they are deliberately
+          separate fields — one is who we bill, the other is what a regulator reads.
         </p>
       </Card>
     </section>);
+
+}
+
+/**
+ * Changing the sign-in address.
+ *
+ * IT NEVER SAYS THE ADDRESS CHANGED, because at the point this form returns it has not. Supabase
+ * accepts the request, sends a confirmation, and moves the address only when the link is
+ * clicked — so the confirmation here is about an email being sent, and the pending address is
+ * read back off the session user (`new_email`) rather than remembered from the form. That is
+ * the difference between a screen reporting what it did and a screen reporting what it hopes.
+ *
+ * The pending banner therefore survives a reload, and disappears by itself when the change
+ * completes, because both facts come from the auth server.
+ */
+function ChangeEmailForm() {
+  const { user } = useAuth();
+  const current = user?.email ?? null;
+  const pending = pendingEmailChange(user);
+
+  const [next, setNext] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [sentTo, setSentTo] = useState<string | null>(null);
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    setSentTo(null);
+
+    const result = await changeEmail({ currentEmail: current, nextEmail: next });
+    setBusy(false);
+
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+    setNext('');
+    setSentTo(result.pending ?? null);
+  };
+
+  return (
+    <form onSubmit={handleSubmit} noValidate className="mt-5 max-w-md space-y-3">
+      {pending &&
+      <Callout title="A change is waiting to be confirmed">
+          <p className="max-w-prose leading-relaxed">
+            We are holding a request to move this account to {pending}. You still sign in with{' '}
+            {current ?? 'your current address'} until the confirmation links have been clicked.
+          </p>
+        </Callout>
+      }
+
+      <div>
+        <label
+          htmlFor="new-email"
+          className="mb-1.5 block text-[0.8125rem] font-medium text-ink-secondary">
+
+          Change your email address
+        </label>
+        <Input
+          id="new-email"
+          type="email"
+          autoComplete="email"
+          placeholder="you@yourbusiness.co.uk"
+          aria-describedby="new-email-hint"
+          value={next}
+          onChange={(event) => setNext(event.target.value)} />
+
+        <p id="new-email-hint" className="mt-1.5 text-2xs leading-relaxed text-ink-tertiary">
+          This is also how you sign in, here and on batchlabel.xyz.
+        </p>
+      </div>
+
+      {error && <FormError>{error}</FormError>}
+      {sentTo &&
+      <Callout role="status" title="Confirmation sent">
+          <p className="max-w-prose leading-relaxed">
+            We have emailed {sentTo}. Nothing has changed yet — your address moves when every
+            link we sent has been clicked, so check your current inbox as well, since a change
+            may need confirming from there too.
+          </p>
+        </Callout>
+      }
+
+      <Button type="submit" variant="secondary" disabled={busy || next.trim() === ''}>
+        {busy ? 'Sending…' : 'Send a confirmation link'}
+      </Button>
+    </form>);
 
 }
 
@@ -567,12 +664,7 @@ function DataSection() {
         What we hold, what you agreed to, and where the rest of your account lives.
       </p>
       <Card className="px-5 py-5">
-        <p className="max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
-          You can ask for a copy of everything we hold, or ask us to close your account and delete
-          your uploaded safety data sheets. Email privacy@batchlabel.co.uk and we will reply within
-          a month, usually the same week. There is no button for it yet.
-        </p>
-        <div className="mt-4 flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2">
           {/* Internal now, and no longer an ExternalLink. This used to point at
               www/dashboard/account, which is being removed: www is marketing and auth only,
               and billing moved into this app. Sending somebody off-origin to reach a page
@@ -589,28 +681,268 @@ function DataSection() {
       </Card>
 
       <SignOutRow />
+      <DangerZone />
     </section>);
 
 }
 
 /**
- * Sign out, from a page rather than a menu.
+ * Sign out, from a page rather than a menu — and the version for a device you cannot reach.
  *
  * The account menu in the sidebar is desktop only, so until this existed a maker
  * on a phone could not sign out at all. Repeating it here is safe in a way a
  * second consent control would not be: signing out twice is signing out.
+ *
+ * The second button is a different action, not a louder copy of the first. `scope: 'global'`
+ * revokes every refresh token this user holds — the shared laptop, the phone left at a market
+ * stall, the browser on a machine that has since been sold — and this session with them. It is
+ * reported honestly: a failed revoke says nothing was signed out, because "you are signed out
+ * everywhere" when the call failed is the most dangerous false confirmation on this page.
  */
 function SignOutRow() {
   const { signOut } = useAuth();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleEverywhere = async () => {
+    setBusy(true);
+    setError(null);
+    const result = await signOutEverywhere();
+    setBusy(false);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+    // The tokens are gone; this clears the local session and hands the browser to www.
+    await signOut();
+  };
+
   return (
-    <div className="mt-4 flex flex-wrap items-center gap-4">
-      <Button variant="secondary" onClick={() => void signOut()}>
-        Sign out
-      </Button>
-      <p className="max-w-prose text-2xs leading-relaxed text-ink-tertiary">
-        Signs you out of batchlabel.xyz as well. One sign-in covers both, so one sign-out ends
-        both.
-      </p>
+    <div className="mt-4 space-y-4">
+      <div className="flex flex-wrap items-center gap-4">
+        <Button variant="secondary" onClick={() => void signOut()}>
+          Sign out
+        </Button>
+        <p className="max-w-prose text-2xs leading-relaxed text-ink-tertiary">
+          Signs you out of batchlabel.xyz as well. One sign-in covers both, so one sign-out ends
+          both.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-4">
+        <Button variant="secondary" disabled={busy} onClick={() => void handleEverywhere()}>
+          {busy ? 'Signing out…' : 'Sign out on every device'}
+        </Button>
+        <p className="max-w-prose text-2xs leading-relaxed text-ink-tertiary">
+          Ends every signed-in browser and phone, including this one. Use it if a device you
+          cannot reach might still be signed in.
+        </p>
+      </div>
+      {error && <FormError>{error}</FormError>}
     </div>);
 
+}
+
+/* ----------------------------------------------------------- data rights */
+
+const REQUEST_TITLES: Record<DataRequestKind, string> = {
+  export: 'Copy of your data',
+  erasure: 'Account erasure'
+};
+
+const REQUEST_STATUS: Record<
+  string,
+  {label: string;tone: 'neutral' | 'good' | 'warn' | 'quiet';}> =
+{
+  requested: { label: 'Recorded', tone: 'neutral' },
+  in_progress: { label: 'In progress', tone: 'neutral' },
+  completed: { label: 'Completed', tone: 'good' },
+  refused: { label: 'Refused', tone: 'warn' }
+};
+
+/**
+ * The two UK GDPR obligations the privacy notice commits to — AS REQUESTS, WHICH IS ALL THEY ARE.
+ *
+ * WHY THERE IS NO DELETE BUTTON THAT DELETES. This app holds no permission to erase an account
+ * and it is not going to: `authenticated` has INSERT and SELECT on `account_data_requests` and
+ * nothing else, and there is no route from a browser session to a deleted account. That is a
+ * decision rather than missing work — a signed-in tab on a borrowed laptop must not be able to
+ * destroy somebody's business records — and it is why the control is honest about being a
+ * request. Fulfilment is a service-role job and there is no server function for it yet.
+ *
+ * So: the button writes a row, the screen says a row was written, and the status column is the
+ * only thing that may ever say more. Nothing here claims data has been deleted, nothing offers
+ * a download, and nothing counts down a deadline the software cannot enforce.
+ */
+function DangerZone() {
+  const settings = useSettings();
+  const [busy, setBusy] = useState<DataRequestKind | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [typed, setTyped] = useState('');
+
+  const ready = settings.status === 'ready';
+  const openRequest = (kind: DataRequestKind) =>
+  settings.requests.find(
+    (request) =>
+    request.kind === kind && request.status !== 'completed' && request.status !== 'refused'
+  );
+
+  const submit = async (kind: DataRequestKind) => {
+    setBusy(kind);
+    setError(null);
+    const result = await settings.requestData(kind);
+    setBusy(null);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+    setConfirming(false);
+    setTyped('');
+  };
+
+  return (
+    <section aria-labelledby="danger-heading" className="mt-8">
+      <SectionTitle className="mb-1">
+        <span id="danger-heading">Your data rights</span>
+      </SectionTitle>
+      <p className="mb-3 max-w-prose text-2xs leading-relaxed text-ink-tertiary">
+        Both of these record a request. Neither is carried out by this app, and neither happens
+        the moment you press the button.
+      </p>
+
+      {!ready &&
+      <Callout tone="warn" className="mb-3" title="These cannot be recorded right now">
+          <p className="max-w-prose leading-relaxed">
+            {settings.status === 'unconfigured' ?
+          'This copy of the app has no database connection.' :
+          settings.status === 'no-account' ?
+          'We have not resolved which workspace this is.' :
+          settings.status === 'error' ?
+          settings.error ?? 'We could not read your account.' :
+          'We are still reading your account.'}{' '}
+            Email privacy@batchlabel.co.uk and your request counts just the same.
+          </p>
+        </Callout>
+      }
+
+      <Card className="space-y-5 px-5 py-5">
+        <div>
+          <p className="text-sm font-medium text-ink">Ask for a copy of your data</p>
+          <p className="mt-1 max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
+            Your products, specifications, materials and records, and the account details behind
+            them. We assemble it by hand today, so this records the request and we reply by email
+            within a month — usually the same week.
+          </p>
+          <div className="mt-3">
+            <Button
+              variant="secondary"
+              disabled={!ready || busy !== null || Boolean(openRequest('export'))}
+              onClick={() => void submit('export')}>
+
+              {busy === 'export' ?
+              'Recording…' :
+              openRequest('export') ?
+              'Already requested' :
+              'Request a copy of my data'}
+            </Button>
+          </div>
+        </div>
+
+        <div className="border-t border-paper-line pt-5">
+          <p className="text-sm font-medium text-ink">Close this account and erase my data</p>
+          <p className="mt-1 max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
+            This app cannot delete an account — by design, so that a signed-in browser cannot
+            destroy your records. Pressing this records the request; we carry out the erasure and
+            confirm it by email. Your products stay exactly as they are until we do, and you can
+            change your mind by replying to that email.
+          </p>
+
+          {!confirming ?
+          <div className="mt-3">
+              <Button
+                variant="secondary"
+                disabled={!ready || Boolean(openRequest('erasure'))}
+                onClick={() => setConfirming(true)}>
+
+                {openRequest('erasure') ? 'Already requested' : 'Request erasure'}
+              </Button>
+            </div> :
+
+          <div className="mt-3 space-y-3">
+              <label
+                htmlFor="erase-confirm"
+                className="block text-[0.8125rem] font-medium text-ink-secondary">
+
+                Type ERASE to confirm you want us to close this account
+              </label>
+              <Input
+                id="erase-confirm"
+                value={typed}
+                autoComplete="off"
+                onChange={(event) => setTyped(event.target.value)}
+                className="max-w-xs" />
+
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  variant="secondary"
+                  disabled={typed.trim().toUpperCase() !== 'ERASE' || busy !== null}
+                  onClick={() => void submit('erasure')}>
+
+                  {busy === 'erasure' ? 'Recording…' : 'Record my erasure request'}
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setConfirming(false);
+                    setTyped('');
+                  }}>
+
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          }
+        </div>
+
+        {error && <FormError>{error}</FormError>}
+
+        {settings.requests.length > 0 &&
+        <div className="border-t border-paper-line pt-5">
+            <p className="text-[0.8125rem] font-medium text-ink-secondary">
+              Requests we have recorded
+            </p>
+            <ul className="mt-2 space-y-2">
+              {settings.requests.map((request) =>
+            <li key={request.id} className="flex flex-wrap items-center gap-3">
+                  <Pill tone={REQUEST_STATUS[request.status]?.tone ?? 'neutral'}>
+                    {REQUEST_STATUS[request.status]?.label ?? request.status}
+                  </Pill>
+                  <span className="text-[0.8125rem] text-ink">
+                    {REQUEST_TITLES[request.kind] ?? request.kind}
+                  </span>
+                  <span className="text-2xs text-ink-tertiary">
+                    asked for {formatRequestDate(request.requestedAt)}
+                  </span>
+                  {request.note &&
+              <span className="w-full text-2xs text-ink-tertiary">{request.note}</span>
+              }
+                </li>
+            )}
+            </ul>
+          </div>
+        }
+      </Card>
+    </section>);
+
+}
+
+/** A recorded time, said plainly. An unreadable one says so rather than printing "Invalid Date". */
+function formatRequestDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return 'at a time we cannot read';
+  return `on ${date.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric'
+  })}`;
 }

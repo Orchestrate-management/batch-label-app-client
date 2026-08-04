@@ -9,6 +9,7 @@ import { EntitlementProvider } from './lib/entitlement';
 import { lazyScreen } from './lib/lazy-screen';
 import { MetaTrackingProvider } from './lib/meta-consent';
 import { ProductsProvider } from './lib/product-store';
+import { SettingsProvider } from './lib/settings-store';
 import { WorkspaceProvider } from './lib/workspace';
 import { BillingReturn } from './pages/BillingReturn';
 import { Studio } from './pages/Studio';
@@ -101,9 +102,16 @@ export function App() {
         <RequireAuth>
           <MetaTrackingProvider>
             <EntitlementProvider>
-              <ProductsProvider>
-                <AppRoutes />
-              </ProductsProvider>
+              {/* SettingsProvider is inside the entitlement because it reads one account's
+                  settings and the account id comes from there, and OUTSIDE the router because
+                  the printed supplier block is not a screen's data: it is what every label
+                  preview and every safety data sheet section 1 renders, from any route, and it
+                  has to be loaded whether or not anybody opened Settings. */}
+              <SettingsProvider>
+                <ProductsProvider>
+                  <AppRoutes />
+                </ProductsProvider>
+              </SettingsProvider>
             </EntitlementProvider>
           </MetaTrackingProvider>
         </RequireAuth>
