@@ -94,6 +94,13 @@ export default defineConfig({
         // data; both can make a screen state something untrue.
         'src/lib/report-error.ts',
         'src/lib/lazy-screen.ts',
+        // The other half of the reporting seam (TODO entry 7): the two window listeners that
+        // catch what an error boundary structurally cannot — a rejected promise, a throw in a
+        // click handler. On the list for the same third-clause reason as report-error.ts, and
+        // for one of its own: it decides when NOT to file, so a mistake here is either a fault
+        // that silently goes unrecorded or one crash filed three times, and the second is what
+        // a paid vendor bills for.
+        'src/lib/global-errors.ts',
       ],
       thresholds: {
         lines: 70,

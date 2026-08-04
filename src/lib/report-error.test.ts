@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { hasErrorSink, reportError, setErrorSink, type ErrorReport } from './report-error';
+import {
+  describedRecently,
+  hasErrorSink,
+  reportError,
+  setErrorSink,
+  type ErrorReport } from
+'./report-error';
 
 /**
  * The seam, tested as a seam.
@@ -155,5 +161,72 @@ describe('the shape handed to a transport', () => {
     // The same exception from two places is two different problems.
     silenceConsole();
     expect(reportError(new Error('nope'), 'billing-portal').source).toBe('billing-portal');
+  });
+});
+
+describe('one failure, one report', () => {
+  it('hands the same value back the same report rather than filing it twice', () => {
+    // A boundary and the window listeners in lib/global-errors.ts watch overlapping ground,
+    // and a value that reaches both is one fault, not two. The customer is shown a reference,
+    // so the two reporters agreeing on which reference matters.
+    const spy = silenceConsole();
+    const error = new Error('the derivation blew up');
+    const first = reportError(error, 'window-error');
+    const second = reportError(error, 'render');
+    expect(second).toBe(first);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the component trail even when it arrives on the second call', () => {
+    // The boundary is the only reporter that has one, and it is not always the first to
+    // arrive. Dropping it would lose the most useful half of the report to a race.
+    silenceConsole();
+    const error = new Error('nope');
+    reportError(error, 'window-error');
+    const withTrail = reportError(error, 'render', { componentStack: '\n at Studio' });
+    expect(withTrail.componentStack).toBe('\n at Studio');
+  });
+
+  it('does not overwrite the source, so the first reporter stays the reporter', () => {
+    silenceConsole();
+    const error = new Error('nope');
+    reportError(error, 'window-error');
+    expect(reportError(error, 'render').source).toBe('window-error');
+  });
+
+  it('treats two separate values as two failures, even when they read alike', () => {
+    // The guard is identity, deliberately. Two makers hitting the same bug twice in a session
+    // is two reports; collapsing them on wording would hide the second one.
+    silenceConsole();
+    const one = reportError(new Error('same words'), 'render');
+    const two = reportError(new Error('same words'), 'render');
+    expect(two.reference).not.toBe(one.reference);
+  });
+});
+
+describe('what the backstop asks before it speaks', () => {
+  it('says a fault has been described once something has described it', () => {
+    silenceConsole();
+    expect(describedRecently(new Error('a brand new sentence'))).toBe(false);
+    reportError(new Error('a brand new sentence'), 'render');
+    // A DIFFERENT value with the same words. This is the case identity cannot see: React
+    // re-invokes a component that threw, and `throw new Error(...)` makes a new value each
+    // time, so one crash reaches the window as values that are not each other.
+    expect(describedRecently(new Error('a brand new sentence'))).toBe(true);
+  });
+
+  it('does not claim to have seen something else', () => {
+    silenceConsole();
+    reportError(new Error('one thing'), 'render');
+    expect(describedRecently(new Error('a different thing'))).toBe(false);
+  });
+
+  it('answers for values that are not Errors at all', () => {
+    // `reject('nope')` reaches the backstop as a string, and it must not throw on the way to
+    // deciding whether to stay quiet.
+    silenceConsole();
+    reportError('a thrown string', 'render');
+    expect(describedRecently('a thrown string')).toBe(true);
+    expect(describedRecently('some other string')).toBe(false);
   });
 });

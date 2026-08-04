@@ -382,7 +382,56 @@ are both on the coverage `include` list now, and both clear the per-file floor; 
 needed a test file of its own to get there (`lazyScreen` itself had none). The rest of this entry
 is untouched: no vendor, no dependency, no endpoint — that decision is Rhys's.
 
-### 7. Only render errors are caught; a failed promise in a handler is still invisible
+### 7. Only render errors are caught; a failed promise in a handler is still invisible — DONE (listeners only)
+
+**DONE** (commit `feat(7)`): option (a), **listeners only, no transport**. `window.onerror` and
+`unhandledrejection` are installed at boot from `src/index.tsx`, forwarding into the existing
+`reportError` seam. No vendor, no dependency, no endpoint — entry 6 is untouched and is still
+Rhys's. The new module is `src/lib/global-errors.ts`, on the coverage floor at 95/83/100/95.
+
+**The double-report needed more than it looks like it needs, and this is the finding.** The
+obvious guard — "don't file a value a boundary already filed" — cannot work, for two reasons
+found by reading React 18.3.1 rather than by guessing:
+
+1. **The window sees it first.** React dispatches the error at the window during the render
+   that threw; `componentDidCatch` runs afterwards. So the backstop always wins the race, and
+   the good report — the one with the component trail — always looks like the duplicate.
+2. **The values are not the same value.** In a development build `beginWork` re-invokes a
+   component that threw, twice, to recover a stack (`react-dom.development.js:4113` onwards,
+   `invokeGuardedCallbackDev`). A component that does `throw new Error(...)` therefore produces
+   a NEW error object each time. Measured: one crash, **three** reports — two from the window,
+   one from the boundary, all distinct objects. Identity comparison cannot see it.
+
+So the fix is two guards doing two different jobs, and it is worth keeping them apart:
+
+- **Exact, everywhere.** `reportError` holds a `WeakMap` of values it has filed and hands the
+  same report back rather than filing twice. One thrown value is one report and one reference,
+  whichever call site sees it first; a `componentStack` arriving on the later call is attached
+  rather than dropped.
+- **Coarse, backstop only.** The listeners yield one macrotask and then ask
+  `describedRecently(value)` — name and message, within three seconds — before filing. If a
+  boundary has described the fault in the meantime they say nothing. This is a fingerprint and
+  not an identity, which is the right resolution for a backstop but would be wrong for
+  `reportError` itself, so `reportError` does not consult it and every direct call site still
+  gets its own reference.
+
+Measured after: one render crash, **one** report, `source: 'render'`, component trail intact.
+An unhandled rejection, which no boundary ever sees, still files.
+
+**Not filtered, deliberately.** Extension noise, blocked third-party scripts and the bare
+`"Script error."` all still file. Entry 7 is right that they are noise and right that the
+filter belongs in the sink — but today the destination is the maker's own console, where a
+line costs nothing and a dropped line costs a developer their only clue. It becomes a real
+decision on the day it costs money, which is entry 6's day, in entry 6's place.
+
+Also not done: `preventDefault()`, which would suppress the browser's own (better) reporting
+and which React reads as a signal to stop logging the error itself.
+
++10 tests in a new `src/lib/global-errors.test.tsx`, +7 in `report-error.test.ts`.
+
+**Original entry follows.**
+
+### 7 (original). Only render errors are caught; a failed promise in a handler is still invisible
 
 **The gap.** An error boundary catches errors thrown during render and in lifecycle methods. It
 catches nothing thrown in an event handler, in a `setTimeout`, or in an unhandled promise
