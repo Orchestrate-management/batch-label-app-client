@@ -848,25 +848,29 @@ rewrite.
 **Where it bites.** `src/pages/Settings.tsx`, `PreferencesTab`, the "Stock presets and export
 defaults" card; tab description at `TABS[3].description`.
 
-### 15. The full suite is red at the default 5 s test timeout, on a test nobody changed
+### 15. ~~The full suite is red at the default 5 s test timeout~~ — **DONE (9f0483f)**
 
-**The gap.** `npm run test:run` now fails one test — `AccountTab.test.tsx` › "asks for the current
-password and sends all three to changePassword". It is not a logic failure: it passes in isolation
-(1.8 s of that is `userEvent` typing three password fields character by character) and the whole
-suite passes at `--testTimeout=20000` (494/494). It began failing as the suite grew past ~450 tests
-across three streams; vitest runs files in parallel, and the wall clock on a slow test is shared
-with everything else in flight.
+Fixed before the overnight batches began, by **(b) + (c)**, not by the recommended (a).
 
-**Options.** *(a)* `testTimeout: 15000` in `vitest.config.ts`. One line, fixes it now, and raises
-the bar at which a genuinely hung test is caught. *(b)* A per-test timeout on that one test —
-narrower, and leaves the next slow test to rediscover this. *(c)* Make the test itself fast:
-`user.type` is the cost, and `fireEvent.change` on each field would cut it to milliseconds at the
-price of not exercising real keystrokes on a password form. *(d)* Leave it red.
+- `{ timeout: 15_000 }` on the one heavy test — "asks for the current password and sends all
+  three to changePassword". It renders the whole settings tab with its providers, drives three
+  password fields and then awaits a mock; alone it takes ~2 s, under the full suite's parallel
+  jsdom environments it reached ~6 s against a 5 s budget.
+- `userEvent.setup({ delay: null })` across all 15 tests in that file, removing the simulated
+  human typing speed. That alone was **not** enough — it still landed at ~6 s under load — which
+  is why the per-test budget is there too.
 
-**Recommendation: (a), by whoever is next in `vitest.config.ts`.** Left undone here only because
-the coverage stream is editing that file's `include` block in parallel and a concurrent one-line
-edit to the same file buys a merge conflict for no urgency. Nothing is wrong with the code under
-test.
+**Why not (a), the recommended global `testTimeout`.** Raising the global bar hides every other
+slow test behind the same change, and the point of a timeout is to catch a hung one. The comment
+9f0483f added to the test argues this explicitly. If you are reading this entry looking for the
+one-line config fix, that is the fix this branch deliberately rejected.
 
-**Where it bites.** `vitest.config.ts` (`test` block, no `testTimeout` set today);
-`src/components/settings/AccountTab.test.tsx`.
+The stated blocker — "the coverage stream is editing that file's `include` block in parallel" —
+is also gone: Batch B finished with `vitest.config.ts`, and the fix never needed to touch it.
+
+**A correction worth keeping.** Batch A recorded that this "did not reproduce" and was
+"load-dependent". It did not reproduce because the fix was already in the tree when Batch A
+started. Load-dependent was the right description of the symptom and the wrong conclusion about
+the cause: 5113 ms against a 5000 ms budget is a test that fails half the time for ever, not a
+busy machine.
+
