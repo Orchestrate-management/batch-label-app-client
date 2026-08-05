@@ -1,3 +1,4 @@
+import { describeDomainFailure } from './domain-schema';
 import { NOT_CONFIGURED_MESSAGE, domainClient } from './domain';
 import type { PrintedBusiness, PrintedMarket } from './identity';
 import type { CategoryId } from './model';
@@ -491,5 +492,10 @@ export function describeWriteFailure(error: Postgrestish | null): string {
   if (error?.code === '42501' || message.includes('row-level security')) {
     return 'This account did not accept that change. Reload the page and try again.';
   }
-  return 'We could not save that just now. Please try again.';
+  // The last branch, and the one case where "just now" and "please try again" are both false.
+  // PostgREST refusing the whole schema (PGRST106) is not a moment passing — it is every
+  // request in the app, permanently, until somebody changes a project setting. See
+  // lib/domain-schema.ts, which is what NOTICES; this is only the sentence, and it matters
+  // here because a Save button is sitting right beside it inviting the retry.
+  return describeDomainFailure(error, 'We could not save that just now. Please try again.');
 }

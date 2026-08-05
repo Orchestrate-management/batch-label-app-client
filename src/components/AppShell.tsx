@@ -11,6 +11,7 @@ import {
   type LucideIcon } from
 'lucide-react';
 import { Logo } from './Logo';
+import { SchemaNotServed } from './SchemaNotServed';
 import { useAuth } from '../lib/auth';
 import { useEntitlement } from '../lib/entitlement';
 
@@ -147,6 +148,10 @@ export function AppShell({ children }: {children: React.ReactNode;}) {
             </NavLink>
           )}
         </nav>
+        {/* Above every screen and outside the routed boundary, because the fault it names is
+            not one screen's — see components/SchemaNotServed.tsx. Renders nothing unless the
+            transport has actually seen PostgREST refuse the schema. */}
+        <SchemaNotServed />
         {children}
       </div>
     </div>);
