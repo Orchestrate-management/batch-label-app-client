@@ -145,9 +145,10 @@ export const REGIMES: Regime[] = [
     id: 'clp-artefact-current',
     regimeId: 'clp',
     label: 'Label recorded and still matching the composition',
-    doneText: 'The label you last recorded printing was printed from the composition on file now.',
+    doneText:
+    'The label you last recorded printing was printed from the composition on file now, from the materials as they are classified now, and from your business details as they stand now.',
     missingText:
-    'The composition, the pack, a pinned material or your printed business details changed after the last label print you recorded. Reprint, then record the new print.',
+    'The composition, the pack, the classification of a material it names, or your printed business details changed after the last label print you recorded. Reprint, then record the new print.',
     untrackedText:
     'You have not recorded printing a label for this product, so Batchlabel cannot tell whether what is on your jars matches the composition on file. Record a print on the label designer and it will start checking.',
     to: '/products/:id/artefacts/unit-label'
@@ -665,23 +666,84 @@ const NOT_TRACKED: ReadonlySet<string> = new Set([
  */
 
 /**
- * Whether every component of the composition carries hazard data in the reference library.
+ * Where `clp-classification` stands, AND the sentence for it, decided in one place.
  *
- * `clp-classification` used to read a flag nothing sets, so it rendered "one or more
- * components have no classification on file" on the same screen where the classification
- * stage showed a green tick and a full derivation. A screen that contradicts itself teaches
- * a maker to ignore both halves.
+ * WHY THIS RETURNS A SENTENCE AND NOT A BOOLEAN. It used to be `classificationComplete`, and
+ * its last line was:
  *
- * It is derivable, and the pipeline already derives it (pipeline.ts:128-137). Same rule here,
- * so the two cannot disagree: a fragrance oil with no hazards in the reference data
- * contributes nothing to the mixture, and that is the only gap this obligation is about.
+ *     const fragrance = ingredientById(fragranceId);
+ *     return Boolean(fragrance && fragrance.hazards.length > 0);
+ *
+ * `ingredientById` returns undefined for two completely different facts — the register holds
+ * this oil and the maker has entered no hazard rows against it, or the register has no such
+ * material at all — and `false` collapsed them onto ONE state and therefore onto ONE sentence:
+ * "The fragrance oil on this composition carries no hazard classification, so nothing has been
+ * derived from it." Said of an oil that is not there, that is a fact asserted about a material
+ * this software could not find. `derive` (see `UnresolvedMaterial`) and `pipeline` both already
+ * tell the two apart, so the panel on the specification screen said that while the checklist
+ * row beside it said the other thing.
+ *
+ * ARCHIVING IS NOT ONE OF THE CAUSES, and this note is here because it used to be. The register
+ * reads archived rows and `materialById` answers for them, precisely so that a product built on
+ * a material the maker later archived keeps its classification. So a miss here cannot be
+ * explained by archiving, and the sentence below must not offer it — that would teach the maker
+ * that archiving loses things, which is the opposite of what archiving now does.
+ *
+ * The empty slot was a third collapse in the same expression: `if (!fragranceId) return false`
+ * printed the same sentence about an oil the maker has not picked yet.
+ *
+ * Four causes, three states — and because `obligationState` and `obligationOutcome` both read
+ * this one function, the row's verdict and its wording cannot drift apart again.
+ *
+ * `text` IS SET ONLY WHERE THE PER-STATE WORDING IS NOT ENOUGH: the two causes that used to
+ * borrow `missingText` and say something untrue with it. Everything else leaves it undefined
+ * and takes the obligation's own doneText, missingText or untrackedText, so those stay the
+ * single definition of what this duty says in the ordinary cases.
  */
-function classificationComplete(product: Product): boolean {
-  if (product.spec.kind !== 'mixture') return true;
+function classificationOutcome(product: Product): {state: ObligationState;text?: string;} {
+  // Nothing to classify from a composition of this shape, so the duty is discharged by the
+  // product not being a mixture rather than by anything we checked.
+  if (product.spec.kind !== 'mixture') return { state: 'met' };
+
+  /*
+   * THE REGISTER HAS TO HAVE ANSWERED BEFORE THIS ONE CAN.
+   *
+   * Materials used to be a constant in the bundle, so the lookup could not fail and this
+   * obligation was always answerable. They are rows read from Supabase now, and before that
+   * read lands — or if it fails — every lookup below misses, and every branch of this function
+   * would report a finding produced by a read that had not finished.
+   */
+  if (!materialsSettled()) return { state: 'not-tracked' };
+
   const fragranceId = product.spec.fragranceId;
-  if (!fragranceId) return false;
+  if (!fragranceId) {
+    return {
+      state: 'outstanding',
+      text:
+      'No fragrance oil is chosen on this composition yet, so there is nothing to classify ' +
+      'from. Pick one from your materials register.'
+    };
+  }
+
   const fragrance = ingredientById(fragranceId);
-  return Boolean(fragrance && fragrance.hazards.length > 0);
+  if (!fragrance) {
+    // The same fact pipeline.ts raises for `derivation.unresolved`, worded the same way
+    // deliberately: one fact, one sentence, wherever the maker meets it.
+    return {
+      state: 'outstanding',
+      text:
+      `The composition names "${fragranceId}" and your materials register has no ingredient ` +
+      'with that id. It has not been archived — an archived material is still read, and still ' +
+      'classifies the products built on it. The link may be out of date, or the material may ' +
+      'belong to another account. Nothing has been classified from it. This is a gap in the ' +
+      'register rather than a statement that the oil is unclassified.'
+    };
+  }
+
+  // In the register, and carrying no hazard rows. THE ONE CAUSE `missingText` DESCRIBES.
+  if (fragrance.hazards.length === 0) return { state: 'outstanding' };
+
+  return { state: 'met' };
 }
 
 /**
@@ -746,24 +808,9 @@ function artefactCurrency(product: Product): 'current' | 'out-of-date' | 'unknow
 export function obligationState(product: Product, obligationId: string): ObligationState {
   if (NOT_TRACKED.has(obligationId)) return 'not-tracked';
 
-  if (obligationId === 'clp-classification') {
-    /*
-     * THE REGISTER HAS TO HAVE ANSWERED BEFORE THIS ONE CAN.
-     *
-     * `classificationComplete` resolves the fragrance oil out of the materials register.
-     * Materials used to be a constant in the bundle, so the lookup could not fail and this
-     * obligation was always answerable. They are rows read from Supabase now, and before that
-     * read lands — or if it fails — the lookup misses and this obligation would report
-     * OUTSTANDING: a compliance finding, in a work queue, under the maker's own product name,
-     * produced by a read that had not finished.
-     *
-     * `not-tracked` is the state that already exists for exactly this — a duty that is real
-     * and that we are not the ones checking — and its copy says so rather than implying the
-     * maker owes work.
-     */
-    if (!materialsSettled()) return 'not-tracked';
-    return classificationComplete(product) ? 'met' : 'outstanding';
-  }
+  // State and sentence come from the same call, so a row can never be green under a sentence
+  // that says nothing was found. See `classificationOutcome`.
+  if (obligationId === 'clp-classification') return classificationOutcome(product).state;
 
   if (obligationId === 'cpr-pao') {
     return paoShown(product) ? 'met' : 'outstanding';
@@ -798,6 +845,21 @@ export type ObligationOutcome = {
 
 export function obligationOutcome(product: Product, obligation: Obligation): ObligationOutcome {
   const state = obligationState(product, obligation.id);
+
+  /*
+   * A PER-CAUSE SENTENCE, WHERE THE THREE PER-STATE ONES ARE NOT ENOUGH.
+   *
+   * An Obligation's doneText, missingText and untrackedText are sufficient while each state has
+   * exactly one cause. `clp-classification` is outstanding for three different reasons — no oil
+   * picked, the named oil is not in the register, the oil is there and carries no hazard rows —
+   * and only the third is what `missingText` describes. Printing it for the other two asserted a
+   * property of a material this software had not found. `classificationOutcome` decides the
+   * state and the wording in one pass, so the row cannot say one thing and mean another.
+   */
+  if (obligation.id === 'clp-classification') {
+    const answer = classificationOutcome(product);
+    if (answer.text) return { state, text: answer.text };
+  }
 
   if (state === 'not-tracked') {
     return {

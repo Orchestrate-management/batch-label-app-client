@@ -681,7 +681,8 @@ productId: string)
  *
  * Compare it with a recorded version's `specificationHash` and the answer is a fact rather
  * than a guess: equal means nothing that prints has moved since; different means the
- * composition, the pack, the pinned materials or the printed business identity has. Null means
+ * composition, the pack, the classification of a material it names, or the printed business
+ * identity has. Null means
  * we could not read it, and null must never be rendered as either answer — see
  * `artefactCurrency` below, which is the only thing allowed to turn this into a sentence.
  */

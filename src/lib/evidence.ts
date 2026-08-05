@@ -221,7 +221,8 @@ const PRINT_LOG_MISSING_MESSAGE =
  *
  * WHAT IT BUYS, and the reason it is worth a table rather than a toast. `specification_hash`
  * is `batchlabel.artefact_source_fingerprint(product_id)` at the moment of the print — an md5
- * over the composition, the pack, the pinned materials and the printed business identity. An
+ * over the composition, the pack, the state of every material the composition and pack name, and
+ * the printed business identity. An
  * artefact is current exactly when that function returns the same value now. That single
  * comparison is what turns "Current" from a hardcoded `true` into an answer, gives
  * `clp-artefact-current` something to read, and lets the app tell a maker which labels stopped

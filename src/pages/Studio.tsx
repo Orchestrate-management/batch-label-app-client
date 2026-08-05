@@ -20,7 +20,7 @@ import { derive } from '../lib/derive';
 import { useEntitlement } from '../lib/entitlement';
 import { createIsCertainToFail, readSkuCount, skuCountBeside } from '../lib/membership';
 import { useOptionalMaterials } from '../lib/materials-store';
-import { outstandingFor } from '../lib/pipeline';
+import { queueAcross, queueFor } from '../lib/pipeline';
 import { useProducts } from '../lib/product-store';
 
 /**
@@ -63,18 +63,16 @@ export function Studio() {
   const register = useOptionalMaterials();
   const [creating, setCreating] = useState(false);
 
-  const outstanding = useMemo(
+  const queues = useMemo(
     () =>
-    products.
-    map((product) => ({
+    products.map((product) => ({
       product,
-      issues: outstandingFor(
+      queue: queueFor(
         product,
         derive(product.spec, product, product.markets[0]),
         product.markets[0]
       )
-    })).
-    filter((entry) => entry.issues.length > 0),
+    })),
     // `register` looks unused to the exhaustive-deps rule and is not:
     // the register they describe is read through a module-level index rather than passed in as
     // an argument, so the rule cannot see the edge. DO NOT DELETE THEM TO SILENCE IT — that
@@ -84,7 +82,27 @@ export function Studio() {
     [products, register]
   );
 
+  const outstanding = queues.
+  map((entry) => ({ product: entry.product, issues: entry.queue.issues })).
+  filter((entry) => entry.issues.length > 0);
+
   const total = outstanding.reduce((sum, entry) => sum + entry.issues.length, 0);
+
+  /**
+   * The checks that exist and did not run, across every product on this screen.
+   *
+   * THE SENTENCE BELOW USED TO BE COMPOSED WITHOUT THIS. Studio consulted `useProducts()` and
+   * nothing else: no `useMaterials`, no `register.status`, no reading of `Stage.checked`. When
+   * the materials register read FAILED, the classification stage raised no issues (correctly —
+   * it had not looked), `clp-classification` resolved to not-tracked (correctly — a duty we
+   * have not checked is not a finding), the queue emptied, and route `/` greeted the maker with
+   * "Every composition is settled, every material is classified, and nothing is waiting on
+   * you." Every step was honest and the sentence was a lie.
+   *
+   * An empty queue is now only allowed to be good news when this is empty too.
+   */
+  const blocked = queueAcross(queues.map((entry) => entry.queue)).blocked;
+
   const ready = status === 'ready';
 
   /**
@@ -234,20 +252,54 @@ export function Studio() {
         {ready && products.length > 0 &&
         <>
             <SectionTitle className="mb-3">Outstanding</SectionTitle>
-            {outstanding.length === 0 ?
-          <Card className="px-6 py-8">
-                <p className="font-display text-base font-medium text-ink">Nothing outstanding</p>
-                {/* Says what was checked, and does not extend it to what was not. This read
-                    "every product has current documents, a settled composition and outputs
-                    that match it" — two thirds of which the software has never established.
-                    Nothing watches supplier documents, and no output has been produced, so
-                    there is no such thing yet as an output that matches or fails to. */}
-                <p className="mt-1 max-w-prose text-sm leading-relaxed text-ink-secondary">
-                  Every composition is settled, every material is classified, and nothing is
-                  waiting on you. Supplier documents are not watched yet, and no output has
-                  been produced.
+
+            {/* SAID BESIDE A QUEUE THAT HAS ROWS IN IT TOO, not only in place of an empty one.
+                A queue missing the classification check is under-reported whether it happens to
+                show three rows or none, and the count in the header above is then a floor
+                rather than a total. */}
+            {blocked.length > 0 && outstanding.length > 0 &&
+          <Callout tone="warn" className="mb-4" title="Some checks did not run">
+                <p className="max-w-prose leading-relaxed">
+                  {capitalise(blocked.join(', and '))}. What is below is what we could establish,
+                  and it is not the whole of it.
                 </p>
-              </Card> :
+              </Callout>
+          }
+
+            {outstanding.length === 0 ?
+          blocked.length === 0 ?
+          <Card className="px-6 py-8">
+                  <p className="font-display text-base font-medium text-ink">Nothing outstanding</p>
+                  {/* Says what was checked, and does not extend it to what was not. This read
+                      "every product has current documents, a settled composition and outputs
+                      that match it" — two thirds of which the software has never established.
+                      Nothing watches supplier documents, and no output has been produced, so
+                      there is no such thing yet as an output that matches or fails to.
+
+                      IT IS ALSO GATED ON `blocked` NOW, which is the rest of the same argument.
+                      "Every material is classified" is a claim about the materials register,
+                      and this screen used to make it without ever consulting one — so a failed
+                      register read produced this card verbatim. An empty queue only earns these
+                      words when nothing was stopped from looking. */}
+                  <p className="mt-1 max-w-prose text-sm leading-relaxed text-ink-secondary">
+                    Every composition is settled, every material is classified, and nothing is
+                    waiting on you. Supplier documents are not watched yet, and no output has
+                    been produced.
+                  </p>
+                </Card> :
+
+          <Card className="px-6 py-8">
+                  <p className="font-display text-base font-medium text-ink">
+                    Nothing outstanding among the checks that ran
+                  </p>
+                  <p className="mt-1 max-w-prose text-sm leading-relaxed text-ink-secondary">
+                    {capitalise(blocked.join(', and '))}, so that check did not run on any of
+                    your products. This is silence rather than an all-clear: a check that did
+                    not run raises nothing, exactly like a check that found nothing. Supplier
+                    documents are not watched yet, and no output has been produced.
+                  </p>
+                </Card> :
+
 
           <div className="space-y-4">
                 {outstanding.map(({ product, issues }) =>
@@ -300,6 +352,16 @@ export function Studio() {
       </div>
     </main>);
 
+}
+
+/**
+ * A `blockedBy` clause at the start of a sentence.
+ *
+ * The clauses are written lowercase in lib/pipeline.ts so they can be joined and dropped into
+ * the middle of a sentence as well as the front of one. Only the first character moves.
+ */
+function capitalise(text: string): string {
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
 }
 
 /** Today, as a person would write it. Was the string "Thursday, 30 July". */

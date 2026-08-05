@@ -71,8 +71,22 @@ export type SdsSection = {
 export type SdsDocumentModel = {
   productName: string;
   supplierName: string;
-  version: string;
-  revisionDate: string;
+  /**
+   * NULL UNTIL A SHEET HAS ACTUALLY BEEN PRODUCED, and nullable is the fix rather than a
+   * detail of it.
+   *
+   * These were `string`, defaulted to `'v1'` and `'—'`, and `SdsDocument.tsx` prints them in
+   * the top-right corner of EVERY PAGE of a sixteen-section safety data sheet. A caller that
+   * did not happen to guard on an sds artefact existing therefore put a version number nothing
+   * produced onto a document a maker may hand to a regulator. The three callers there were all
+   * guarded, so it was unreachable — but `revisionLine` in this same file guards this exact
+   * case explicitly and at length, on the grounds that a revision history is a regulatory
+   * claim, and the header did not. A type that cannot hold "no version" is what made the
+   * fourth caller a one-line mistake instead of a compile error.
+   */
+  version: string | null;
+  /** Null on the same terms, and a FORMATTED date rather than the raw timestamptz. */
+  revisionDate: string | null;
   market: Market;
   sections: SdsSection[];
   /** Sections still waiting on a competent person. */
@@ -281,9 +295,16 @@ export function buildSds(product: Product, derivation: Derivation, market: Marke
   // THE DATE IS FORMATTED. `printedOn` is a timestamptz off the row, so this printed
   // "issued 2026-07-01T09:00:00.000Z." — a machine timestamp, in the one section of the
   // document a person reads for provenance.
-  const revisionLine =
-  sdsArtefact && sdsArtefact.version !== ARTEFACT_NOT_PRODUCED ?
-  `Revision ${sdsArtefact.version}, issued ${formatDate(sdsArtefact.printedOn)}.` :
+  //
+  // ONE GUARDED VALUE, READ BY BOTH THE LINE AND THE HEADER. The line below was guarded and
+  // the header was not: it printed `sdsArtefact?.version ?? 'v1'` and the raw `printedOn`,
+  // which is a version nothing produced next to a machine timestamp, in the top-right corner
+  // of every page. Deriving both from one name is what stops the next reader guarding one and
+  // not the other — the alternative was a fourth guard at a fourth call site.
+  const produced =
+  sdsArtefact && sdsArtefact.version !== ARTEFACT_NOT_PRODUCED ? sdsArtefact : null;
+  const revisionLine = produced ?
+  `Revision ${produced.version}, issued ${formatDate(produced.printedOn)}.` :
   null;
 
   const sections: SdsSection[] = [
@@ -540,8 +561,8 @@ export function buildSds(product: Product, derivation: Derivation, market: Marke
   return {
     productName: product.name,
     supplierName: BUSINESS.tradingName,
-    version: sdsArtefact?.version ?? 'v1',
-    revisionDate: sdsArtefact?.printedOn ?? '—',
+    version: produced ? produced.version : null,
+    revisionDate: produced ? formatDate(produced.printedOn) : null,
     market,
     sections,
     outstanding: sections.filter((section) => section.kind === 'needs-you').length

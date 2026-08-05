@@ -3,7 +3,10 @@ import { FIXTURE_MATERIALS } from './fixtures';
 import {
   allMaterials,
   ingredientById,
+  ingredientsWithRole,
+  isOfferable,
   materialById,
+  materialsOfClass,
   materialCitation,
   materialOrigin,
   materialsSettled,
@@ -182,5 +185,70 @@ describe('how a material describes whose fact it is', () => {
     });
     expect(origin).toMatch(/Batchlabel reference/i);
     expect(origin).not.toMatch(/example/i);
+  });
+});
+
+/**
+ * ARCHIVING: A LOOKUP ANSWERS, A LIST DOES NOT.
+ *
+ * The register promises "products already built on it keep working and keep naming it". The
+ * only way that is true is if the derivation's lookups still resolve an archived material
+ * while the pickers stop offering it — because the derivation reads by id off a stored
+ * composition, and a lookup miss contributes NOTHING, which is a live product losing its
+ * hazard statements. These two tests are the two halves of the promise.
+ */
+describe('an archived material', () => {
+  const archivedOil: IngredientMaterial = {
+    id: 'mat-archived-fig',
+    source: 'account',
+    archived: true,
+    name: 'Black Fig oil',
+    categories: ['home-fragrance'],
+    editable: true,
+    class: 'ingredient',
+    role: 'Fragrance oil',
+    hazards: [
+    {
+      code: 'H317',
+      statement: 'May cause an allergic skin reaction.',
+      hazardClass: 'Skin Sens. 1',
+      gcl: 1,
+      pictogram: 'GHS07',
+      signal: 'Warning'
+    }],
+
+    allergens: [],
+    ifra: []
+  };
+
+  const liveOil: IngredientMaterial = {
+    ...archivedOil,
+    id: 'mat-live-fig',
+    archived: false,
+    name: 'Sea Salt oil'
+  };
+
+  it('still resolves by id, so a product already built on it keeps its classification', () => {
+    publishMaterials('acct-1', [archivedOil, liveOil]);
+    expect(materialById('mat-archived-fig')).toBeDefined();
+    expect(ingredientById('mat-archived-fig')?.hazards.map((h) => h.code)).toEqual(['H317']);
+  });
+
+  it('is not offered by the role picker, which is the one thing archiving is for', () => {
+    publishMaterials('acct-1', [archivedOil, liveOil]);
+    expect(ingredientsWithRole('Fragrance oil').map((m) => m.id)).toEqual(['mat-live-fig']);
+  });
+
+  it('is not offered by the class picker either', () => {
+    publishMaterials('acct-1', [archivedOil, liveOil]);
+    expect(materialsOfClass('ingredient').map((m) => m.id)).toEqual(['mat-live-fig']);
+  });
+
+  it('and a material with no archived flag at all is offered — absent means live', () => {
+    const { archived: _archived, ...noFlag } = archivedOil;
+    void _archived;
+    publishMaterials('acct-1', [noFlag as IngredientMaterial]);
+    expect(ingredientsWithRole('Fragrance oil')).toHaveLength(1);
+    expect(isOfferable(noFlag as IngredientMaterial)).toBe(true);
   });
 });

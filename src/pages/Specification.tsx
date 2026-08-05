@@ -38,6 +38,7 @@ import { StageId, stagesFor } from '../lib/pipeline';
 import { SdsDocumentModel, buildSds } from '../lib/sds';
 import {
   ingredientById,
+  isOfferable,
   materialById,
   materialOrigin,
   packagingById } from
@@ -1087,6 +1088,14 @@ function MaterialSelect({
         {missing &&
       <option value={value}>{value} — no longer in your register</option>
       }
+        {/* THE CHOSEN MATERIAL, WHEN IT HAS BEEN ARCHIVED. `options` holds what may be
+            chosen and an archived material may not be — but this composition already names
+            it and the derivation still resolves it, so leaving it out would blank the
+            control and read as "nothing is selected" over a product that is classified.
+            Kept, marked, and left selectable so that saving does not silently drop it. */}
+        {chosen?.archived === true &&
+      <option value={chosen.id}>{chosen.name} — archived</option>
+      }
         {options.map((option) =>
       <option key={option.id} value={option.id}>
             {option.name}
@@ -1110,6 +1119,13 @@ function MaterialSelect({
       {settled && !missing && options.length === 0 &&
     <p className="mt-1 text-2xs text-ink-tertiary">
           {emptyHint} <Link to="/materials" className="underline">Add one in Materials</Link>.
+        </p>
+    }
+      {settled && chosen?.archived === true &&
+    <p className="mt-1 text-2xs text-clay-dark">
+          You have archived this material. It is still what this composition is classified
+          from and nothing about the label has changed — it is simply no longer offered for
+          new products.
         </p>
     }
       {settled && chosen &&
@@ -1158,14 +1174,21 @@ function MixtureEditor({
    * offers the standard roles as a list rather than a free field with no suggestions.
    */
   const { materials } = useMaterials();
+  // ARCHIVED MATERIALS ARE NOT OFFERED. They still resolve — see lib/material-index.ts — so a
+  // product already built on one keeps its classification; what archiving means is exactly
+  // that it stops appearing in a picker, and this is the picker.
   const ingredients = materials.filter(
-    (material): material is IngredientMaterial => material.class === 'ingredient'
+    (material): material is IngredientMaterial =>
+    material.class === 'ingredient' && isOfferable(material)
   );
   const bases = ingredients.filter((i) => i.role === 'Wax' || i.role === 'Carrier');
   const oils = ingredients.filter((i) => i.role === 'Fragrance oil');
   const dyes = ingredients.filter((i) => i.role === 'Dye');
   const packs = materials.filter(
-    (material) => material.class === 'packaging' && material.categories.includes('home-fragrance')
+    (material) =>
+    material.class === 'packaging' &&
+    material.categories.includes('home-fragrance') &&
+    isOfferable(material)
   );
   const fragrance = ingredientById(spec.fragranceId);
   const base = ingredientById(spec.baseId);
@@ -1415,10 +1438,15 @@ function PhasedEditor({
   const { materials } = useMaterials();
   const cosmeticIngredients = materials.filter(
     (material): material is IngredientMaterial =>
-    material.class === 'ingredient' && material.categories.includes('cosmetics')
+    material.class === 'ingredient' &&
+    material.categories.includes('cosmetics') &&
+    isOfferable(material)
   );
   const packs = materials.filter(
-    (material) => material.class === 'packaging' && material.categories.includes('cosmetics')
+    (material) =>
+    material.class === 'packaging' &&
+    material.categories.includes('cosmetics') &&
+    isOfferable(material)
   );
   const pack = packagingById(spec.packagingId);
 
@@ -1574,7 +1602,10 @@ function PhasedEditor({
 function BomEditor({ spec, onChange }: {spec: BomSpec;onChange: (next: BomSpec) => void;}) {
   const { materials } = useMaterials();
   const packs = materials.filter(
-    (material) => material.class === 'packaging' && material.categories.includes('electronics')
+    (material) =>
+    material.class === 'packaging' &&
+    material.categories.includes('electronics') &&
+    isOfferable(material)
   );
   const setItemMaterial = (index: number, materialId: string) =>
   onChange({

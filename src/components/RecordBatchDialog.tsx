@@ -350,7 +350,7 @@ function LotEditor({
  * half of that: recording a version is recording that the maker applied a version of THEIR
  * label, stamped with a fingerprint of what the composition was at that moment. The
  * fingerprint is real — `artefact_source_fingerprint` reads the composition, the pack, the
- * pinned materials and the printed business identity — and it is what later tells this version
+ * state of every material it names, and the printed business identity — and it is what later tells this version
  * apart from the one that replaced it.
  *
  * THE ABSENCE OF A VERSION IS SAID PLAINLY AND DOES NOT BLOCK THE SAVE. A batch recorded with

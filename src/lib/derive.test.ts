@@ -389,3 +389,111 @@ describe('a material carrying a hazard with no concentration limit', () => {
     expect(derivation.clp?.signalWord).toBeNull();
   });
 });
+
+/**
+ * THE SCENARIO THAT WAS RUN BEFORE ANY OF THIS WAS WRITTEN, NOW PRODUCING SOMETHING TRUE.
+ *
+ * A maker archives the fragrance oil a live candle is built on. Executed against the register
+ * as it was:
+ *
+ *     hazard statements before archiving: ["H317"]
+ *     hazard statements after archiving : []
+ *     signal word before / after        : Warning / null
+ *     unresolved slots named            : [{"slot":"Fragrance oil","id":"mat-fig"}]
+ *
+ * — under a toast that read "Products already built on it keep working and keep naming it".
+ * The register had dropped the row: `fetchMaterials` filtered `archived_at is null` and
+ * `resolved_materials` carries the same predicate, so the id resolved to nothing and a
+ * lookup miss contributes NOTHING to a derivation.
+ *
+ * This is the same scenario with the archived material still published — which is what
+ * lib/materials.ts now returns — and the assertion is that nothing about the classification
+ * moved.
+ */
+describe('a live product whose material has since been archived', () => {
+  afterEach(() => resetMaterials());
+
+  const oil = (archivedFlag: boolean): IngredientMaterial => ({
+    id: 'mat-fig',
+    source: 'account',
+    archived: archivedFlag,
+    name: 'Black Fig oil',
+    supplier: 'Aurelia Fragrances',
+    categories: ['home-fragrance'],
+    editable: true,
+    class: 'ingredient',
+    role: 'Fragrance oil',
+    hazards: [
+    {
+      code: 'H317',
+      statement: 'May cause an allergic skin reaction.',
+      hazardClass: 'Skin Sens. 1',
+      gcl: 1,
+      pictogram: 'GHS07',
+      signal: 'Warning'
+    }],
+
+    allergens: [{ name: 'linalool', pct: 3.1 }],
+    ifra: []
+  });
+
+  const wax: IngredientMaterial = {
+    id: 'mat-wax',
+    source: 'account',
+    name: 'Soy wax',
+    categories: ['home-fragrance'],
+    editable: true,
+    class: 'ingredient',
+    role: 'Wax',
+    hazards: [],
+    allergens: [],
+    ifra: []
+  };
+
+  const candle: MixtureSpec = {
+    kind: 'mixture',
+    productType: 'Container candle',
+    baseId: 'mat-wax',
+    fragranceId: 'mat-fig',
+    load: 8.5,
+    dyeId: '',
+    additive: '',
+    netQuantity: 200,
+    netUnit: 'g',
+    packagingId: ''
+  };
+
+  it('keeps every hazard statement it had', () => {
+    publishMaterials('acct-1', [oil(false), wax]);
+    const before = deriveMixture(candle);
+
+    publishMaterials('acct-1', [oil(true), wax]);
+    const after = deriveMixture(candle);
+
+    expect(before.clp?.hazards.map((h) => h.code)).toEqual(['H317']);
+    expect(after.clp?.hazards.map((h) => h.code)).toEqual(['H317']);
+  });
+
+  it('keeps its signal word and its pictogram', () => {
+    publishMaterials('acct-1', [oil(true), wax]);
+    const derivation = deriveMixture(candle);
+    expect(derivation.clp?.signalWord).toBe('Warning');
+    expect(derivation.clp?.pictograms).toContain('GHS07');
+  });
+
+  it('reports no unresolved material, because nothing is unresolved', () => {
+    publishMaterials('acct-1', [oil(true), wax]);
+    expect(deriveMixture(candle).unresolved).toEqual([]);
+  });
+
+  it('still names the material', () => {
+    publishMaterials('acct-1', [oil(true), wax]);
+    const derivation = deriveMixture(candle);
+    const cited = derivation.groups.
+    flatMap((group) => group.items).
+    flatMap((item) => item.why).
+    map((line) => `${line.lead} ${line.meta ?? ''}`).
+    join(' ');
+    expect(cited).toMatch(/Black Fig oil/);
+  });
+});
