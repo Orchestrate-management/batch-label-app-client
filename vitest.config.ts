@@ -154,6 +154,15 @@ export default defineConfig({
         // offering a Try again button against a fault no maker can affect, and the one person
         // who can fix it is never told.
         'src/lib/domain-schema.ts',
+        // The gate itself, added the day its sign-out was found to be able to fail silently.
+        // Third clause, and the sentence in question is the shortest one in the app: "you are
+        // signed out". `signOut()` dropped a rejection, so it could leave a maker signed in on
+        // whatever computer they were sitting at — a shared laptop, a library machine, a phone
+        // handed back — while the app showed them a splash screen and said nothing. The other
+        // half of this file decides whether anything renders at all without a session, which is
+        // the property the whole auth change exists for; both halves were carried by tests
+        // this list did not look at.
+        'src/lib/auth.tsx',
       ],
       thresholds: {
         lines: 70,
