@@ -70,7 +70,7 @@ describe('an app that is not connected to its database', () => {
       sku: 'CC-BFC-220',
       categoryId: 'home-fragrance',
       productType: 'Container candle'
-    });
+    }, 'acct-1111');
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -82,7 +82,7 @@ describe('an app that is not connected to its database', () => {
   });
 
   it('refuses a composition save the same way', async () => {
-    const result = await saveComposition(product, product.spec);
+    const result = await saveComposition(product, product.spec, 'acct-1111');
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('not_configured');

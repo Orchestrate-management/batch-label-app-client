@@ -70,6 +70,9 @@ function stateFor(row: Partial<EntitlementRow>): EntitlementValue {
     skuCount: 40,
     skuUnlimited: false,
     editorSeatLimit: 1,
+    seatsInUse: null,
+    callerRole: null,
+
     canModify: true,
     ...row
   };

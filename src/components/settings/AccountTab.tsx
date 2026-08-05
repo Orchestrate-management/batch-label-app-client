@@ -14,6 +14,7 @@ import {
   RequiredMark,
   SectionTitle } from
 '../ui/Primitives';
+import { useCan } from '../../lib/active-account';
 import { useAuth } from '../../lib/auth';
 import { useEntitlement } from '../../lib/entitlement';
 import {
@@ -786,12 +787,17 @@ const REQUEST_STATUS: Record<
  */
 function DangerZone() {
   const settings = useSettings();
+  // FILING A REQUEST AGAINST THE ACCOUNT IS THE OWNER'S, NOT AN EDIT. `account_data_requests`
+  // sits at `manage_account` in the matrix, and the survey measured a viewer successfully
+  // inserting an ERASURE request against somebody else's account before that placement existed.
+  const { can, reason } = useCan();
+  const mayRequest = can('manage_account');
   const [busy, setBusy] = useState<DataRequestKind | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [typed, setTyped] = useState('');
 
-  const ready = settings.status === 'ready';
+  const ready = settings.status === 'ready' && mayRequest;
   const openRequest = (kind: DataRequestKind) =>
   settings.requests.find(
     (request) =>
@@ -831,7 +837,17 @@ function DangerZone() {
           settings.status === 'error' ?
           settings.error ?? 'We could not read your account.' :
           'We are still reading your account.'}{' '}
-            Email privacy@batchlabel.co.uk and your request counts just the same.
+            Email hello@batchlabel.xyz and your request counts just the same.
+          </p>
+        </Callout>
+      }
+
+      {!mayRequest &&
+      <Callout tone="warn" title="This is the account owner's to ask for">
+          <p className="max-w-prose leading-relaxed">{reason('manage_account')}</p>
+          <p className="mt-2 max-w-prose leading-relaxed">
+            Your own personal data is a separate matter and is yours whatever your role here.
+            Email hello@batchlabel.xyz and we will deal with it.
           </p>
         </Callout>
       }

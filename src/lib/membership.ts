@@ -46,6 +46,7 @@
 
 import { supabase } from './supabase';
 import { BRAND_SLUG } from './brand';
+import { fetchAccountEntitlement } from './team';
 
 /**
  * - `active`         entitled, in good standing.
@@ -109,6 +110,18 @@ export interface EntitlementRow {
   skuUnlimited: boolean | null;
   editorSeatLimit: number | null;
   /**
+   * Editor seats the DATABASE counted as consumed: active members holding a seat-consuming role,
+   * plus live pending invites for one. Null on the entitlements view, which never carried it,
+   * and on any read that failed. Never zero as a stand-in for unknown, for the same reason
+   * `skuCount` is not.
+   */
+  seatsInUse: number | null;
+  /**
+   * The caller's own role in this account, from `public.account_entitlement`. Null on the
+   * entitlements view, which is keyed by ownership and has no notion of a role.
+   */
+  callerRole: string | null;
+  /**
    * Computed by the same function the enforcement trigger calls. Absent reads as null, and
    * null MUST fail open — see `mayModify`. A column that is not there must never become a
    * lockout.
@@ -150,6 +163,20 @@ export interface Entitlement {
    */
   skuCount: number | null;
   editorSeatLimit: number | null;
+  /**
+   * Editor seats in use, counted by the database over the same definition the seat trigger
+   * enforces. Null is UNKNOWN, and the team screen says so rather than printing a nought that
+   * would read as "nobody is here".
+   */
+  seatsInUse: number | null;
+  /**
+   * The caller's role in this account, as the database sees it.
+   *
+   * GATES DO NOT READ THIS. They read `useCan()`, whose role comes from `my_accounts()` and
+   * which carries the matrix alongside it. This copy exists so the team screen can show the
+   * role beside the seat count without a second source of truth appearing in a component.
+   */
+  role: string | null;
   /** Null = we could not read it. Read it through `mayModify`, never directly. */
   canModify: boolean | null;
   /** ISO timestamp. When the paid period ends, or when a cancellation takes effect. */
@@ -170,6 +197,8 @@ const UNREADABLE: Entitlement = {
   skuUnlimited: false,
   skuCount: null,
   editorSeatLimit: null,
+  seatsInUse: null,
+  role: null,
   canModify: null,
   currentPeriodEnd: null,
   cancelAtPeriodEnd: false,
@@ -208,7 +237,12 @@ export function readEntitlementRow(raw: unknown): EntitlementRow {
     membershipStatus: text(row.membership_status),
     businessName: text(row.business_name),
     plan: text(row.plan),
-    planStatus: text(row.status),
+    // TWO NAMES FOR ONE COLUMN, AND BOTH ARE READ ON PURPOSE. `public.entitlements` aliases the
+    // Stripe subscription status as `status`; `public.account_entitlement` returns it as
+    // `plan_status`, because that function also returns `membership_status` and one bare
+    // `status` between the two would be a coin toss. Reading both means this parser does not
+    // have to know which of the two sources it was handed.
+    planStatus: text(row.status) ?? text(row.plan_status),
     active: bool(row.active),
     currentPeriodEnd: text(row.current_period_end),
     cancelAtPeriodEnd: bool(row.cancel_at_period_end),
@@ -217,6 +251,8 @@ export function readEntitlementRow(raw: unknown): EntitlementRow {
     skuCount: count(row.sku_count),
     skuUnlimited: bool(row.sku_unlimited),
     editorSeatLimit: count(row.editor_seat_limit),
+    seatsInUse: count(row.seats_in_use),
+    callerRole: text(row.caller_role),
     canModify: bool(row.can_modify)
   };
 }
@@ -260,6 +296,8 @@ export function mapEntitlement(row: EntitlementRow | null, failed = false): Enti
     skuUnlimited: allowance.skuUnlimited,
     skuCount: row.skuCount,
     editorSeatLimit: row.editorSeatLimit,
+    seatsInUse: row.seatsInUse,
+    role: row.callerRole,
     canModify: row.canModify,
     currentPeriodEnd: row.currentPeriodEnd,
     cancelAtPeriodEnd: row.cancelAtPeriodEnd === true,
@@ -461,6 +499,39 @@ export async function fetchEntitlement(): Promise<EntitlementFetch> {
 
   if (error) return { row: null, failed: true };
   return { row: data ? readEntitlementRow(data) : null, failed: false };
+}
+
+/**
+ * The same shape, for ONE account, keyed by the account rather than by who owns it.
+ *
+ * THIS IS THE READ THAT MAKES SEATS WORK AT ALL. `public.entitlements` resolves its account by a
+ * lateral join on `owner_user_id`, so an active invited member selects zero rows from it and the
+ * app renders "your account is still being set up" at somebody who is sitting in a workspace
+ * they were invited into. Measured on a live chain before this change.
+ *
+ * `public.account_entitlement(uuid)` is keyed on the account and guarded by a trailing
+ * `is_member_of(p_account_id)`, so a stranger naming an account gets zero rows and a member gets
+ * the OWNER's allowance. Returning the owner's allowance to any member is right: the allowance
+ * belongs to the account and not to the person sitting in it.
+ *
+ * `missing` is kept apart from `failed` because a database that predates the function is an
+ * ordinary deploy ordering rather than a fault, and the caller falls back to the view for it.
+ */
+export interface AccountEntitlementFetch extends EntitlementFetch {
+  /** True when this database does not publish `public.account_entitlement` at all. */
+  missing: boolean;
+}
+
+export async function fetchEntitlementForAccount(
+accountId: string)
+: Promise<AccountEntitlementFetch> {
+  const result = await fetchAccountEntitlement(accountId);
+  if (!result.ok) return { row: null, failed: true, missing: result.missing };
+  return {
+    row: result.row ? readEntitlementRow(result.row) : null,
+    failed: false,
+    missing: false
+  };
 }
 
 /* --------------------------------------------------------------- presentation */

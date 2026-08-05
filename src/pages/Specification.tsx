@@ -17,6 +17,7 @@ import {
 '../components/ui/Primitives';
 import { DerivationPanel } from '../components/DerivationPanel';
 import { NoAccountNotice } from '../components/NoAccountNotice';
+import { ReadOnlyNotice } from '../components/ReadOnlyNotice';
 import { PlanNotice } from '../components/PlanNotice';
 import { ArtefactRail } from '../components/artefact/ArtefactRail';
 import { ArtefactRenderer, defaultArtefactOptions } from '../components/artefact/ArtefactRenderer';
@@ -44,6 +45,7 @@ import { useMaterials, useOptionalMaterials } from '../lib/materials-store';
 import { useOptionalSettings } from '../lib/settings-store';
 import { categoryById } from '../lib/categories';
 import { addressForMarket } from '../lib/identity';
+import { useCan } from '../lib/active-account';
 import { useEntitlement } from '../lib/entitlement';
 import { saveComposition } from '../lib/products';
 import { recordEvidence, recordSdsSectionReviewed } from '../lib/evidence';
@@ -150,6 +152,13 @@ function SpecificationView({ product }: {product: Product;}) {
   // For the record log only. A saved composition writes a line saying so, and the account it
   // is filed under comes from the entitlement, never from this screen. See lib/records.ts.
   const entitlement = useEntitlement();
+  // WHETHER THIS PERSON MAY CHANGE PRODUCT DATA AT ALL. Separate from `dirty` and from `saving`,
+  // which are about the form. A viewer's UPDATE is filtered to zero rows by the policy's `using`
+  // clause and comes back with no error, which this screen would otherwise have to report as
+  // "nothing was saved" with no reason attached.
+  const { can: mayDo, reason: whyNot } = useCan();
+  const mayWrite = mayDo('write_data');
+  const writeReason = whyNot('write_data');
 
   const [spec, setSpec] = useState<Spec>(product.spec);
   const [market, setMarket] = useState<Market>(product.markets[0]);
@@ -287,7 +296,12 @@ function SpecificationView({ product }: {product: Product;}) {
                   every keystroke and rendered in the rail, and there is no export yet. What
                   the button does now is the write that was actually missing — saving the
                   composition, so that a recipe survives a reload. */}
-              <Button variant="primary" onClick={save} disabled={!dirty || saving}>
+              <Button
+              variant="primary"
+              onClick={save}
+              disabled={!dirty || saving || !mayWrite}
+              title={mayWrite ? undefined : writeReason ?? undefined}>
+
                 <SaveIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
                 {saving ? 'Saving…' : 'Save composition'}
               </Button>
@@ -308,6 +322,7 @@ function SpecificationView({ product }: {product: Product;}) {
         <ProductPipeline stages={stages} activeId={stage} onSelect={setStage} />
 
         <div className="space-y-10 px-6 py-8 lg:px-10">
+          <ReadOnlyNotice capability="write_data" />
           {/* Two different failures and two different titles, because they are not the same
               news. A refused save changed nothing, so the reassurance below it is true. A
               PARTIAL save changed half of it — the recipe is stored against the old pack —
@@ -549,6 +564,7 @@ function SdsSummary({
   onRecorded
 }: {sds: SdsDocumentModel;product: Product;onRecorded: () => Promise<void>;}) {
   const entitlement = useEntitlement();
+  const mayWrite = useCan().can('write_data');
   const needsYou = sds.sections.filter((section) => section.kind === 'needs-you');
   const derived = sds.sections.filter((section) => section.kind === 'derived');
   const awaiting = needsYou.filter((section) => !(section.number in product.evidence.sdsSections));
@@ -672,7 +688,7 @@ function SdsSummary({
                       type="button"
                       size="sm"
                       variant="secondary"
-                      disabled={saving}
+                      disabled={saving || !mayWrite}
                       onClick={() => submit(section)}>
 
                           {saving ? 'Recording…' : 'Record review'}
@@ -821,6 +837,7 @@ function EvidenceForm({
   onCancel: () => void;
   onDone: () => Promise<void>;
 }) {
+  const mayWrite = useCan().can('write_data');
   const [summary, setSummary] = useState('');
   const [reference, setReference] = useState('');
   // Defaulted to today, and editable, because `occurred_at` is when the thing HAPPENED and a
@@ -883,7 +900,13 @@ function EvidenceForm({
         <Button type="button" size="sm" variant="quiet" disabled={saving} onClick={onCancel}>
           Cancel
         </Button>
-        <Button type="button" size="sm" variant="secondary" disabled={saving} onClick={submit}>
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          disabled={saving || !mayWrite}
+          onClick={submit}>
+
           {saving ? 'Recording…' : 'Record it'}
         </Button>
       </div>

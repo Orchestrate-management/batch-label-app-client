@@ -194,7 +194,7 @@ describe('when nothing can be recorded', () => {
     expect(screen.getByRole('button', { name: /Request a copy of my data/ })).toBeDisabled();
     expect(screen.getByRole('button', { name: /^Request erasure$/ })).toBeDisabled();
     // A disabled button with no alternative is a dead end on a right somebody has in law.
-    expect(screen.getByText(/privacy@batchlabel\.co\.uk/)).toBeInTheDocument();
+    expect(screen.getByText(/hello@batchlabel\.xyz/)).toBeInTheDocument();
   });
 
   it('says which of the reasons it is', async () => {

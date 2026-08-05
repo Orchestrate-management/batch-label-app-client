@@ -433,7 +433,7 @@ describe('recording a data export or erasure request', () => {
     db.state.writes.account_data_requests = { data: null, error: null };
     const result = await createDataRequest(ACCOUNT, 'export');
     expect(result.ok).toBe(false);
-    expect(result.ok === false && result.message).toMatch(/privacy@batchlabel\.co\.uk/);
+    expect(result.ok === false && result.message).toMatch(/hello@batchlabel\.xyz/);
   });
 
   it('reads an account with no requests as none, not as an error', async () => {

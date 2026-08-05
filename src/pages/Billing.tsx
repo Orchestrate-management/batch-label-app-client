@@ -12,6 +12,8 @@ import {
   readSkuCount } from
 '../lib/membership';
 import { metaInitiateCheckout } from '../lib/meta-pixel';
+import { useCan } from '../lib/active-account';
+import { ReadOnlyNotice } from '../components/ReadOnlyNotice';
 import {
   createCheckoutSession,
   createRailTestSession,
@@ -62,6 +64,7 @@ import {
  */
 export function Billing() {
   const entitlement = useEntitlement();
+  const mayBill = useCan().can('manage_billing');
   const catalogue = usePlanCatalogue();
 
   /**
@@ -118,7 +121,7 @@ export function Billing() {
   // this URL gets a 403 and nothing else. Hiding it just keeps a confusing card off the
   // page for the people it would only confuse.
   const [params] = useSearchParams();
-  const showRailTest = params.get('railtest') === '1';
+  const showRailTest = params.get('railtest') === '1' && mayBill;
   const [pending, setPending] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -147,6 +150,13 @@ export function Billing() {
 
 
       <div className="space-y-8 px-6 py-8 lg:px-10">
+        {/* THE ONE CAPABILITY WITH NO DATABASE BEHIND IT. `manage_billing` is enforced at the www
+            endpoints, which take the actor from a verified token; no table in this database is
+            gated on it. So on this screen the client-side gate is the only gate the app itself
+            can apply, and hiding the controls is the whole of what it can do. The endpoints are
+            still the authority. */}
+        <ReadOnlyNotice capability="manage_billing" title="The plan is the owner's to change" />
+
         {failure &&
         <Callout tone="warn" title="That did not go through">
             <p className="max-w-prose leading-relaxed">{failure}</p>
@@ -179,7 +189,7 @@ export function Billing() {
           skuCount={skuCount}
           countPending={countPending}
           portalPending={pending === 'portal'}
-          busy={pending !== null}
+          busy={pending !== null || !mayBill}
           onManage={() => run('portal', createPortalSession)} />
 
 
@@ -227,6 +237,7 @@ export function Billing() {
                ("Paying again will not switch it back on by itself"); this is the surface
                that used to contradict them. */
             purchasable={
+            mayBill &&
             !entitlement.active &&
             !entitlement.loading &&
             entitlement.status !== 'suspended' &&
@@ -527,12 +538,20 @@ function PlanLadder({
         </p>
       }
 
-      {/* R10, stated once rather than on every card. Editor seats are a real column on the
-          plan and on the account, and inviting an editor is not built, so they are reported
-          and not sold. */}
+      {/* R10, stated once rather than on every card. HALF OF THIS SENTENCE CHANGED AND HALF
+          DELIBERATELY DID NOT. What changed: the seat is now a real, enforced ceiling rather
+          than a number in a column, so saying it is "recorded" and stopping there understates
+          it. What did not change: the last clause. A customer still cannot get a second person
+          into their account, because nothing sends the invitation, and this paragraph sits
+          beside a PURCHASE button under a Terms clause that keys a refund to what a plan says
+          it includes. src/content/availability.ts on the marketing site carries the matching
+          row, and it is deliberately still there. When the invitation endpoint lands, that row
+          is deleted and this clause goes with it. */}
       <p className="max-w-prose text-2xs leading-relaxed text-ink-tertiary">
-        Editor seats are recorded on each plan and on your account. Inviting a second editor is
-        not built yet, so today every account is one person whatever the number says.
+        Editor seats are recorded on each plan and on your account, and the number is now a real
+        ceiling rather than a note: one editor too many is refused. Read-only members are free
+        and unlimited on every plan. What is not built is the invitation itself, so today every
+        account is still one person whatever the number says.
       </p>
     </div>);
 

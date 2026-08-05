@@ -41,6 +41,9 @@ function stateFor(row: Partial<EntitlementRow> | null, extra: Partial<Entitlemen
     skuCount: null,
     skuUnlimited: false,
     editorSeatLimit: 1,
+    seatsInUse: null,
+    callerRole: null,
+
     canModify: null,
     ...row
   };

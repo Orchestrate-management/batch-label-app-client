@@ -1,7 +1,9 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useAuth } from './auth';
+import { useOptionalActiveAccount } from './active-account';
 import {
   fetchEntitlement,
+  fetchEntitlementForAccount,
   mapEntitlement,
   UNRESOLVED_ENTITLEMENT,
   type Entitlement } from
@@ -59,8 +61,40 @@ export interface EntitlementValue extends Entitlement {
 
 const EntitlementContext = createContext<EntitlementValue | null>(null);
 
+/**
+ * One read, from whichever of the two sources this database actually has.
+ *
+ * Exported so a test can drive both halves without a provider tree. The fallback is on
+ * `missing` alone: a read that failed for any other reason is reported as a failure rather than
+ * retried against a second source, because asking a different question after the first one broke
+ * is how "we could not check your plan" turns into "you are on the free plan".
+ */
+export async function readEntitlement(accountId: string | null) {
+  if (accountId) {
+    const keyed = await fetchEntitlementForAccount(accountId);
+    if (!keyed.missing) return { row: keyed.row, failed: keyed.failed };
+  }
+  return fetchEntitlement();
+}
+
 export function EntitlementProvider({ children }: {children: React.ReactNode;}) {
   const { user } = useAuth();
+  /**
+   * WHICH ACCOUNT THIS IS AN ENTITLEMENT FOR, WHICH IS NO LONGER "whichever one they own".
+   *
+   * The read is keyed on the ACTIVE account now, because `public.entitlements` resolves its
+   * account through `owner_user_id` and therefore returns nothing at all for an invited member.
+   * `public.account_entitlement(account_id)` is keyed on the account instead, and hands any
+   * member the account's allowance plus their own role in it.
+   *
+   * OPTIONAL, DELIBERATELY. Several tests mount this provider on its own, and the whole app
+   * behaved correctly against the view for as long as every account was one person. With no
+   * provider above, and on a database that predates `my_accounts`, this falls straight back to
+   * the view and nothing changes.
+   */
+  const active = useOptionalActiveAccount();
+  const activeStatus = active?.status ?? 'legacy';
+  const activeAccountId = active?.accountId ?? null;
   /**
    * The entitlement AND the user it was read for, held together and never apart.
    *
@@ -108,13 +142,35 @@ export function EntitlementProvider({ children }: {children: React.ReactNode;}) 
       setCountStale(false);
       return;
     }
+    // Nothing to ask yet. The account list has not landed, so a read fired here would either be
+    // unscoped or scoped to the wrong account, and both are worse than one more frame of the
+    // skeleton every screen already draws.
+    if (activeStatus === 'loading') return;
+
+    // The account list came back holding nothing this person is a member of, or holding more
+    // than one with none chosen. Neither is a state to ask the database about: there is no
+    // account to name. `mapEntitlement(null)` is `no_membership`, which every screen already
+    // knows how to say, and the chooser in App.tsx is what a person actually sees for the
+    // second case.
+    if (activeStatus === 'none' || activeStatus === 'choose') {
+      setRead({ userId, entitlement: mapEntitlement(null) });
+      setCountStale(false);
+      return;
+    }
+
     let active = true;
     // No reset to null here: a refresh revalidates in the background and keeps
     // showing the answer we already have, so a manual retry does not blank the
     // screen someone is working on. That is safe precisely because the identity
     // check below is on the value rather than in this effect — a re-read for the
     // SAME user keeps the old row, a change of user does not.
-    fetchEntitlement().then(({ row, failed }) => {
+    //
+    // TWO SOURCES AND ONE FALLBACK. With an active account resolved, the read is
+    // `account_entitlement(id)`, which answers for members as well as owners. Where that
+    // function does not exist — a database that stops before 20260805120000, which is the
+    // ordinary state of an environment the day this app deploys ahead of its migrations — the
+    // view still answers for the owner, which is who every account held before roles existed.
+    void readEntitlement(activeAccountId).then(({ row, failed }) => {
       if (!active) return;
       setRead({ userId, entitlement: mapEntitlement(row, failed) });
       // This read started at or after the note that set the flag — an earlier one in flight has
@@ -127,7 +183,7 @@ export function EntitlementProvider({ children }: {children: React.ReactNode;}) 
     return () => {
       active = false;
     };
-  }, [userId, attempt]);
+  }, [userId, attempt, activeStatus, activeAccountId]);
 
   const refresh = useCallback(() => setAttempt((value) => value + 1), []);
 

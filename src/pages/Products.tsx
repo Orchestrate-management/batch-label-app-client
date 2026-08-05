@@ -4,10 +4,12 @@ import { PackageIcon, PlusIcon, RefreshCwIcon } from 'lucide-react';
 import { PageHeader } from '../components/AppShell';
 import { Button, Callout, Card, EmptyState, Pill, SectionTitle, Skeleton } from '../components/ui/Primitives';
 import { NewProductDialog } from '../components/NewProductDialog';
+import { ReadOnlyNotice } from '../components/ReadOnlyNotice';
 import { NoAccountNotice } from '../components/NoAccountNotice';
 import { PlanNotice } from '../components/PlanNotice';
 import { SkuLimitNotice } from '../components/SkuLimitNotice';
 import { CATEGORIES } from '../lib/categories';
+import { useCan } from '../lib/active-account';
 import { useEntitlement } from '../lib/entitlement';
 import { createIsCertainToFail } from '../lib/membership';
 import { derive, specSummary } from '../lib/derive';
@@ -32,6 +34,7 @@ export function Products() {
   const navigate = useNavigate();
   const { status, products, error, refresh } = useProducts();
   const entitlement = useEntitlement();
+  const { can } = useCan();
   /**
    * SUBSCRIBED TO FOR THE SAME REASON STUDIO IS, and it became load-bearing here the moment the
    * Status column started reading the pipeline. `queueFor` and `derive` reach the materials
@@ -52,7 +55,8 @@ export function Products() {
   // established to fail, so a form here would take four fields in order to be refused. NOT a
   // failed entitlement read, where the database resolves the account itself and the create
   // would have worked. The whole argument is on `createIsCertainToFail`.
-  const offerCreate = !createIsCertainToFail(entitlement);
+  // The permission half of the same question. See the note on Studio's copy of this line.
+  const offerCreate = !createIsCertainToFail(entitlement) && can('write_data');
 
   // A category only gets a section once it holds something, so a brand new account gets the
   // empty state rather than a heading over nothing.
@@ -79,6 +83,7 @@ export function Products() {
       {creating && <NewProductDialog onClose={() => setCreating(false)} />}
 
       <div className="space-y-10 px-6 py-8 lg:px-10">
+        <ReadOnlyNotice capability="write_data" />
         <SkuLimitNotice />
 
         {/* Instead of the list and instead of the empty state, never alongside them. `states`

@@ -98,6 +98,9 @@ function stateFor(
     skuCount: 12,
     skuUnlimited: false,
     editorSeatLimit: 1,
+    seatsInUse: null,
+    callerRole: null,
+
     canModify: null,
     ...row
   };

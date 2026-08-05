@@ -38,7 +38,9 @@ const db = vi.hoisted(() => {
     deleted: [] as Array<[string, unknown]>,
     /** Which Postgres schema each call went through. `batchlabel`, never `public`. */
     schemas: [] as string[],
-    filters: [] as Array<[string, string, unknown]>
+    filters: [] as Array<[string, string, unknown]>,
+    /** Every `.eq()` an UPDATE or DELETE sent, by table. See the copy in products.test.ts. */
+    writeFilters: [] as Array<[string, string, unknown]>
   };
 
   const read = (table: string) => state.reads[table] ?? { data: [], error: null };
@@ -87,22 +89,47 @@ const db = vi.hoisted(() => {
           });
           return q;
         },
-        update: (payload: Record<string, unknown>) => ({
-          eq: (_column: string, _value: unknown) => {
-            state.updatePayloads.push([table, payload]);
-            return Object.assign(Promise.resolve(state.updateResult), {
-              select: () => Promise.resolve(state.updateResult)
-            });
-          }
-        }),
-        delete: () => ({
-          eq: (_column: string, value: unknown) => {
-            state.deleted.push([table, value]);
-            return Object.assign(Promise.resolve(state.deleteResult), {
-              select: () => Promise.resolve(state.deleteResult)
-            });
-          }
-        })
+        // Chainable: every UPDATE and DELETE carries the account filter as well as the row id.
+        update: (payload: Record<string, unknown>) => {
+          let recorded = false;
+          const settle = () => {
+            if (!recorded) {
+              state.updatePayloads.push([table, payload]);
+              recorded = true;
+            }
+            return state.updateResult;
+          };
+          const q: Record<string, unknown> = {};
+          Object.assign(q, {
+            eq: (column: string, value: unknown) => {
+              state.writeFilters.push([table, column, value]);
+              return q;
+            },
+            select: () => Promise.resolve(settle()),
+            then: (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+            Promise.resolve(settle()).then(resolve, reject)
+          });
+          return q;
+        },
+        delete: () => {
+          const filters: Array<[string, unknown]> = [];
+          const settle = () => {
+            state.deleted.push([table, filters.find(([column]) => column === 'id')?.[1]]);
+            return state.deleteResult;
+          };
+          const q: Record<string, unknown> = {};
+          Object.assign(q, {
+            eq: (column: string, value: unknown) => {
+              filters.push([column, value]);
+              state.writeFilters.push([table, column, value]);
+              return q;
+            },
+            select: () => Promise.resolve(settle()),
+            then: (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+            Promise.resolve(settle()).then(resolve, reject)
+          });
+          return q;
+        }
       };
     }
   };
@@ -671,12 +698,19 @@ describe('creating a material', () => {
     expect(db.state.inserts[0][1].account_id).toBe('acct-1');
   });
 
-  it('omits the account id when the entitlement resolved none, letting the default decide', async () => {
-    await createMaterial(
+  it('refuses and sends nothing when the entitlement resolved no account', async () => {
+    // THE REVERSE OF WHAT THIS USED TO ASSERT. The column was omitted so that
+    // `public.current_account_id()` could decide, which is correct only while nobody is in two
+    // accounts: that function returns NULL for anybody in two and will not be taught to
+    // disambiguate. The omission was therefore a silent failure waiting for the first invited
+    // member, and a refusal made here is the loud version of the same fact.
+    const result = await createMaterial(
       { materialClass: 'ingredient', name: 'My wax', categories: ['home-fragrance'] },
       null
     );
-    expect(db.state.inserts[0][1]).not.toHaveProperty('account_id');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('no_account');
+    expect(db.state.inserts).toEqual([]);
   });
 
   it('nulls packaging geometry on an ingredient rather than letting the CHECK refuse it', async () => {
@@ -809,7 +843,7 @@ describe('a write that reached no row', () => {
       materialClass: 'ingredient',
       name: 'My wax',
       categories: []
-    });
+    }, 'acct-1');
     if (result.ok) throw new Error('expected a refusal');
     expect(result.reason).toBe('reached_nothing');
     expect(result.message).toMatch(/nothing was saved/i);
@@ -818,20 +852,20 @@ describe('a write that reached no row', () => {
 
   it('reports an archive that matched nothing the same way', async () => {
     db.state.updateResult = { data: [], error: null };
-    const result = await archiveMaterial('mat-1');
+    const result = await archiveMaterial('mat-1', 'acct-1');
     if (result.ok) throw new Error('expected a refusal');
     expect(result.reason).toBe('reached_nothing');
   });
 
   it('reports a child-row delete that matched nothing the same way', async () => {
     db.state.deleteResult = { data: [], error: null };
-    const result = await removeChildRow('material_hazards', 'haz-1');
+    const result = await removeChildRow('material_hazards', 'haz-1', 'acct-1');
     if (result.ok) throw new Error('expected a refusal');
     expect(result.reason).toBe('reached_nothing');
   });
 
   it('archives rather than deletes, so a product built on the material keeps working', async () => {
-    await archiveMaterial('mat-1');
+    await archiveMaterial('mat-1', 'acct-1');
     expect(db.state.deleted).toEqual([]);
     expect(db.state.updatePayloads[0][0]).toBe('materials');
     expect(db.state.updatePayloads[0][1]).toHaveProperty('archived_at');
@@ -845,7 +879,7 @@ describe('a write that reached no row', () => {
       name: 'My wax',
       categories: [],
       overridesReferenceId: 'ref-2'
-    });
+    }, 'acct-1');
     expect(db.state.updatePayloads[0][1]).not.toHaveProperty('overrides_reference_id');
   });
 });
@@ -974,7 +1008,7 @@ describe('an answer with nothing in it', () => {
       materialClass: 'ingredient',
       name: 'Renamed',
       categories: ['home-fragrance']
-    });
+    }, 'acct-1');
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.reason).toBe('reached_nothing');
@@ -984,7 +1018,7 @@ describe('an answer with nothing in it', () => {
 
   it('reports an archive that reached no row the same way', async () => {
     db.state.updateResult = { data: [], error: null };
-    const result = await archiveMaterial('mat-1');
+    const result = await archiveMaterial('mat-1', 'acct-1');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('reached_nothing');
   });
@@ -998,7 +1032,7 @@ describe('an answer with nothing in it', () => {
       name: 'Renamed',
       categories: ['home-fragrance'],
       overridesReferenceId: 'ref-99'
-    });
+    }, 'acct-1');
     const [[, payload]] = db.state.updatePayloads.filter(([table]) => table === 'materials');
     expect(payload).not.toHaveProperty('overrides_reference_id');
     expect(payload.name).toBe('Renamed');

@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { NavLink, useParams } from 'react-router-dom';
 import { PageHeader } from '../components/AppShell';
 import { AccountTab } from '../components/settings/AccountTab';
+import { ReadOnlyNotice } from '../components/ReadOnlyNotice';
+import { TeamTab } from '../components/settings/TeamTab';
 import {
   Button,
   Callout,
@@ -15,8 +17,8 @@ import {
   Skeleton } from
 '../components/ui/Primitives';
 import { ARTEFACT_LABELS, STOCK } from '../lib/categories';
-import { ADDRESS_BLOCKS, COMPETENT_PERSON, type PrintedMarket } from '../lib/identity';
-import { useAuth } from '../lib/auth';
+import { ADDRESS_BLOCKS, type PrintedMarket } from '../lib/identity';
+import { useCan } from '../lib/active-account';
 import { useEntitlement } from '../lib/entitlement';
 import { readSkuCount, skuCountBeside } from '../lib/membership';
 import { useProducts } from '../lib/product-store';
@@ -43,7 +45,7 @@ const TABS = [
   label: 'Team',
   title: 'Team and review',
   description:
-  'Who can work in this workspace, and who signs off a safety data sheet before it is issued. One account, one person, for now.'
+  'Who can work in this workspace and what each of them may change, the seats your plan allows, and who signs off a safety data sheet before it is issued.'
 },
 {
   id: 'account',
@@ -192,6 +194,13 @@ function IdentityTab() {
   return (
     <>
       <PrintedScope />
+      {/* WHAT PRINTS AS THE BUSINESS IS AN ADMIN'S TO CHANGE, NOT AN EDITOR'S, and that is the
+          sharpest of the three capability placements the matrix makes. Before roles were
+          enforced, a member with role 'viewer' could rewrite `business_identity.registered_name`
+          — the legally responsible business named on every label the account produces — and the
+          survey measured it doing exactly that. These tables sit at `manage_identity` rather
+          than at `write_data` for that reason. */}
+      <ReadOnlyNotice capability="manage_identity" title="This is not yours to change" />
       {settings.status === 'ready' ?
       <>
           <IdentityGaps settings={settings} />
@@ -293,6 +302,7 @@ const EMPTY_IDENTITY: BusinessIdentityInput = {
 
 /** The supplier block, editable, saved, and read back from the row that was written. */
 function IdentityForm({ settings }: {settings: SettingsValue;}) {
+  const mayEdit = useCan().can('manage_identity');
   const [form, setForm] = useState<BusinessIdentityInput>(() =>
   settings.identity ?
   {
@@ -418,7 +428,7 @@ function IdentityForm({ settings }: {settings: SettingsValue;}) {
             </FormStatus>
           }
 
-          <Button type="submit" variant="primary" disabled={busy}>
+          <Button type="submit" variant="primary" disabled={busy || !mayEdit}>
             {busy ? 'Saving…' : 'Save supplier block'}
           </Button>
         </form>
@@ -462,6 +472,7 @@ function AddressBlock({
 
 
 }: {market: PrintedMarket;settings: SettingsValue;stored: {lines: string[];} | null;}) {
+  const mayEdit = useCan().can('manage_identity');
   const block = ADDRESS_BLOCKS[market];
   const [text, setText] = useState(() => (stored ? stored.lines.join('\n') : ''));
   const [busy, setBusy] = useState(false);
@@ -536,7 +547,7 @@ function AddressBlock({
         {error && <FormError>{error}</FormError>}
         {saved && <FormStatus>Saved. This block is what {block.label} labels now print.</FormStatus>}
 
-        <Button type="submit" variant="secondary" disabled={busy}>
+        <Button type="submit" variant="secondary" disabled={busy || !mayEdit}>
           {busy ? 'Saving…' : stored ? 'Save changes' : 'Save this block'}
         </Button>
       </form>
@@ -569,88 +580,6 @@ function RegulatorySection({ settings }: {settings: SettingsValue;}) {
         }
       </Card>
     </section>);
-
-}
-
-/* ------------------------------------------------------------------ team */
-
-/**
- * Who is in this workspace — WHICH IS EXACTLY ONE PERSON, AND THE SCHEMA MEANS IT.
- *
- * This tab used to list Nadia Osei, Tom Rivers and Priya Shah with roles and "last active"
- * times, an Invite button that raised "Invitation sent", and a Remove button behind a
- * confirmation dialog that removed nobody. None of the three existed, no invitation was sent,
- * and a maker who "removed" somebody was told they no longer had access to a workspace they
- * had never had access to.
- *
- * account_members is still READ ONLY to the browser and `account_invitations` was named as
- * deferred when the domain schema was built. That is not an oversight to work around — a
- * client that could insert an account_members row could hand itself, or somebody else, another
- * account's data. So this tab shows the one real member, from the session, and says what is
- * coming without pretending any of it is here.
- */
-function TeamTab() {
-  const { user } = useAuth();
-  const entitlement = useEntitlement();
-
-  return (
-    <>
-      <section aria-labelledby="competent-heading">
-        <SectionTitle className="mb-1">
-          <span id="competent-heading">Competent person</span>
-        </SectionTitle>
-        <p className="mb-3 max-w-prose text-2xs leading-relaxed text-ink-tertiary">
-          Every safety data sheet is produced as a draft. This is who reviews and signs it.
-        </p>
-        <Card className="px-5 py-5">
-          <p className="text-sm font-medium text-ink-tertiary">{COMPETENT_PERSON.name}</p>
-          {/* THE SECOND SENTENCE USED TO READ "so no sheet has been reviewed or signed", AND
-              THAT IS NOW FALSE ON THE NEXT SCREEN ALONG. A maker can record a section of a
-              safety data sheet as reviewed from the specification screen — it writes a
-              `compliance.sds_section_reviewed` line to their log — so this tab would have been
-              denying, in the app's own voice, something the app itself had recorded. Two
-              screens contradicting each other about a compliance fact is the exact failure this
-              work exists to remove, and it arrived from two branches being written in
-              parallel. What is still true, and all this card may now claim, is that no reviewer
-              is NAMED (there is no `competent_persons` table) and that Batchlabel signs
-              nothing. */}
-          <p className="mt-3 max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
-            Naming a reviewer is not built yet — there is no table for it — so nothing here
-            attaches a person to a sheet. You can record a section as reviewed against a product,
-            and that entry goes to your records log under your own account. Batchlabel assembles
-            the document and shows its working; it never checks the wording, never signs on
-            anybody's behalf, and will not tell you a sheet has been reviewed when it has not.
-          </p>
-        </Card>
-      </section>
-
-      <section aria-labelledby="team-heading">
-        <SectionTitle className="mb-1">
-          <span id="team-heading">Members</span>
-        </SectionTitle>
-        <p className="mb-3 max-w-prose text-2xs leading-relaxed text-ink-tertiary">
-          One account, one person, for now.
-        </p>
-        <Card className="divide-y divide-paper-line">
-          <div className="flex flex-wrap items-center gap-4 px-5 py-4">
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-ink">
-                {entitlement.businessName ?? 'This account'}
-              </p>
-              <p className="text-2xs text-ink-tertiary">{user?.email ?? 'Signed in'}</p>
-            </div>
-            <Pill tone="neutral">Owner</Pill>
-          </div>
-        </Card>
-        <Callout className="mt-4" title="Inviting people is not built yet">
-          <p className="max-w-prose leading-relaxed">
-            Your account is already the thing your products belong to rather than your login,
-            which is the part that had to be right first — so adding a colleague later is an
-            invitation and a seat count, not a rebuild. There is nothing to switch on today.
-          </p>
-        </Callout>
-      </section>
-    </>);
 
 }
 

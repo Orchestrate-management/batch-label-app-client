@@ -8,6 +8,7 @@ import {
 'lucide-react';
 import { PageHeader } from '../components/AppShell';
 import { NoAccountNotice } from '../components/NoAccountNotice';
+import { ReadOnlyNotice } from '../components/ReadOnlyNotice';
 import { PlanNotice } from '../components/PlanNotice';
 import { RecordBatchDialog } from '../components/RecordBatchDialog';
 import {
@@ -26,6 +27,7 @@ import {
 import { ARTEFACT_LABELS } from '../lib/categories';
 import { useEntitlement } from '../lib/entitlement';
 import { Product } from '../lib/model';
+import { useCan } from '../lib/active-account';
 import { useProducts } from '../lib/product-store';
 import {
   EVENT_GROUP,
@@ -79,6 +81,10 @@ export function Records() {
   const { recordCode } = useParams();
   const entitlement = useEntitlement();
   const { products, status: productsStatus } = useProducts();
+  // Everything this screen writes is APPEND-ONLY: the browser holds no UPDATE and no DELETE on
+  // record_events, so a line written by somebody who should not have written it is a line nobody
+  // can take back. That is why the gate is here and not only in the dialog.
+  const mayWrite = useCan().can('write_data');
 
   const [group, setGroup] = useState<RecordEventGroup | 'all'>('all');
   const [productId, setProductId] = useState('');
@@ -111,7 +117,7 @@ export function Records() {
         title="Records"
         description="Everything Batchlabel has recorded, newest first: what you made, which lots went into it, and which label version went on it. Nothing here can be edited or deleted once it is written — a mistake is corrected by adding another entry."
         actions={
-        log.status === 'ready' ?
+        log.status === 'ready' && mayWrite ?
         <>
               <Button variant="secondary" onClick={() => setNoting((open) => !open)}>
                 Add a note
@@ -137,6 +143,8 @@ export function Records() {
       <div className="space-y-8 px-6 py-8 lg:px-10">
         {log.status === 'unavailable' && <PlanNotice states={['suspended']} />}
         {log.status === 'no-account' && <NoAccountNotice />}
+
+        <ReadOnlyNotice capability="write_data" />
 
         {log.status === 'error' &&
         <Callout tone="warn" role="alert" title="We could not read your records">

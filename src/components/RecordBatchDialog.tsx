@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { PlusIcon, XIcon } from 'lucide-react';
+import { useCan } from '../lib/active-account';
 import { ARTEFACT_LABELS } from '../lib/categories';
 import { ArtefactType, formatDate, Product } from '../lib/model';
 import {
@@ -49,6 +50,11 @@ export function RecordBatchDialog({
 
 
 }: {products: Product[];accountId: string | null;onClose: () => void;onRecorded: () => void;}) {
+  // Whether this person may write product data at all. A viewer reaching this dialog would be
+  // refused by the INSERT policy on record_events, and refused with a bare 42501 that says
+  // nothing, so the answer is given before the form is filled in rather than after.
+  const { can, reason } = useCan();
+  const mayWrite = can('write_data');
   const [productId, setProductId] = useState(products[0]?.id ?? '');
   const [batchCode, setBatchCode] = useState('');
   const [madeOn, setMadeOn] = useState(() => todayValue());
@@ -95,8 +101,23 @@ export function RecordBatchDialog({
     setSaving(true);
     setFailure(null);
 
+    // ACCOUNT OR NOTHING. This used to send `accountId ?? ''`, and the empty string reached
+    // Postgres as a uuid parameter and came back 22P02 on an APPEND-ONLY table. The button below
+    // is disabled without an account now, which is the real fix; this is the backstop that makes
+    // the type honest rather than the guard.
+    if (!accountId) {
+      setSaving(false);
+      setFailure({
+        reason: 'no_account',
+        message:
+        'We have not worked out which workspace this belongs to, so nothing was sent and ' +
+        'nothing has been recorded. Reload the page and try again.'
+      });
+      return;
+    }
+
     const result = await recordBatchProduced({
-      accountId: accountId ?? '',
+      accountId,
       productId: product.id,
       productName: product.name,
       batchCode: code,
@@ -226,6 +247,7 @@ export function RecordBatchDialog({
           </p>
         </Callout>
 
+        {!mayWrite && <FormError>{reason('write_data')}</FormError>}
         {invalid && <FormError>{invalid}</FormError>}
         {failure && <FormError>{failure.message}</FormError>}
 
@@ -233,7 +255,10 @@ export function RecordBatchDialog({
           <Button type="button" variant="quiet" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" disabled={!batchCode.trim() || saving}>
+          <Button
+            type="submit"
+            variant="primary"
+            disabled={!batchCode.trim() || saving || !accountId || !mayWrite}>
             {saving ? 'Recording…' : 'Record this batch'}
           </Button>
         </div>

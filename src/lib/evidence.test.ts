@@ -237,11 +237,21 @@ describe('recording evidence against an obligation', () => {
     }
   });
 
-  it('omits the account id when the entitlement has not resolved one', async () => {
-    // Supplied, the INSERT policy checks it; omitted, current_account_id() decides. Sending a
-    // null would be neither.
-    await recordEvidence({ accountId: null, product, obligationId: 'clp-pcn-gb', summary: 'Done.' });
-    expect(db.state.inserts[0][1]).not.toHaveProperty('account_id');
+  it('refuses and writes nothing when the entitlement has not resolved an account', async () => {
+    // THE REVERSE OF WHAT THIS USED TO ASSERT, and this table is where it matters most. The
+    // record log is append-only: `authenticated` holds SELECT and INSERT and nothing more, and a
+    // trigger refuses an UPDATE or a DELETE from any session carrying a JWT. So a line filed
+    // against the wrong account cannot be moved or removed by anybody, which is why the account
+    // is required here rather than left to `current_account_id()` to guess at.
+    const result = await recordEvidence({
+      accountId: null,
+      product,
+      obligationId: 'clp-pcn-gb',
+      summary: 'Done.'
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('no_account');
+    expect(db.state.inserts).toEqual([]);
   });
 
   it('goes through the batchlabel schema, never public', async () => {
