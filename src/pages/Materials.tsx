@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeftIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 import { toast } from 'sonner';
@@ -26,8 +26,10 @@ import {
   archiveMaterial,
   createMaterial,
   overrideReferenceMaterial,
+  productsUsingMaterial,
   removeChildRow } from
 '../lib/materials';
+import type { MaterialUsage } from '../lib/materials';
 import { useMaterials } from '../lib/materials-store';
 import {
   DocumentKind,
@@ -56,10 +58,25 @@ import {
  *
  * THE OVERRIDE RULE IS ON THE SCREEN, not just in the database. Rhys's ruling asked for the
  * hybrid and for a written answer to two questions: which wins when both exist, and what
- * happens to a maker who has built products on a shared row when we later update it. The
- * answers are "yours, unconditionally" and "nothing, because a published reference version
- * cannot be updated — a correction is a new version". Both are stated in `OverrideRule` below,
- * in the place the maker is standing when the question occurs to them.
+ * happens to a maker who has built products on a shared row when we later update it. Both are
+ * stated in `OverrideRule` below, in the place the maker is standing when the question occurs
+ * to them.
+ *
+ * THE SECOND ANSWER USED TO OVERSTATE WHAT IS BUILT, and the correction is worth keeping
+ * visible. It said "a product classified from the old one stays classified from the old one
+ * until you move it yourself" — which describes pinning, and nothing pins. Nothing in either
+ * repository has ever written a `specification_material_pins` row, `resolved_materials` hands
+ * the app the LATEST published version of a reference material, and the derivation follows it.
+ * What is actually true, and what the callout now says, is: a published version can never be
+ * changed or removed (a trigger, not a habit); Batchlabel publishes no reference materials at
+ * all today; and if we ever publish a correction, products follow it and every recorded label
+ * print is marked as no longer matching — because
+ * `batchlabel.artefact_source_fingerprint` now covers the state of every material a
+ * composition names. Being told is a weaker promise than being frozen, and it is the one this
+ * software can keep.
+ *
+ * ARCHIVING KEEPS PRODUCTS WORKING, AND NOW ACTUALLY DOES. See `ArchiveDialog` and the
+ * comments in lib/materials.ts.
  *
  * WHAT IS STILL HONESTLY MISSING, and says so where it would otherwise be assumed:
  *   - No file can be uploaded. There is no storage bucket; `material_documents.storage_path`
@@ -83,10 +100,12 @@ function OverrideRule({ compact = false }: {compact?: boolean;}) {
       </p>
       {!compact &&
       <p className="mt-2 max-w-prose leading-relaxed">
-          And we cannot move a shared material under you. Once a version of one of ours is
-          published it can never be changed or removed, by us or by anybody — a correction is a
-          new version, and a product classified from the old one stays classified from the old
-          one until you move it yourself.
+          Once a version of one of ours is published it can never be changed or removed, by us
+          or by anybody — a correction is a new version. Batchlabel publishes no reference
+          materials at all yet, so nothing you hold is classified from ours today. If that ever
+          changes and we publish a correction, your products are not frozen on the old version:
+          they follow the newest one, and every label print you have recorded is marked as no
+          longer matching so you are told rather than moved quietly.
         </p>
       }
     </Callout>);
@@ -113,13 +132,25 @@ export function Materials() {
     if (status === 'ready') return <MaterialNotFound materialClass={activeClass} />;
   }
 
-  const items = materials.filter((material) => material.class === activeClass);
+  // THE REGISTER IS THE LIVE MATERIALS. Archived ones are read now — they have to be, because
+  // a live product is still classified from them — so this screen is where they are taken back
+  // out. They get their own section below rather than disappearing, because a maker who
+  // archived something last month and wants to look at what a product uses has nowhere else to
+  // go, and "that material is not in your register" would be false about a material a label is
+  // being printed from.
+  const forClass = materials.filter((material) => material.class === activeClass);
+  const items = forClass.filter((material) => !material.archived);
+  const archived = forClass.filter((material) => material.archived === true);
   const own = items.filter((material) => material.source === 'account');
   const definition = MATERIAL_CLASSES.find((entry) => entry.id === activeClass) ?? MATERIAL_CLASSES[0];
 
   const counts: Record<MaterialClass, number> = {
-    ingredient: materials.filter((material) => material.class === 'ingredient').length,
-    packaging: materials.filter((material) => material.class === 'packaging').length
+    ingredient: materials.filter(
+      (material) => material.class === 'ingredient' && !material.archived
+    ).length,
+    packaging: materials.filter(
+      (material) => material.class === 'packaging' && !material.archived
+    ).length
   };
 
   return (
@@ -257,6 +288,30 @@ export function Materials() {
               'Batchlabel publishes no reference materials yet — we would rather ship none than ship figures we made up.' :
               `${items.length - own.length} come from Batchlabel's reference catalogue, and you can hold your own version of any of them.`}
               </p>
+
+              {archived.length > 0 &&
+            <section aria-label="Archived materials" className="space-y-2 pt-2">
+                  <SectionTitle>Archived</SectionTitle>
+                  <p className="max-w-prose text-2xs leading-relaxed text-ink-tertiary">
+                    Not offered when you build a product, and still in use by every product that
+                    already names one. Their classification is unchanged and the labels derived
+                    from them are unchanged — this list is here so you can still open one.
+                  </p>
+                  <ul className="space-y-1">
+                    {archived.map((material) =>
+                <li key={material.id}>
+                        <button
+                    type="button"
+                    className="text-sm text-ink-secondary underline hover:text-ink"
+                    onClick={() => navigate(`/materials/${material.class}/${material.id}`)}>
+
+                          {material.name}
+                        </button>
+                      </li>
+                )}
+                  </ul>
+                </section>
+            }
             </section>
           </>
         }
@@ -272,7 +327,7 @@ function MaterialNotFound({ materialClass }: {materialClass: MaterialClass;}) {
       <div className="px-6 py-8 lg:px-10">
         <EmptyState
           title="That material is not in your register"
-          body="It may have been archived, or the link may be out of date. Archiving keeps every product that used a material working — the material simply stops appearing in pickers and here."
+          body="The link may be out of date, or the material may belong to another account. It has not been archived — an archived material is still shown here, because products already built on it still use it."
           action={
           <Link to={`/materials/${materialClass}`}>
               <Button variant="secondary">Back to materials</Button>
@@ -429,6 +484,7 @@ function MaterialDetail({ material }: {material: Material;}) {
   const navigate = useNavigate();
   const { accountId, reload } = useMaterials();
   const [busy, setBusy] = useState(false);
+  const [confirmingArchive, setConfirmingArchive] = useState(false);
 
   const own = material.source === 'account';
 
@@ -454,6 +510,7 @@ function MaterialDetail({ material }: {material: Material;}) {
     setBusy(true);
     const result = await archiveMaterial(material.id);
     setBusy(false);
+    setConfirmingArchive(false);
     if (!result.ok) {
       toast('Nothing was archived', { description: result.message });
       return;
@@ -461,8 +518,8 @@ function MaterialDetail({ material }: {material: Material;}) {
     await reload();
     toast('Archived', {
       description:
-      'It has stopped appearing in pickers. Products already built on it keep working and keep ' +
-      'naming it.'
+      'It is no longer offered when you build a product. Every product already built on it ' +
+      'still uses it, and none of their labels have changed.'
     });
     navigate(`/materials/${material.class}`);
   };
@@ -489,8 +546,12 @@ function MaterialDetail({ material }: {material: Material;}) {
                 Hold my own version
               </Button>
           }
-            {own &&
-          <Button variant="secondary" disabled={busy} onClick={archive}>
+            {own && material.archived !== true &&
+          <Button
+            variant="secondary"
+            disabled={busy}
+            onClick={() => setConfirmingArchive(true)}>
+
                 Archive
               </Button>
           }
@@ -498,7 +559,29 @@ function MaterialDetail({ material }: {material: Material;}) {
         } />
 
 
+      {confirmingArchive &&
+      <ArchiveDialog
+        material={material}
+        busy={busy}
+        onCancel={() => setConfirmingArchive(false)}
+        onConfirm={archive} />
+
+      }
+
       <div className="space-y-6 px-6 py-8 lg:px-10">
+        {/* An archived material is still reachable, and still what live products are
+            classified from, so the screen says which it is rather than looking identical to a
+            live one. */}
+        {material.archived === true &&
+        <Callout tone="info" title="This material is archived">
+            <p className="max-w-prose leading-relaxed">
+              It is not offered when you build a product. Everything below is unchanged, and every
+              product already built on it is still classified from exactly these figures — nothing
+              about their labels moved when you archived it.
+            </p>
+          </Callout>
+        }
+
         {!own &&
         <>
             <OverrideRule compact />
@@ -1270,6 +1353,126 @@ function AddDocumentForm({
  * forms section. The consequence is worth saying on the screen, and is: a material saved here
  * carries no classification yet, and nothing derived from it will claim one.
  */
+/**
+ * ARCHIVING, ASKED BEFORE IT HAPPENS.
+ *
+ * The button used to archive on the first click and then TELL the maker what it had done, in
+ * a toast, in a sentence that was not true. There are two separate repairs here and the
+ * dialog is only the second one:
+ *
+ *   1. Archiving no longer declassifies anything. An archived material is still read, still
+ *      resolves, and still classifies every product built on it (lib/materials.ts,
+ *      lib/material-index.ts). What changed is that it stops being offered.
+ *   2. This asks first, and names the products, so "keeps working" is something the maker can
+ *      check on the screen rather than something they are assured of afterwards.
+ *
+ * THE THIRD STATE IS THE ONE THAT MATTERS. The usage read can fail, and a failed read must
+ * not render as "no products use this material" — that is the sentence that gets a live label
+ * archived out from under somebody. It says we could not check, and the button still works,
+ * because archiving is reversible in effect (nothing about any product changes) and blocking
+ * it on a failed read would be its own kind of lie about how dangerous this is.
+ */
+function ArchiveDialog({
+  material,
+  busy,
+  onCancel,
+  onConfirm
+
+
+
+
+}: {material: Material;busy: boolean;onCancel: () => void;onConfirm: () => void;}) {
+  const [usage, setUsage] = useState<
+    {state: 'checking';} |
+    {state: 'known';products: MaterialUsage[];} |
+    {state: 'unknown';message: string;}>(
+    { state: 'checking' });
+
+  useEffect(() => {
+    let live = true;
+    void productsUsingMaterial(material.id).then((result) => {
+      if (!live) return;
+      setUsage(
+        result.ok ?
+        { state: 'known', products: result.value } :
+        { state: 'unknown', message: result.message }
+      );
+    });
+    return () => {
+      live = false;
+    };
+  }, [material.id]);
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-ink/20 p-4 sm:p-8">
+      <Card className="w-full max-w-xl px-6 py-6">
+        <SectionTitle className="mb-1">Archive {material.name}?</SectionTitle>
+
+        <div className="space-y-3 text-2xs leading-relaxed text-ink-secondary">
+          <p className="max-w-prose">
+            Archiving takes this material out of the pickers, so you cannot choose it for a new
+            product. It does not change anything you have already built: every product that names
+            it stays classified from exactly these figures, its hazard statements and allergen line
+            do not move, and no label you have recorded printing is marked out of date.
+          </p>
+          <p className="max-w-prose">
+            You will still be able to open it from the register, under Archived.
+          </p>
+
+          {usage.state === 'checking' &&
+          <Skeleton className="h-4 w-56" />
+          }
+
+          {usage.state === 'known' && usage.products.length === 0 &&
+          <p className="max-w-prose">
+              No product currently names this material.
+            </p>
+          }
+
+          {usage.state === 'known' && usage.products.length > 0 &&
+          <div className="space-y-1">
+              <p className="max-w-prose">
+                <span className="tabular">{usage.products.length}</span>{' '}
+                {usage.products.length === 1 ? 'product uses' : 'products use'} it, and{' '}
+                {usage.products.length === 1 ? 'it keeps' : 'they keep'} using it:
+              </p>
+              <ul className="space-y-0.5">
+                {usage.products.map((product) =>
+              <li key={product.productId} className="text-ink">
+                    {product.productName}
+                    {product.sku ? <span className="tabular text-ink-tertiary"> · {product.sku}</span> : null}
+                  </li>
+              )}
+              </ul>
+            </div>
+          }
+
+          {/* NOT "no products use it". We asked and did not get an answer, and those are two
+              different sentences pointing in opposite directions. */}
+          {usage.state === 'unknown' &&
+          <Callout tone="warn" title="We could not check which products use it">
+              <p className="max-w-prose leading-relaxed">{usage.message}</p>
+              <p className="mt-2 max-w-prose leading-relaxed">
+                This is not a finding that none do. Archiving still changes nothing about any
+                product — that part does not depend on this read.
+              </p>
+            </Callout>
+          }
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="quiet" disabled={busy} onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button variant="secondary" disabled={busy} onClick={onConfirm}>
+            {busy ? 'Archiving…' : 'Archive it'}
+          </Button>
+        </div>
+      </Card>
+    </div>);
+
+}
+
 function NewMaterialDialog({
   materialClass,
   onClose,

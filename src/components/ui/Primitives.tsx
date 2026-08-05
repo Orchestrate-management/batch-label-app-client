@@ -1,4 +1,5 @@
 import React from 'react';
+import { ChevronDown } from 'lucide-react';
 import { twMerge } from 'tailwind-merge';
 
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -112,8 +113,25 @@ export function Field({
 
 }
 
+/**
+ * The shared skin for anything a maker types or picks in.
+ *
+ * NO `focus:outline-none` HERE, AND NOTHING MAY PUT IT BACK. index.css gives every
+ * focusable thing in the app a 2px teal ring at a 2px offset; buttons and links get
+ * it, and the fields used to opt out of it — leaving a 1px border colour change as
+ * the entire focus indicator. That is thinner than the 2px perimeter WCAG 2.2
+ * requires of a focus indicator (SC 2.4.11), and it is the only signal a keyboard
+ * user gets on a form that decides what goes on a regulated label. The teal border
+ * stays as a second signal, and as the only one a mouse user needs.
+ *
+ * The disabled skin is shared too, so a field that is off looks off whether it is an
+ * Input or a Select. It is a panel fill and tertiary ink rather than `opacity-50`,
+ * because a half-transparent field is illegible as well as inert, and the text in a
+ * disabled field is often the part that explains why it is disabled ("Loading…").
+ * At 4.9:1 the disabled text is still readable.
+ */
 const inputBase =
-'w-full rounded-control border border-paper-line bg-paper px-3 py-2.5 text-sm text-ink placeholder:text-ink-tertiary focus:border-teal focus:outline-none focus-visible:outline-none';
+'w-full rounded-control border border-paper-line bg-paper px-3 py-2.5 text-sm text-ink placeholder:text-ink-tertiary transition-colors focus:border-teal disabled:cursor-not-allowed disabled:border-paper-line disabled:bg-paper-panel disabled:text-ink-tertiary';
 
 /**
  * forwardRef so a form can move focus to the box that is wrong. An error nobody
@@ -125,15 +143,51 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
   }
 );
 
+/**
+ * A dropdown that looks like something that opens.
+ *
+ * IT IS STILL A NATIVE `<select>`, DELIBERATELY. Only the closed control was ever
+ * wrong: `appearance-none` stripped the native chevron and `pr-8` reserved the room
+ * for a replacement that was never drawn, so every dropdown in the app rendered as a
+ * text-input-shaped box with an unexplained gap and no sign it could be opened.
+ * That is a painting job, and it is done here. Replacing the element with a
+ * button-and-popover listbox would buy control of the open list — which is OS chrome
+ * and unstyleable — at the price of re-implementing type-ahead, roving focus, the
+ * combobox semantics screen readers already get for free, and, on a phone, the
+ * native picker. Makers use this in a workshop, one-handed. The iOS and Android
+ * pickers are better than anything we would build, and this app's selects carry
+ * hazard classes and pictograms, where a half-right listbox is worse than a plain one.
+ *
+ * The chevron is `pointer-events-none` so the whole control stays one hit target, and
+ * `aria-hidden` because the element already announces itself as a combobox.
+ */
 export function Select({
   className,
   children,
+  disabled,
   ...props
 }: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
-    <select className={twMerge(inputBase, 'appearance-none pr-8', className)} {...props}>
-      {children}
-    </select>);
+    <span className="group relative block w-full">
+      <select
+        disabled={disabled}
+        className={twMerge(
+          inputBase,
+          'cursor-pointer appearance-none pr-10 hover:border-ink-tertiary disabled:hover:border-paper-line',
+          className
+        )}
+        {...props}>
+
+        {children}
+      </select>
+      <ChevronDown
+        aria-hidden="true"
+        className={twMerge(
+          'pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 transition-colors',
+          disabled ? 'text-ink-tertiary/60' : 'text-ink-secondary group-hover:text-ink'
+        )} />
+
+    </span>);
 
 }
 

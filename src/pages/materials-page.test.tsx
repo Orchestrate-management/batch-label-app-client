@@ -20,6 +20,10 @@ import { MaterialsStatus } from '../lib/materials-store';
  */
 
 const created = vi.hoisted(() => ({ calls: [] as unknown[], result: { ok: true, value: 'mat-new' } }));
+const archived = vi.hoisted(() => ({
+  calls: [] as unknown[],
+  usage: { ok: true, value: [] as Array<Record<string, unknown>> } as unknown
+}));
 const store = vi.hoisted(() => ({
   status: 'ready' as MaterialsStatus,
   materials: [] as Material[],
@@ -52,7 +56,11 @@ vi.mock('../lib/materials', async () => {
     addAllergen: async () => ({ ok: true, value: undefined }),
     addIfraLimit: async () => ({ ok: true, value: undefined }),
     addDocument: async () => ({ ok: true, value: undefined }),
-    archiveMaterial: async () => ({ ok: true, value: undefined }),
+    archiveMaterial: async (id: unknown) => {
+      archived.calls.push(id);
+      return { ok: true, value: undefined };
+    },
+    productsUsingMaterial: async () => archived.usage,
     overrideReferenceMaterial: async () => ({ ok: true, value: 'mat-own' }),
     removeChildRow: async () => ({ ok: true, value: undefined })
   };
@@ -252,12 +260,129 @@ describe('a material id that is not in the register', () => {
   it('says so instead of rendering an empty detail screen', async () => {
     draw({ status: 'ready', materials: [] }, '/materials/ingredient/mat-gone');
     expect(await screen.findByText(/not in your register/i)).toBeInTheDocument();
-    // And explains what archiving actually did, rather than implying data loss.
-    expect(screen.getByText(/keeps every product that used a material working/i)).toBeInTheDocument();
+    // And does NOT blame archiving for it. An archived material is read back and rendered
+    // like any other, so "it may have been archived" would be a wrong explanation offered for
+    // a missing row — and the screen would be teaching the maker that archiving loses things.
+    expect(screen.getByText(/It has not been archived/i)).toBeInTheDocument();
+    expect(screen.queryByText(/may have been archived/i)).not.toBeInTheDocument();
   });
 
   it('does not say that while the register is still loading', () => {
     draw({ status: 'loading' }, '/materials/ingredient/mat-gone');
     expect(screen.queryByText(/not in your register/i)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * ARCHIVING ASKS FIRST, AND WHAT IT SAYS IS TRUE.
+ *
+ * The old button archived on the first click and then toasted "Products already built on it
+ * keep working and keep naming it" — a sentence that was false, over an act the maker had
+ * already committed to. Both halves are tested here: the dialog exists and names what is
+ * affected, and the read behind it cannot report a failure as "nobody is using it".
+ */
+describe('archiving a material', () => {
+  it('does not archive on the first click — it asks, and names the products', async () => {
+    archived.calls = [];
+    archived.usage = {
+      ok: true,
+      value: [
+      { productId: 'prod-1', productName: 'Black Fig 200ml', sku: 'BF-200', specificationName: 'Black Fig' }]
+
+    };
+    draw({ status: 'ready', materials: [ownMaterial()] }, '/materials/ingredient/mat-1');
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: /^Archive$/i }));
+    expect(archived.calls, 'it archived before asking').toHaveLength(0);
+
+    expect(await screen.findByText(/Black Fig 200ml/)).toBeInTheDocument();
+    expect(screen.getByText(/does not change anything you have already built/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /Archive it/i }));
+    await waitFor(() => expect(archived.calls).toEqual(['mat-1']));
+  });
+
+  it('can be cancelled, and then nothing was archived', async () => {
+    archived.calls = [];
+    archived.usage = { ok: true, value: [] };
+    draw({ status: 'ready', materials: [ownMaterial()] }, '/materials/ingredient/mat-1');
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: /^Archive$/i }));
+    await user.click(await screen.findByRole('button', { name: /^Cancel$/i }));
+    expect(archived.calls).toHaveLength(0);
+  });
+
+  it('says we could not check rather than "no products use it" when the read failed', async () => {
+    archived.usage = { ok: false, reason: 'failed', message: 'We could not reach the database.' };
+    draw({ status: 'ready', materials: [ownMaterial()] }, '/materials/ingredient/mat-1');
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: /^Archive$/i }));
+    expect(await screen.findByText(/could not check which products use it/i)).toBeInTheDocument();
+    // The sentence that would get a live label archived out from under somebody.
+    expect(screen.queryByText(/No product currently names this material/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('a material that has been archived', () => {
+  const archivedMaterial = ownMaterial({ archived: true, name: 'Retired Fig oil' } as Partial<Material>);
+
+  it('is kept out of the register list, which is what archiving is for', async () => {
+    draw({ status: 'ready', materials: [archivedMaterial] });
+    const table = screen.queryByRole('table');
+    expect(table).toBeNull();
+    expect(await screen.findByText(/No ingredients yet/i)).toBeInTheDocument();
+  });
+
+  it('is still listed under Archived, and still openable', async () => {
+    draw({ status: 'ready', materials: [archivedMaterial] });
+    expect(await screen.findByRole('button', { name: /Retired Fig oil/i })).toBeInTheDocument();
+  });
+
+  it('opens, says it is archived, and says the products built on it are unaffected', async () => {
+    draw({ status: 'ready', materials: [archivedMaterial] }, '/materials/ingredient/mat-1');
+    expect(await screen.findByText(/This material is archived/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/still classified from exactly these figures/i)
+    ).toBeInTheDocument();
+  });
+
+  it('offers no Archive button, because it is already archived', async () => {
+    draw({ status: 'ready', materials: [archivedMaterial] }, '/materials/ingredient/mat-1');
+    await screen.findByText(/This material is archived/i);
+    expect(screen.queryByRole('button', { name: /^Archive$/i })).toBeNull();
+  });
+});
+
+/**
+ * THE REGISTER'S ANSWER TO "WHAT HAPPENS WHEN YOU UPDATE ONE OF YOURS".
+ *
+ * It used to promise pinning — "a product classified from the old one stays classified from
+ * the old one until you move it yourself" — and nothing pins: no code in either repository
+ * writes a specification_material_pins row, and resolved_materials hands the app the latest
+ * published version. The callout now states what is established instead.
+ */
+describe('what the override rule promises', () => {
+  it('does not promise that a product stays on an old reference version', async () => {
+    draw({ status: 'ready', materials: [] });
+    await screen.findByText(/Your material always wins/i);
+    expect(screen.queryByText(/stays classified from the old one/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/until you move it yourself/i)).not.toBeInTheDocument();
+  });
+
+  it('says a published version cannot change, which a trigger enforces', async () => {
+    draw({ status: 'ready', materials: [] });
+    expect(
+      await screen.findByText(/can never be changed or removed/i)
+    ).toBeInTheDocument();
+  });
+
+  it('says what would actually happen: you are told, by every recorded print', async () => {
+    draw({ status: 'ready', materials: [] });
+    expect(
+      await screen.findByText(/marked as no longer matching/i)
+    ).toBeInTheDocument();
   });
 });

@@ -636,7 +636,7 @@ liveHash: string | null = null)
       isPlaceholder: row.is_placeholder !== false,
       driftNote:
       currency === 'out-of-date' ?
-      'The composition, the pack, a pinned material or the printed business identity changed after this version was produced.' :
+      'The composition, the pack, the classification of a material it names, or the printed business identity changed after this version was produced.' :
       undefined
     };
   });
@@ -908,7 +908,7 @@ export async function fetchProducts(accountId: string | null): Promise<ReadResul
   //
   // The fingerprint is the only way to answer "is this label still the one for this
   // composition", and Postgres is the only thing that can compute it — it is an md5 over
-  // fifteen stored columns plus the pinned materials plus the printed identity, and a
+  // fifteen stored columns plus the state of every material named plus the printed identity, and a
   // reimplementation here would agree until the day it did not, which is the day a maker is
   // told their label is fine. There is no set-returning wrapper to call once, so this is a
   // call per product; a brand new account makes none, and an account at the top of the

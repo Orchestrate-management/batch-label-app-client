@@ -440,6 +440,7 @@ function accountMaterialFromRow(row: MaterialRow, children: Children): Material 
   const base = {
     id: row.id,
     source: 'account' as const,
+    archived: row.archived_at != null,
     overridesReferenceId: str(row.overrides_reference_id),
     slug: str(row.slug),
     name: str(row.name) ?? 'Untitled material',
@@ -623,11 +624,17 @@ export async function fetchMaterials(accountId: string | null): Promise<Material
   select(RESOLVED_COLUMNS).
   eq('account_id', accountId).
   order('name', { ascending: true }),
+  // ARCHIVED ROWS ARE READ TOO, and the `.is('archived_at', null)` filter that used to be
+  // here is the whole of finding 3. `resolved_materials` already excludes them, so this read
+  // is the only way an archived material reaches the register at all — and it has to, because
+  // a specification stores the id it was classified from and a lookup miss derives NO HAZARD
+  // STATEMENTS. Archiving is meant to remove a material from the PICKERS; that filtering now
+  // happens on `Material.archived`, at the two places that offer a choice, rather than by
+  // deleting the row from everybody's answer.
   client.
   from('materials').
   select(MATERIAL_COLUMNS).
-  eq('account_id', accountId).
-  is('archived_at', null),
+  eq('account_id', accountId),
   client.from('material_hazards').select(HAZARD_COLUMNS).eq('account_id', accountId),
   client.from('material_allergens').select(ALLERGEN_COLUMNS).eq('account_id', accountId),
   client.from('material_ifra_limits').select(IFRA_COLUMNS).eq('account_id', accountId),
@@ -706,14 +713,18 @@ export async function fetchMaterials(accountId: string | null): Promise<Material
   }
 
   const materials: Material[] = [];
+  const emitted = new Set<string>();
   for (const row of resolvedRows) {
     if (row.source === 'account') {
       const full = row.material_id ? ownRows.get(row.material_id) : undefined;
       // The view said this row exists and the table read did not return it. That is a race
-      // (archived between the two reads) rather than an error, and dropping it is right: the
+      // (deleted between the two reads) rather than an error, and dropping it is right: the
       // view row alone carries no hazards, and a material with no hazards renders as one that
       // has been classified and found harmless.
-      if (full) materials.push(accountMaterialFromRow(full, children));
+      if (full) {
+        materials.push(accountMaterialFromRow(full, children));
+        emitted.add(full.id);
+      }
       continue;
     }
     materials.push(
@@ -722,6 +733,18 @@ export async function fetchMaterials(accountId: string | null): Promise<Material
         row.reference_version_id ? versions.get(row.reference_version_id) : undefined
       )
     );
+  }
+
+  // THE ARCHIVED ONES, WHICH THE VIEW DOES NOT RETURN. `resolved_materials` is the register
+  // and the pickers' answer, and archived materials are correctly absent from it. They are
+  // still what live products were classified from, so they are appended here carrying
+  // `archived: true` — present for `ingredientById`, filtered out of every list that offers a
+  // choice. An own material that overrides one of ours and is then archived brings OUR row
+  // back into the view alongside it, which is right and does not collide: the ids differ (a
+  // uuid and a slug).
+  for (const row of ownRows.values()) {
+    if (emitted.has(row.id)) continue;
+    materials.push(accountMaterialFromRow(row, children));
   }
 
   return { ok: true, materials };
@@ -846,11 +869,20 @@ input: NewMaterialInput)
  * A specification stores the material id it was classified from. Deleting the row would make
  * that id resolve to nothing, and a composition whose fragrance oil resolves to nothing
  * derives NO HAZARD STATEMENTS — a label that silently loses its classification is the worst
- * outcome available here. Archiving keeps the row resolvable for anything already built on
- * it while removing it from the pickers.
+ * outcome available here. Archiving keeps the row resolvable for anything already built on it
+ * while removing it from the pickers.
  *
- * The screen says this out loud before it archives, because a maker pressing "archive" is
- * entitled to know that products keep working rather than to discover it.
+ * THAT SENTENCE USED TO BE FALSE, AND IT IS WHAT THIS PARAGRAPH IS HERE TO STOP COMING BACK.
+ * The row was soft-deleted, but `resolved_materials` carries `where m.archived_at is null` and
+ * the read above filtered `archived_at is null` as well — so the material left the register
+ * entirely, `ingredientById` missed, and a live candle's hazard statements went from [H317] to
+ * []. Two things make it true now and both must stay: `fetchMaterials` reads archived rows and
+ * marks them `archived`, and the derivation's lookups still answer for them. What archiving
+ * changes is which lists offer it.
+ *
+ * The screen says this out loud BEFORE it archives, and names the products that use it, so a
+ * maker pressing "archive" is not discovering afterwards what they agreed to. See
+ * `productsUsingMaterial`.
  */
 export async function archiveMaterial(materialId: string): Promise<MaterialWriteResult<void>> {
   const client = domainClient();
@@ -867,6 +899,66 @@ export async function archiveMaterial(materialId: string): Promise<MaterialWrite
     return { ok: false, reason: 'reached_nothing', message: REACHED_NOTHING_MESSAGE };
   }
   return { ok: true, value: undefined };
+}
+
+/**
+ * The live products whose composition or pack names this material.
+ *
+ * WHAT IT IS FOR. The archive button used to fire on the first click and then tell the maker
+ * what it had done. It asks first now, and the question names the products — which requires
+ * an answer to "who is using this", for all three composition shapes, before anything is
+ * written.
+ *
+ * IT IS AN RPC AND NOT A POSTGREST FILTER, and the reason is the one this whole change is
+ * about. A mixture names its materials in three columns; a phased formula and a bill of
+ * materials name theirs inside `specifications.data`. Expressing that as `.or(...)` here would
+ * be a second implementation of the resolution rule that
+ * `batchlabel.artefact_source_fingerprint` uses, and the two would drift — at which point the
+ * confirmation names a set of products that is not the set the currency check watches.
+ * `batchlabel.products_using_material` is the one implementation, and it is SECURITY INVOKER,
+ * so it answers only about this caller's products.
+ *
+ * A FAILURE IS NOT AN EMPTY LIST. `ok: false` means we do not know who is using it, and the
+ * dialog must say that instead of "no products use this material" — which is the sentence
+ * that would get a live label archived out from under somebody.
+ */
+export type MaterialUsage = {
+  productId: string;
+  productName: string;
+  sku: string | null;
+  specificationName: string;
+};
+
+export async function productsUsingMaterial(
+materialId: string)
+: Promise<MaterialWriteResult<MaterialUsage[]>> {
+  const client = domainClient();
+  if (!client) return { ok: false, reason: 'not_configured', message: NOT_CONFIGURED_MESSAGE };
+
+  const { data, error } = await client.rpc('products_using_material', {
+    p_material_ref: materialId
+  });
+
+  if (error) return { ok: false, ...classifyMaterialError(error) };
+
+  const rows = (data ?? []) as Array<{
+    product_id: string | null;
+    product_name: string | null;
+    sku: string | null;
+    specification_name: string | null;
+  }>;
+
+  return {
+    ok: true,
+    value: rows.
+    filter((row): row is typeof row & {product_id: string;} => Boolean(row.product_id)).
+    map((row) => ({
+      productId: row.product_id,
+      productName: str(row.product_name) ?? 'Untitled product',
+      sku: str(row.sku) ?? null,
+      specificationName: str(row.specification_name) ?? ''
+    }))
+  };
 }
 
 /* ------------------------------------------------------------- children */

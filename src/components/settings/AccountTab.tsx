@@ -698,9 +698,16 @@ function DataSection() {
  * stall, the browser on a machine that has since been sold — and this session with them. It is
  * reported honestly: a failed revoke says nothing was signed out, because "you are signed out
  * everywhere" when the call failed is the most dangerous false confirmation on this page.
+ *
+ * AND NOW THE FIRST BUTTON IS REPORTED HONESTLY TOO. It used to be `void signOut()` over a
+ * function that could reject, and a rejection took the navigation with it — the app went to
+ * "Checking your session…" and stayed there, still signed in, saying nothing. The outcome is
+ * read off the provider rather than held here because this component does not survive its own
+ * click: `signingOut` is folded into `loading`, so RequireAuth unmounts the whole tree, this
+ * row included, for as long as the sign-out is in flight.
  */
 function SignOutRow() {
-  const { signOut } = useAuth();
+  const { signOut, signOutFailure } = useAuth();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -713,7 +720,9 @@ function SignOutRow() {
       setError(result.error);
       return;
     }
-    // The tokens are gone; this clears the local session and hands the browser to www.
+    // The tokens are gone; this clears the local session and hands the browser to www. It no
+    // longer rejects — a sign-out that did not take resolves as `still-signed-in` and is said
+    // by `signOutFailure` below — so `busy` cannot be stranded true by this line either.
     await signOut();
   };
 
@@ -738,6 +747,8 @@ function SignOutRow() {
         </p>
       </div>
       {error && <FormError>{error}</FormError>}
+      {/* Either button can land here: the second one finishes by calling the first. */}
+      {signOutFailure && <FormError>{signOutFailure}</FormError>}
     </div>);
 
 }

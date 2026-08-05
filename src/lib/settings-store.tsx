@@ -323,11 +323,11 @@ export function useSettings(): SettingsValue {
 /**
  * The same store, or null when there is no provider above.
  *
- * `WorkspaceProvider` uses this rather than `useSettings` so that it still works standalone —
- * several test harnesses in this repo mount it on its own, and a provider that throws when a
- * sibling is missing turns a rendering test into a wiring test. Outside a SettingsProvider the
- * category toggles are session state, exactly as they were before this existed, and the
- * Preferences screen (which does require the provider) is the only place that claims a save.
+ * Specification and ArtefactDesigner use this rather than `useSettings`, because several test
+ * harnesses in this repo mount one screen on its own, and a hook that throws when a sibling
+ * provider is missing turns a rendering test into a wiring test. Outside a SettingsProvider a
+ * screen renders the placeholder identity; the Settings screen, which does require the
+ * provider, is the only place that claims a save.
  */
 export function useOptionalSettings(): SettingsValue | null {
   return useContext(SettingsContext);

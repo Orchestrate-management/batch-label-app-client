@@ -541,6 +541,12 @@ const RECOGNISED: Array<{pattern: RegExp;render: (match: RegExpExecArray) => str
   pattern: /^An unprintable value was thrown\.$/,
   render: () => 'An unprintable value was thrown.'
 },
+{
+  // lib/domain-schema.ts. A whole literal with no captures and no interpolation — the schema
+  // name is a constant we shipped, not a value read from anything of the maker's.
+  pattern: /^The batchlabel schema is not exposed by PostgREST \(PGRST106\)\.$/,
+  render: () => 'The batchlabel schema is not exposed by PostgREST (PGRST106).'
+},
 
 // ── the runtime's
 {
@@ -1157,10 +1163,19 @@ const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/;
  * source added without being added here reports as `[redacted]`, which loses a
  * label and leaks nothing.
  *
- * From `sourceFor` in components/ErrorBoundary.tsx and the two listeners in
- * lib/global-errors.ts. They are the only callers of `reportError` today.
+ * From `sourceFor` in components/ErrorBoundary.tsx, the two listeners in
+ * lib/global-errors.ts, and lib/domain-schema.ts.
  */
-const KNOWN_SOURCES = ['render', 'screen-render', 'window-error', 'unhandled-rejection'];
+const KNOWN_SOURCES = [
+'render',
+'screen-render',
+'window-error',
+'unhandled-rejection',
+// lib/domain-schema.ts. Files exactly one message, a literal with no captures, when PostgREST
+// answers a domain request PGRST106 — the whole app is dead at that point and we are the only
+// people who can fix it, so this is the one report that must arrive legible rather than as
+// `[redacted]` twice over.
+'domain-schema'];
 
 /**
  * Every error name we are willing to repeat.

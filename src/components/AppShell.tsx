@@ -11,6 +11,7 @@ import {
   type LucideIcon } from
 'lucide-react';
 import { Logo } from './Logo';
+import { SchemaNotServed } from './SchemaNotServed';
 import { useAuth } from '../lib/auth';
 import { useEntitlement } from '../lib/entitlement';
 
@@ -147,6 +148,10 @@ export function AppShell({ children }: {children: React.ReactNode;}) {
             </NavLink>
           )}
         </nav>
+        {/* Above every screen and outside the routed boundary, because the fault it names is
+            not one screen's — see components/SchemaNotServed.tsx. Renders nothing unless the
+            transport has actually seen PostgREST refuse the schema. */}
+        <SchemaNotServed />
         {children}
       </div>
     </div>);
@@ -161,7 +166,7 @@ export function AppShell({ children }: {children: React.ReactNode;}) {
 function AccountMenu() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, signOut } = useAuth();
+  const { user, signOut, signOutFailure } = useAuth();
   const entitlement = useEntitlement();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -255,7 +260,10 @@ function AccountMenu() {
           onClick={() => {
             setOpen(false);
             // Clears the shared cookie, so this signs the maker out of the
-            // marketing site too, then leaves for it.
+            // marketing site too, then leaves for it — and if it could not, says so
+            // below rather than leaving this menu's owner on a splash screen.
+            // Dropped on purpose: the outcome is held by the provider as
+            // `signOutFailure`, because this menu does not survive the attempt.
             void signOut();
           }}>
 
@@ -291,6 +299,27 @@ function AccountMenu() {
           aria-hidden="true" />
         
       </button>
+
+      {/*
+        A sign-out that did not take, said where the button that failed is.
+
+        Below the trigger rather than inside the menu, because the menu is closed by the click
+        and by every click after it, and a message you have to reopen a menu to find is one
+        nobody reads. Clay-reversed is the accent for sitting on teal; the same sentence is on
+        Settings > Account, which is the only route to signing out on a phone.
+
+        The alternative was to say nothing, which is what this did before: the app went to
+        "Checking your session…" and stayed there, still signed in, for as long as the tab
+        was open.
+       */}
+      {signOutFailure &&
+      <p
+        role="alert"
+        className="mt-2 rounded-control border border-clay-reversed/40 bg-clay-dark/25 px-3 py-2 text-2xs leading-relaxed text-clay-reversed">
+
+          {signOutFailure}
+        </p>
+      }
     </div>);
 
 }

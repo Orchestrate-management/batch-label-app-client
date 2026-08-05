@@ -1,7 +1,7 @@
-import { materialById, materialsSettled } from './material-index';
+import { materialById, materialsSettled, materialsStatus } from './material-index';
 import { Derivation } from './derive';
 import { Market, Product } from './model';
-import { outstandingObligations } from './regimes';
+import { obligationOutcome, outstandingObligations } from './regimes';
 import { buildSds } from './sds';
 
 /**
@@ -34,11 +34,45 @@ export type Stage = {
    * as neither: no tick, no issue count, and a line that says what has not been built.
    */
   checked: boolean;
+  /**
+   * Why a check that EXISTS did not run, as a clause a screen can put in a sentence.
+   *
+   * THE DIFFERENCE BETWEEN THE TWO WAYS OF NOT BEING CHECKED, and the reason a boolean was not
+   * enough. Documents is `checked: false` permanently because Batchlabel has no such check to
+   * run; saying so once, in the copy, is honest and does not change. Classification is
+   * `checked: false` only while the materials register has not answered — the check exists, its
+   * input did not arrive, and that is a transient hole in a work queue that a maker is entitled
+   * to be told about.
+   *
+   * Undefined therefore means "nothing was prevented from running". A stage with this set is
+   * one whose empty issue list is silence rather than an all-clear, and `queueFor` collects
+   * them so a screen cannot compose four honest stages into one false reassurance.
+   */
+  blockedBy?: string;
   /** Shown when settled, so the stage always says something. */
   summary: string;
   issues: StageIssue[];
   settled: boolean;
 };
+
+/**
+ * Why the classification check could not run, or nothing.
+ *
+ * Names the actual register state rather than a generic "not loaded", because "we are still
+ * reading it" and "we could not read it" call for different things from the maker.
+ */
+function registerBlockage(): string | undefined {
+  switch (materialsStatus()) {
+    case 'ready':
+      return undefined;
+    case 'error':
+      return 'your materials register could not be read';
+    case 'unavailable':
+      return 'your materials register is not available on this account';
+    default:
+      return 'your materials register has not finished loading';
+  }
+}
 
 /** The materials a product's composition actually draws on. */
 export function materialIdsFor(product: Product): string[] {
@@ -163,8 +197,10 @@ market: Market)
   ...derivation.unresolved.map((entry) => ({
     label: `${entry.slot} is not in your materials register`,
     detail:
-    `The composition names "${entry.id}" and the register has no live material with that id — ` +
-    'it may have been archived. Nothing has been classified from it, so the label and the ' +
+    `The composition names "${entry.id}" and your materials register has no material with ` +
+    'that id. It has not been archived — an archived material is still read, and still ' +
+    'classifies the products built on it. The link may be out of date, or the material may ' +
+    'belong to another account. Nothing has been classified from it, so the label and the ' +
     'sheet are missing whatever it contributes. Pick a material that is in the register.',
     to: `/products/${product.id}`
   })),
@@ -225,7 +261,7 @@ market: Market)
   {
     label: `${stale.length} recorded print${stale.length === 1 ? '' : 's'} no longer match${stale.length === 1 ? 'es' : ''} this composition`,
     detail:
-    'The composition, the pack, a pinned material or your printed business details changed after these were printed. Reprint, then record the new print.',
+    'The composition, the pack, the classification of a material it names, or your printed business details changed after these were printed. Reprint, then record the new print.',
     to: `/products/${product.id}`
   }] :
 
@@ -241,9 +277,23 @@ market: Market)
   }] :
 
   []),
+  /*
+   * THE SENTENCE COMES FROM `obligationOutcome`, NOT FROM `missingText`.
+   *
+   * `missingText` is the wording for a state that has exactly one cause. `clp-classification`
+   * has three, and this line used to print the one-cause sentence for all of them: a product
+   * naming a fragrance oil the register cannot produce got "The fragrance oil on this
+   * composition carries no hazard classification, so nothing has been derived from it" — a
+   * property asserted about a material this software could not find, in the work queue, right
+   * beside the classification stage correctly reporting that it could not find it.
+   *
+   * `obligationOutcome` is the one place that decides state and wording together. Reading it
+   * here is what makes the queue and the product's checklist physically unable to describe the
+   * same obligation differently, which is the only version of this fix that stays fixed.
+   */
   ...outstanding.map((obligation) => ({
     label: obligation.label,
-    detail: obligation.missingText,
+    detail: obligationOutcome(product, obligation).text,
     to: obligation.to.replace(':id', product.id)
   }))];
 
@@ -283,6 +333,9 @@ market: Market)
     // where nothing has been classified because nothing has loaded — and `settled` is derived
     // from `issues.length === 0`, which would turn that into a green tick.
     checked: registerSettled,
+    // The check exists and its input did not arrive. Carried out of here so a queue built from
+    // these stages can say so; see `queueFor`.
+    blockedBy: registerBlockage(),
     settled: registerSettled && classificationIssues.length === 0,
     summary: registerSettled ?
     derivation.summary.map((entry) => entry.value).join(' · ') :
@@ -308,8 +361,57 @@ market: Market)
 
 }
 
-export function outstandingFor(product: Product, derivation: Derivation, market: Market) {
-  return stagesFor(product, derivation, market).flatMap((stage) =>
-  stage.issues.map((issue) => ({ ...issue, stage }))
-  );
+export type QueueIssue = StageIssue & {stage: Stage;};
+
+/**
+ * A work queue, and what it could not look at.
+ *
+ * THIS TYPE IS THE FIX FOR A DEFECT THAT NO INDIVIDUAL PART OF IT HAD. `outstandingFor` used
+ * to return the issues alone:
+ *
+ *     return stagesFor(...).flatMap((stage) => stage.issues.map(...));
+ *
+ * Every step behind that line is honest. With the materials register unanswered, the
+ * classification stage raises no issues and marks itself `checked: false`; `clp-classification`
+ * resolves to `not-tracked` rather than to a finding; `outstandingObligations` excludes
+ * not-tracked from a queue because a queue is a list of things we ESTABLISHED are undone. Each
+ * of those is right on its own. Composed, they empty the queue — and Studio, the first screen
+ * after sign-in, renders an empty queue as "Nothing outstanding. Every composition is settled,
+ * every material is classified, and nothing is waiting on you." to an account whose materials
+ * read had just FAILED.
+ *
+ * The flatMap is where the honesty was dropped: `checked` reached it and did not leave. So the
+ * queue now carries both halves, and a screen has to hold the second to render the first.
+ */
+export type WorkQueue = {
+  issues: QueueIssue[];
+  /**
+   * Clauses naming the checks that exist and did not run, deduplicated.
+   *
+   * EMPTY IS THE ONLY STATE THAT LICENSES AN ALL-CLEAR. Non-empty with no issues is silence,
+   * not good news, and a screen that renders the two the same way is back where this started.
+   */
+  blocked: string[];
+};
+
+export function queueFor(product: Product, derivation: Derivation, market: Market): WorkQueue {
+  const stages = stagesFor(product, derivation, market);
+  return {
+    issues: stages.flatMap((stage) => stage.issues.map((issue) => ({ ...issue, stage }))),
+    blocked: Array.from(
+      new Set(
+        stages.
+        map((stage) => stage.blockedBy).
+        filter((clause): clause is string => Boolean(clause))
+      )
+    )
+  };
+}
+
+/** Every issue across every product, plus everything none of them could check. */
+export function queueAcross(entries: WorkQueue[]): WorkQueue {
+  return {
+    issues: entries.flatMap((entry) => entry.issues),
+    blocked: Array.from(new Set(entries.flatMap((entry) => entry.blocked)))
+  };
 }
