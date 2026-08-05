@@ -36,7 +36,31 @@ const EAGER_VENDOR: Record<string, string> = {
   'react-router': 'router',
   'react-router-dom': 'router',
   '@remix-run/router': 'router',
-  'sonner': 'sonner'
+  'sonner': 'sonner',
+  /**
+   * The dropdown's vendor set. It is here for the same reason as the rest and under the
+   * same test: it is ALREADY in the entry chunk, so naming it cannot cost the first paint.
+   *
+   * It is in the entry chunk because Studio — the one screen loaded up front — imports
+   * NewProductDialog, and that dialog has two `Select`s in it. Left unnamed, 89 kB of
+   * third-party code would sit inside `index-[hash].js` beside our own, and every deploy
+   * that touched a line of our code would make a returning maker fetch all of it again.
+   * That is precisely the property this file exists to protect, so a change that adds a
+   * large stable vendor to the critical path has to say so here.
+   *
+   * The scroll-lock and focus trio (`react-remove-scroll` and friends, `aria-hidden`) are
+   * not Radix packages but are pulled in only by it; `@floating-ui` is what positions the
+   * popup. `tslib` is deliberately NOT named — it is shared helper code, and forcing it in
+   * here would drag this whole chunk into whatever else imports it.
+   */
+  'aria-hidden': 'listbox',
+  'react-remove-scroll': 'listbox',
+  'react-remove-scroll-bar': 'listbox',
+  'react-style-singleton': 'listbox',
+  'use-sidecar': 'listbox',
+  'use-callback-ref': 'listbox',
+  'get-nonce': 'listbox',
+  'detect-node-es': 'listbox'
 };
 
 /**
@@ -55,5 +79,9 @@ export function vendorChunkFor(id: string): string | undefined {
   const pkg = packageOf(id);
   if (!pkg) return undefined;
   if (pkg.startsWith('@supabase/')) return 'supabase';
+  // Same reasoning as the supabase prefix: Radix ships one package per primitive and the
+  // popup is positioned by a second scoped family, so naming only `react-select` would
+  // leave most of the weight behind and look like it had worked.
+  if (pkg.startsWith('@radix-ui/') || pkg.startsWith('@floating-ui/')) return 'listbox';
   return EAGER_VENDOR[pkg];
 }

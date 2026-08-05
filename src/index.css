@@ -66,6 +66,24 @@ body {
   outline: 2px solid #14514F;
   outline-offset: 2px;
 }
+/* The listbox popup's entrance, and the only reason this file knows the dropdown exists.
+   A native `<select>`'s list appeared instantly and unstyled; this one is ours, so it gets
+   the shortest movement that still reads as "this came from the control above it" —
+   120ms and 4px, no scale, no bounce. Anything longer is a menu you wait for. The
+   reduced-motion block at the foot of this file already collapses it to nothing. */
+@keyframes listbox-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.listbox-popup[data-state='open'] {
+  animation: listbox-in 120ms ease-out;
+}
 .tabular {
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum' 1;
