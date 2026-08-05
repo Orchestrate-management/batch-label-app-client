@@ -1,11 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Product } from './model';
-import { PRODUCTS } from './fixtures';
+import { FIXTURE_MATERIALS, PRODUCTS } from './fixtures';
+import { publishMaterialStatus, publishMaterials, resetMaterials } from './material-index';
 import { categoryById } from './categories';
 import { artefactsFor, blankSpec } from './products';
-import { obligationSatisfied, outstandingObligations,
+import {
+  DERIVED_OBLIGATIONS,
+  REGIMES,
+  obligationOutcome,
+  obligationSatisfied,
   obligationState,
-  untrackedObligations} from './regimes';
+  obligationsFor,
+  outstandingObligations,
+  untrackedObligations } from
+'./regimes';
 
 /**
  * The UFI claim.
@@ -21,9 +29,40 @@ import { obligationSatisfied, outstandingObligations,
  * the test, because the rule was never a property of where the data came from.
  */
 
+/**
+ * A product with evidence recorded against the named obligations.
+ *
+ * Was `obligations: Record<string, boolean>` over a jsonb column nothing wrote. The shape
+ * changed, the assertion did not: no route through the app may report the UFI obligation as
+ * done, whatever this account has recorded.
+ */
 function withObligations(overrides: Record<string, boolean>): Product {
-  return { ...PRODUCTS[0], obligations: { ...PRODUCTS[0].obligations, ...overrides } };
+  const obligations = { ...PRODUCTS[0].evidence.obligations };
+  for (const [id, done] of Object.entries(overrides)) {
+    if (done) {
+      obligations[id] = {
+        id: `ev-${id}`,
+        recordedAt: '2026-07-01T00:00:00.000Z',
+        reference: null,
+        summary: 'Recorded in a test.'
+      };
+    } else {
+      delete obligations[id];
+    }
+  }
+  return { ...PRODUCTS[0], evidence: { ...PRODUCTS[0].evidence, obligations } };
 }
+
+/**
+ * The register these obligations are reasoned about.
+ *
+ * DECLARED RATHER THAN ASSUMED. `clp-classification` resolves the composition's fragrance oil
+ * out of the materials register, which is a database read now rather than a constant in the
+ * bundle — so a test that publishes nothing is testing the "we have not looked" path, which
+ * is a real path and has its own tests below.
+ */
+beforeEach(() => publishMaterials('acct-1', FIXTURE_MATERIALS));
+afterEach(() => resetMaterials());
 
 describe('the UFI obligation', () => {
   it('is not satisfied even when a product claims it is', () => {
@@ -98,7 +137,12 @@ describe('artefacts derived for a stored product', () => {
       for (const artefact of artefactsFor(pack, pack.specKind)) {
         expect(artefact.version).toBe('Not yet produced');
         expect(artefact.printedOn).toBe('—');
-        expect(artefact.current).toBe(true);
+        // NOT 'current'. `current: true` for an unproduced surface is what painted a green
+        // "Current" pill on every row of a list whose every row also said "Not yet produced".
+        expect(artefact.currency).toBe('not-produced');
+        // Nothing was produced, so nothing was generated. Every row this app writes carries
+        // this too — no exporter exists.
+        expect(artefact.isPlaceholder).toBe(true);
       }
     }
   });
@@ -108,5 +152,238 @@ describe('artefacts derived for a stored product', () => {
     const device = artefactsFor(categoryById('electronics'), 'bom');
     expect(fragrance.some((a) => a.type === 'sds')).toBe(true);
     expect(device.some((a) => a.type === 'sds')).toBe(false);
+  });
+});
+
+/* ------------------------------------------------------------------------ */
+
+/**
+ * A product with nothing recorded against it, built the way a real account's is.
+ *
+ * `blankSpec` plus `artefactsFor` with no rows behind it: a brand new product, before the
+ * maker has chosen a base, printed anything or recorded a single thing. This is the state
+ * every account is in on its first afternoon, and it is the state the fifteen invented
+ * findings were being rendered in.
+ */
+function freshProduct(categoryId: 'home-fragrance' | 'cosmetics' | 'electronics'): Product {
+  const category = categoryById(categoryId);
+  const spec = blankSpec(category, category.productTypes[0]);
+  return {
+    id: `p-${categoryId}`,
+    specificationId: `s-${categoryId}`,
+    name: 'Untitled',
+    sku: '',
+    categoryId,
+    markets: ['GB', 'EU'],
+    regimes: category.regimes,
+    spec,
+    artefacts: artefactsFor(category, spec.kind),
+    identifiers: {},
+    evidence: { obligations: {}, sdsSections: {} }
+  };
+}
+
+function withEvidence(product: Product, obligationId: string, at = '2026-07-01T00:00:00.000Z'): Product {
+  return {
+    ...product,
+    evidence: {
+      ...product.evidence,
+      obligations: {
+        ...product.evidence.obligations,
+        [obligationId]: {
+          id: `ev-${obligationId}`,
+          recordedAt: at,
+          reference: 'REF-1',
+          summary: 'Recorded in a test.'
+        }
+      }
+    }
+  };
+}
+
+/**
+ * THE STRUCTURAL GUARD, and the one assertion that would have caught the whole defect class.
+ *
+ * Fifteen obligations were permanently outstanding on every product of every account, because
+ * the only thing that could satisfy them was a jsonb column nothing wrote. No individual test
+ * failed: each obligation looked reasonable on its own, and the queue that rendered them was
+ * correct about its own logic. What was missing was a check that every duty has SOME route out
+ * of "outstanding".
+ *
+ * Three routes exist and there may not be a fourth: derived from the product, recorded by the
+ * maker, or declared not-tracked with a sentence saying we are not the one checking. An
+ * obligation in none of them is a row a maker can never clear, and this fails on the day one
+ * is added.
+ */
+describe('every obligation, whatever regime it belongs to', () => {
+  const all = REGIMES.flatMap((regime) => regime.obligations);
+
+  it('has a route out of outstanding: derived, recordable, or honestly not tracked', () => {
+    for (const obligation of all) {
+      const notTracked = obligationState(freshProduct('home-fragrance'), obligation.id) === 'not-tracked' ||
+      obligationState(freshProduct('cosmetics'), obligation.id) === 'not-tracked' ||
+      obligationState(freshProduct('electronics'), obligation.id) === 'not-tracked';
+      const routed =
+      DERIVED_OBLIGATIONS.has(obligation.id) || obligation.recordable === true || notTracked;
+      expect(
+        routed,
+        `${obligation.id} can never stop being outstanding: it is not derived, not recordable, and not declared untracked`
+      ).toBe(true);
+    }
+  });
+
+  it('turns met the moment evidence is recorded, for every recordable one', () => {
+    const product = freshProduct('electronics');
+    for (const obligation of all.filter((o) => o.recordable)) {
+      expect(obligationState(product, obligation.id)).toBe('outstanding');
+      expect(obligationState(withEvidence(product, obligation.id), obligation.id)).toBe('met');
+    }
+  });
+
+  it('says when it happened, from the log rather than from the clock', () => {
+    const product = withEvidence(freshProduct('cosmetics'), 'cpr-pif', '2026-03-04T00:00:00.000Z');
+    const obligation = all.find((o) => o.id === 'cpr-pif');
+    if (!obligation) throw new Error('cpr-pif is no longer an obligation');
+    const outcome = obligationOutcome(product, obligation);
+
+    expect(outcome.state).toBe('met');
+    expect(outcome.text).toContain('4 Mar 2026');
+    expect(outcome.evidence?.reference).toBe('REF-1');
+  });
+
+  it('never falls back to a finding when it has not checked', () => {
+    // `not-tracked` exists precisely so nothing asserts a state it did not observe. An
+    // obligation reaching that state and then printing its missingText would put the assertion
+    // straight back, which is why obligationOutcome refuses to borrow it.
+    const product = freshProduct('home-fragrance');
+    for (const obligation of obligationsFor(product)) {
+      const outcome = obligationOutcome(product, obligation);
+      if (outcome.state !== 'not-tracked') continue;
+      expect(outcome.text).not.toBe(obligation.missingText);
+      expect(outcome.text.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+/**
+ * The period after opening, which was the clearest self-contradiction on the screen.
+ *
+ * `derivePhased` emitted a Period after opening group unconditionally and the label preview
+ * rendered "12M" at actual size, from a constant `blankSpec` seeded — while this obligation,
+ * on the same screen, read "Neither a period after opening nor a date of minimum durability is
+ * shown". Both halves read `spec.paoMonths` now.
+ */
+describe('the period after opening obligation', () => {
+  it('is outstanding when nothing is set, and met when a figure is', () => {
+    const cosmetic = freshProduct('cosmetics');
+    expect(cosmetic.spec.kind).toBe('phased');
+    expect(obligationState(cosmetic, 'cpr-pao')).toBe('outstanding');
+
+    const withPao: Product =
+    cosmetic.spec.kind === 'phased' ?
+    { ...cosmetic, spec: { ...cosmetic.spec, paoMonths: 6 } } :
+    cosmetic;
+    expect(obligationState(withPao, 'cpr-pao')).toBe('met');
+  });
+
+  it('cannot be satisfied by recording evidence over the top of the composition', () => {
+    // It is a property of what the label carries, not of what the maker says. Letting an
+    // entry in the log flip it would put back the exact claim this work removed.
+    const cosmetic = freshProduct('cosmetics');
+    expect(obligationState(withEvidence(cosmetic, 'cpr-pao'), 'cpr-pao')).toBe('outstanding');
+  });
+});
+
+/**
+ * Whether the label on the jar still matches the recipe on file.
+ *
+ * The only obligation that LEFT the not-tracked set, because `batchlabel.artefacts` now stores
+ * the composition fingerprint at the moment a print was recorded. Three states, and the one
+ * that matters is the third: a maker who has never recorded a print must not be told their
+ * label has drifted.
+ */
+describe('the label currency obligation', () => {
+  const category = categoryById('home-fragrance');
+
+  const withLabel = (currency: 'current' | 'out-of-date' | 'unknown'): Product => {
+    const product = freshProduct('home-fragrance');
+    return {
+      ...product,
+      artefacts: product.artefacts.map((artefact) =>
+      artefact.type === 'unit-label' ?
+      { ...artefact, version: 'v1', printedOn: '2026-07-01', currency } :
+      artefact
+      )
+    };
+  };
+
+  it('is not a finding when no print has ever been recorded', () => {
+    const product = freshProduct('home-fragrance');
+    expect(product.artefacts.every((a) => a.currency === 'not-produced')).toBe(true);
+    expect(obligationState(product, 'clp-artefact-current')).toBe('not-tracked');
+    expect(outstandingObligations(product).map((o) => o.id)).not.toContain('clp-artefact-current');
+  });
+
+  it('is met when the recorded print still matches, and outstanding when it does not', () => {
+    expect(obligationState(withLabel('current'), 'clp-artefact-current')).toBe('met');
+    expect(obligationState(withLabel('out-of-date'), 'clp-artefact-current')).toBe('outstanding');
+  });
+
+  it('refuses to answer when the fingerprint could not be computed', () => {
+    // 'unknown' is a failure to check. Reading it as either answer is how a maker gets told
+    // their label is fine by a screen that did not manage to look.
+    expect(obligationState(withLabel('unknown'), 'clp-artefact-current')).toBe('not-tracked');
+    expect(category.artefacts).toContain('unit-label');
+  });
+});
+
+/**
+ * WHAT THE CLASSIFICATION OBLIGATION SAYS BEFORE THE REGISTER HAS ANSWERED.
+ *
+ * `outstandingObligations` feeds work queues — Studio's "N things outstanding across M
+ * products" and the product pipeline — and a queue row is a finding: something this software
+ * established the maker has not done. Materials moved from a bundled constant to a Supabase
+ * read, so there is now a window (and, on a failed read, a permanent state) in which the
+ * fragrance oil resolves to nothing through no fault of the composition.
+ *
+ * Reporting that as OUTSTANDING would be a compliance finding produced by a pending request,
+ * under the maker's own product name, on the first screen after sign-in. `not-tracked` is the
+ * state that already exists for a duty we are not the ones checking.
+ */
+describe('the classification obligation while the materials register is unsettled', () => {
+  it('is not tracked rather than outstanding while the register is loading', () => {
+    publishMaterialStatus('loading', 'acct-1');
+    expect(obligationState(PRODUCTS[0], 'clp-classification')).toBe('not-tracked');
+    expect(outstandingObligations(PRODUCTS[0]).map((o) => o.id)).not.toContain('clp-classification');
+  });
+
+  it('is not tracked rather than outstanding when the register could not be read', () => {
+    publishMaterialStatus('error', 'acct-1');
+    expect(obligationState(PRODUCTS[0], 'clp-classification')).toBe('not-tracked');
+  });
+
+  it('says why, rather than leaving the row unexplained', () => {
+    publishMaterialStatus('error', 'acct-1');
+    const row = untrackedObligations(PRODUCTS[0]).find((o) => o.id === 'clp-classification');
+    expect(row?.untrackedText).toMatch(/has not loaded/i);
+    // And it does not claim the product is at fault.
+    expect(row?.untrackedText).toMatch(/not a finding about your product/i);
+  });
+
+  it('answers properly once the register has landed', () => {
+    publishMaterials('acct-1', FIXTURE_MATERIALS);
+    // PRODUCTS[0] is a mixture whose fragrance oil carries hazards in the fixture register.
+    expect(obligationState(PRODUCTS[0], 'clp-classification')).toBe('met');
+  });
+
+  it('is outstanding when the register HAS answered and the oil carries no hazards', () => {
+    // The finding this obligation exists for, told apart from the two states above: a real
+    // gap, in a register we have actually read.
+    publishMaterials('acct-1', FIXTURE_MATERIALS);
+    const product: Product = {
+      ...PRODUCTS[0],
+      spec: { ...PRODUCTS[0].spec, fragranceId: 'ing-crw45' } as Product['spec']
+    };
+    expect(obligationState(product, 'clp-classification')).toBe('outstanding');
   });
 });

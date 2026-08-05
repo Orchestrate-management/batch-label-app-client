@@ -97,9 +97,47 @@ describe('App.tsx', () => {
     expect(source).toMatch(/const \{ pathname \} = useLocation\(\);/);
   });
 
+  /**
+   * THE THREE ACCOUNT-SCOPED STORES ARE MOUNTED, AND MOUNTED ABOVE THE ROUTER.
+   *
+   * This is asserted here rather than by a throw inside the hooks, and the reason is worth
+   * writing down because it is the seam three parallel branches met at.
+   *
+   * Studio, Specification and ArtefactDesigner subscribe with `useOptionalMaterials` /
+   * `useOptionalSettings`, which return null instead of throwing — they have to, because a
+   * dozen harnesses mount one of those screens on its own and the screens do not LIE without a
+   * store: the material index answers "has not loaded" and the identity holder prints its
+   * bracketed placeholders, both of which are true sentences.
+   *
+   * That tolerance is exactly what makes deleting a provider from this file a silent change.
+   * The app would still render, still pass every screen test, and quietly show a maker a work
+   * queue counted against a register that never arrived and a label carrying "[Business name]"
+   * instead of theirs. So the tree is pinned as source, where the deletion would happen.
+   *
+   * Above the router, not inside it: none of the three is one screen's data. The identity is
+   * what every label and every safety data sheet prints from any route, the register is what
+   * the classification reads, and the product list has to survive navigation.
+   */
+  it('mounts the three account-scoped stores, above the router and inside the entitlement', () => {
+    // `[\s\S]*?` between the entitlement and the first store, because the comment explaining
+    // the arrangement sits there and is worth more than a tighter regex.
+    expect(source).toMatch(
+      /<EntitlementProvider>[\s\S]*?<SettingsProvider>\s*<MaterialsProvider>\s*<ProductsProvider>\s*<AppRoutes \/>/
+    );
+    // AppRoutes is what owns BrowserRouter, so matching it above is what places all three
+    // outside the router. Asserted separately so a move of the router reads as its own failure.
+    expect(source).toMatch(/function AppRoutes\(\)[\s\S]*?<BrowserRouter>/);
+  });
+
   it('is a check that can actually fail', () => {
     expect([...`import { Materials } from './pages/Materials';`.matchAll(EAGER_SCREEN)]).
     toHaveLength(1);
     expect([...`import('./pages/Studio')`.matchAll(SPLIT_SCREEN)]).toHaveLength(1);
+    // And the provider guard above: the same shape with one store removed must not match.
+    expect(
+      `<EntitlementProvider><SettingsProvider><ProductsProvider><AppRoutes />`
+    ).not.toMatch(
+      /<EntitlementProvider>[\s\S]*?<SettingsProvider>\s*<MaterialsProvider>\s*<ProductsProvider>\s*<AppRoutes \/>/
+    );
   });
 });

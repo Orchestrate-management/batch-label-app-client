@@ -323,3 +323,148 @@ describe('sendSetPasswordLink', () => {
     );
   });
 });
+
+/* ------------------------------------------------------------------ email */
+
+describe('changeEmail', () => {
+  it('asks Supabase to start the change and reports the address it was sent to', async () => {
+    const { changeEmail } = await loadAccount();
+
+    const result = await changeEmail({
+      currentEmail: 'maker@example.com',
+      nextEmail: 'new@example.com'
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.pending).toBe('new@example.com');
+    expect(updateUser).toHaveBeenCalledWith(
+      { email: 'new@example.com' },
+      expect.objectContaining({ emailRedirectTo: expect.any(String) })
+    );
+  });
+
+  /**
+   * THE ONE THING THIS FUNCTION MAY NOT DO. `updateUser({ email })` returns success as soon as
+   * the confirmation is away; the address has not moved and the maker still signs in with the
+   * old one. Anything here that reads as "changed" is a lie about how they get back in.
+   */
+  it('never reports the address as changed', async () => {
+    const { changeEmail } = await loadAccount();
+    const result = await changeEmail({
+      currentEmail: 'maker@example.com',
+      nextEmail: 'new@example.com'
+    });
+    expect(result).not.toHaveProperty('changed');
+    expect(Object.keys(result).sort()).toEqual(['error', 'pending']);
+  });
+
+  it('does not send a request for the address already in use', async () => {
+    const { changeEmail } = await loadAccount();
+    const result = await changeEmail({
+      currentEmail: 'Maker@Example.com',
+      nextEmail: 'maker@example.com'
+    });
+    expect(result.error).toMatch(/already your address/i);
+    expect(updateUser).not.toHaveBeenCalled();
+  });
+
+  it('refuses something that is not an address, before the network', async () => {
+    const { changeEmail } = await loadAccount();
+    expect((await changeEmail({ currentEmail: null, nextEmail: 'nope' })).error).toMatch(
+      /does not look like an email address/i
+    );
+    expect(updateUser).not.toHaveBeenCalled();
+  });
+
+  it('tells a rate limit apart from a failure worth retrying immediately', async () => {
+    updateUser.mockResolvedValue({
+      data: {},
+      error: { message: 'rate limited', status: 429 }
+    });
+    const { changeEmail } = await loadAccount();
+    const result = await changeEmail({ currentEmail: 'a@b.co', nextEmail: 'c@d.co' });
+    expect(result.error).toMatch(/try again in a few minutes/i);
+    expect(result.pending).toBeUndefined();
+  });
+
+  it('names a connection problem as a connection problem', async () => {
+    updateUser.mockResolvedValue({
+      data: {},
+      error: Object.assign(new Error('Failed to fetch'), {
+        __isAuthError: true,
+        name: 'AuthRetryableFetchError',
+        status: 0
+      })
+    });
+    const { changeEmail } = await loadAccount();
+    expect((await changeEmail({ currentEmail: 'a@b.co', nextEmail: 'c@d.co' })).error).toMatch(
+      /could not reach batchlabel/i
+    );
+  });
+
+  it('says so rather than pretending when sign in is not connected', async () => {
+    const { changeEmail } = await loadAccount(false);
+    expect((await changeEmail({ currentEmail: 'a@b.co', nextEmail: 'c@d.co' })).error).toMatch(
+      /not connected/i
+    );
+  });
+});
+
+describe('pendingEmailChange', () => {
+  it('reads the waiting address off the session user', async () => {
+    const { pendingEmailChange } = await loadAccount();
+    expect(pendingEmailChange({ new_email: 'next@example.com' } as never)).toBe(
+      'next@example.com'
+    );
+  });
+
+  it('reads a user with no pending change, and no user at all, as none', async () => {
+    const { pendingEmailChange } = await loadAccount();
+    expect(pendingEmailChange({ email: 'a@b.co' } as never)).toBeNull();
+    expect(pendingEmailChange({ new_email: '  ' } as never)).toBeNull();
+    expect(pendingEmailChange(null)).toBeNull();
+  });
+});
+
+/* --------------------------------------------------------------- sessions */
+
+describe('signOutEverywhere', () => {
+  it('revokes globally, which is not the scope a password change uses', async () => {
+    const { signOutEverywhere } = await loadAccount();
+
+    const result = await signOutEverywhere();
+
+    expect(result.error).toBeNull();
+    expect(signOut).toHaveBeenCalledWith({ scope: 'global' });
+  });
+
+  /**
+   * The most dangerous false confirmation on the account screen. Somebody presses this because
+   * they think a device they cannot reach is signed in; being told it worked when it did not
+   * is the one outcome that leaves them worse off than not having the button.
+   */
+  it('reports a failed revoke as a failure, and says nothing was signed out', async () => {
+    signOut.mockResolvedValue({ error: { message: 'nope', status: 500 } });
+    const { signOutEverywhere } = await loadAccount();
+
+    const result = await signOutEverywhere();
+
+    expect(result.error).toBeTruthy();
+    expect(result.error).toMatch(/could not sign your devices out/i);
+    expect(result.error).not.toMatch(/have been signed out/i);
+  });
+
+  it('names a connection problem, and says nothing was signed out', async () => {
+    signOut.mockResolvedValue({
+      error: Object.assign(new Error('Failed to fetch'), {
+        __isAuthError: true,
+        name: 'AuthRetryableFetchError',
+        status: 0
+      })
+    });
+    const { signOutEverywhere } = await loadAccount();
+    const result = await signOutEverywhere();
+    expect(result.error).toMatch(/could not reach batchlabel/i);
+    expect(result.error).toMatch(/nothing was signed out/i);
+  });
+});

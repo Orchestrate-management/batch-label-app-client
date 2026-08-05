@@ -1,7 +1,7 @@
 import { ArtefactInstance, Market, Product } from '../../lib/model';
 import { Derivation } from '../../lib/derive';
 import { BUSINESS, addressForMarket } from '../../lib/identity';
-import { packagingById } from '../../lib/catalog';
+import { packagingById } from '../../lib/material-index';
 import { CandleSafetySymbols, CeMark, PaoSymbol, Pictogram, WeeeBin } from './Symbols';
 import { SdsDocument } from './SdsDocument';
 import { buildSds } from '../../lib/sds';
@@ -248,8 +248,16 @@ function CosmeticLabel({ product, derivation, market, options }: RenderProps) {
           {on(options, 'batch') && <div>Batch {options.identityCode}</div>}
         </div>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: '1.5mm', flex: 'none' }}>
-          {on(options, 'pao') &&
-          <PaoSymbol sizeMm={Math.max(options.pictogramMm * 0.8, 6)} months={Number(cosmetic.pao.replace('M', ''))} />
+          {/* `cosmetic.pao` IS EMPTY WHEN NOTHING IS SET, and the symbol goes with it.
+              Rendering it unconditionally over `Number('')` drew an open jar reading "0M" —
+              a legal marking on a cosmetic, at actual size, on a proof, stating a durability
+              nobody has set. `derivePhased` returns '' rather than '0M' precisely so this
+              check is possible. */}
+          {on(options, 'pao') && cosmetic.pao !== '' &&
+          <PaoSymbol
+            sizeMm={Math.max(options.pictogramMm * 0.8, 6)}
+            months={Number(cosmetic.pao.replace('M', ''))} />
+
           }
           {on(options, 'nominalContent') &&
           <span style={{ fontSize: pt(options.fontPt + 1), fontWeight: 700 }}>

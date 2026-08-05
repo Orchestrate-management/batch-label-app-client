@@ -9,7 +9,43 @@ export type CategoryId = 'home-fragrance' | 'cosmetics' | 'electronics';
 
 export type RegimeId = 'clp' | 'en15494' | 'cpr' | 'ce' | 'rohs' | 'weee' | 'gpsr';
 
-export type MaterialClass = 'ingredient' | 'packaging' | 'component';
+/**
+ * WHAT A MATERIAL CAN BE, AND WHY 'component' IS NOT ONE OF THEM.
+ *
+ * Rhys: components are "not going to be a priority for a long time, better to just get rid of
+ * it". The COMPONENTS array in lib/catalog.ts, the RoHS status it carried, the conformity
+ * document store on the materials screen and the "<component> has no material declaration"
+ * pipeline branch all went with it. The database says the same thing and says it harder:
+ * `materials_class_check` and `reference_materials_class_check` list two values, so the row
+ * cannot come back through a side door either.
+ *
+ * A bill of materials still EXISTS as a specification shape — BomSpec below — because the
+ * electronics category is still a category. What it no longer has is materials to point at,
+ * and deriveBom now says that plainly instead of reading conformity facts off a constant.
+ */
+export type MaterialClass = 'ingredient' | 'packaging';
+
+/**
+ * Whose record this is: the maker's own, or the catalogue Batchlabel ships.
+ *
+ * THE PRECEDENCE RULE, which every screen showing a material has to be able to state: the
+ * maker's own row wins, unconditionally, whenever both describe the same thing. It is decided
+ * once, in the `batchlabel.resolved_materials` view, and never re-implemented here — see
+ * lib/materials.ts, which reads that view rather than merging two lists in the browser.
+ */
+export type MaterialSource = 'account' | 'reference';
+
+/**
+ * Where a REFERENCE material's classification came from. Not null in the database, on purpose.
+ *
+ * 'illustrative-example' means made up to show the shape. It exists so that importing the old
+ * invented catalogue is possible only by declaring what it is — and a screen rendering one has
+ * to label it, which is what `ReferenceProvenanceNote` on the materials screen does.
+ */
+export type MaterialProvenance =
+'supplier-document' |
+'regulatory-source' |
+'illustrative-example';
 
 /**
  * The two outputs. 'sds' is the finished-product safety data sheet; everything
@@ -70,17 +106,37 @@ export type SupplierDocument = {
 };
 
 export type Allergen = {
+  /**
+   * The child row's own id, on a material the account owns.
+   *
+   * Carried so that a remove control has something to delete. It used to be absent, and the
+   * consequence was a control that could not act — a bin icon beside a hazard statement with
+   * nothing behind it is the same defect as a Resolve link to a screen that cannot resolve.
+   * Undefined on a reference material, whose figures live in an immutable version document
+   * and cannot be removed by anybody.
+   */
+  rowId?: string;
   name: string;
   /** Percentage present in the raw material at 100 percent. */
   pct: number;
 };
 
 export type HazardAt100 = {
+  /** The child row's own id, on a material the account owns. See Allergen.rowId. */
+  rowId?: string;
   code: string;
   statement: string;
   hazardClass: string;
-  /** Generic concentration limit, as a percentage of the material in the finished mixture. */
-  gcl: number;
+  /**
+   * Generic concentration limit, as a percentage of the material in the finished mixture.
+   *
+   * OPTIONAL, BECAUSE A SUPPLIER DOES NOT ALWAYS STATE ONE. `material_hazards.gcl` is nullable
+   * for that reason, and the column comment says what a reader must do with the null: "a null
+   * must be rendered as unknown and never as zero". Zero would transfer the hazard at every
+   * load; a hundred would transfer it at none. Both are answers, and we do not have one — so
+   * the derivation reports the hazard as undecidable rather than deciding it.
+   */
+  gcl?: number;
   /** Specific concentration limit given by the supplier, where stated. */
   scl?: number;
   pictogram?: 'GHS07' | 'GHS09' | 'GHS02';
@@ -89,28 +145,87 @@ export type HazardAt100 = {
 };
 
 export type IfraLimit = {
+  /** The child row's own id, on a material the account owns. See Allergen.rowId. */
+  rowId?: string;
   category: string;
   description: string;
   max: number;
 };
 
-export type IngredientRole =
-'Fragrance oil' |
-'Wax' |
-'Carrier' |
-'Dye' |
-'Additive' |
-'Plant oil' |
-'Antioxidant';
+/**
+ * The part a material plays in a composition.
+ *
+ * A STRING, NOT A CLOSED UNION, since materials became the maker's own rows. `role` is a free
+ * text column on batchlabel.materials, so a closed union here would be a type asserting
+ * something about data this app does not control — and the first maker to type "Fragrance
+ * concentrate" would have their row silently mistyped rather than rejected. INGREDIENT_ROLES
+ * is what the picker offers; a stored value outside it still renders.
+ */
+export type IngredientRole = string;
+
+export const INGREDIENT_ROLES = [
+'Fragrance oil',
+'Wax',
+'Carrier',
+'Dye',
+'Additive',
+'Plant oil',
+'Antioxidant',
+'Preservative',
+'Emulsifier',
+'Other'] as
+const;
 
 type MaterialBase = {
+  /**
+   * The account material's uuid, or — for a reference material — its catalogue slug.
+   *
+   * One id space, because a specification stores exactly one string per composition slot
+   * (`specifications.fragrance_id` and friends) and a lookup has to be able to resolve it
+   * without being told which half of the register it came from. `source` says which it was.
+   */
   id: string;
+  source: MaterialSource;
+  /** Set on a reference material. Absent on the maker's own, whose provenance is themselves. */
+  provenance?: MaterialProvenance;
+  /** The reference material this own-row stands in place of, when it stands in for one. */
+  overridesReferenceId?: string;
+  /**
+   * The catalogue row's own uuid, on a reference material.
+   *
+   * Carried separately from `id` because `id` is the slug — the string a specification stores
+   * — and the override link is a foreign key to the uuid. A screen offering "hold my own
+   * version of this" needs the second, and guessing it from the first is not possible.
+   */
+  referenceMaterialId?: string;
+  /** The immutable reference version this row's figures were published in. */
+  referenceVersionId?: string;
+  referenceVersion?: number;
+  /** The maker's own stable id for this material, where they set one. */
+  slug?: string;
   name: string;
-  supplier: string;
-  supplierCode: string;
-  document: SupplierDocument;
+  supplier?: string;
+  supplierCode?: string;
+  /**
+   * The document this material's figures were read from, WHERE ONE IS RECORDED.
+   *
+   * OPTIONAL, AND THAT IS THE CHANGE. It used to be required, because every material was a
+   * shipped catalogue row with a document written into the bundle beside it. A maker's own
+   * material may have no document at all — and a citation is the one thing that must never be
+   * invented, so an absent document means every "Source:" line derived from it is omitted
+   * rather than filled with a plausible one. See `materialCitation` in lib/material-index.ts.
+   */
+  document?: SupplierDocument;
+  /**
+   * Whether a FILE is actually held for that document, as opposed to the maker having typed
+   * its reference and date. `material_documents.storage_path` null means no file is held, and
+   * a screen may not render a document row as though something had been received.
+   */
+  documentFileHeld?: boolean;
   categories: CategoryId[];
   notes?: string;
+  /** True when this material is the maker's own and can therefore be edited or archived. */
+  editable: boolean;
 };
 
 export type IngredientMaterial = MaterialBase & {
@@ -126,23 +241,15 @@ export type IngredientMaterial = MaterialBase & {
 
 export type PackagingMaterial = MaterialBase & {
   class: 'packaging';
-  format: string;
-  capacityMl: number;
-  labelAreaMm: {width: number;height: number;};
-  foodContact: boolean;
-  childResistant: boolean;
+  format?: string;
+  /** Millilitres. Absent when the maker has not recorded one — never defaulted to a number. */
+  capacityMl?: number;
+  labelAreaMm?: {width: number;height: number;};
+  foodContact?: boolean;
+  childResistant?: boolean;
 };
 
-export type ComponentMaterial = MaterialBase & {
-  class: 'component';
-  partNumber: string;
-  rohsStatus: 'Compliant' | 'Compliant with exemption' | 'Not declared';
-  rohsExemption?: string;
-  standards: string[];
-  certificateExpiry: string;
-};
-
-export type Material = IngredientMaterial | PackagingMaterial | ComponentMaterial;
+export type Material = IngredientMaterial | PackagingMaterial;
 
 /* ---------------------------------------------------------------- specs */
 
@@ -193,14 +300,36 @@ export type Spec = MixtureSpec | PhasedSpec | BomSpec;
 /**
  * What `version` and `printedOn` hold when nothing has been produced.
  *
- * There is no artefacts table, so on a real account every artefact carries these. They are
- * named here rather than written out at each site because two different files have to be able
- * to ASK whether an artefact has been produced: products.ts sets them, and sds.ts must not
- * print "Revision Not yet produced, issued —." onto the face of a sixteen-section safety data
- * sheet somebody may hand to a regulator.
+ * They are named here rather than written out at each site because two different files have to
+ * be able to ASK whether an artefact has been produced: products.ts sets them, and sds.ts must
+ * not print "Revision Not yet produced, issued —." onto the face of a sixteen-section safety
+ * data sheet somebody may hand to a regulator.
  */
 export const ARTEFACT_NOT_PRODUCED = 'Not yet produced';
 export const ARTEFACT_NO_PRINT_DATE = '—';
+
+/**
+ * Where an artefact stands against the composition it was produced from. FOUR STATES, and the
+ * two that are not `current`/`out-of-date` are the whole reason this replaced a boolean.
+ *
+ * `current: boolean` could not tell the difference between "we checked and it matches", "we
+ * checked and it does not", "nothing has ever been produced so there is nothing to check" and
+ * "we could not get an answer". Every reader had to pick one of two pills for four facts, and
+ * the pick that shipped was the worst one: every unproduced artefact was `current: true`, so
+ * the specification screen painted a green "Current" pill on every row of a list whose every
+ * row also said "Not yet produced".
+ *
+ *   not-produced  no artefact row exists for this surface. NOT a claim about currency.
+ *   current       a produced artefact exists and batchlabel.artefact_source_fingerprint still
+ *                 returns the hash stored on it. This is the only state that may be called up
+ *                 to date, and it is a database answer rather than an assumption.
+ *   out-of-date   a produced artefact exists and the fingerprint has moved. The composition,
+ *                 the pack, a pinned material or the printed business identity changed after
+ *                 it was produced.
+ *   unknown       an artefact exists and we could not compute the fingerprint — the RPC failed
+ *                 or returned null. Must never render as either of the two answers.
+ */
+export type ArtefactCurrency = 'not-produced' | 'current' | 'out-of-date' | 'unknown';
 
 export type ArtefactInstance = {
   type: ArtefactType;
@@ -209,10 +338,55 @@ export type ArtefactInstance = {
   heightMm: number;
   version: string;
   printedOn: string;
-  /** False when the specification changed after this artefact version was printed. */
-  current: boolean;
+  currency: ArtefactCurrency;
+  /**
+   * TRUE when Batchlabel did not generate the file, which today is every row there is.
+   *
+   * `batchlabel.artefacts.is_placeholder` defaults TRUE precisely so that a stub which writes
+   * a row is marked as a stub without having to remember to. A screen must read this before
+   * calling anything produced: what these rows record is that the MAKER printed something and
+   * which composition it was printed from, not that this app produced a file.
+   */
+  isPlaceholder: boolean;
   driftNote?: string;
 };
+
+/* --------------------------------------------------------------- record */
+
+/**
+ * One line of the append-only log, as a screen needs it.
+ *
+ * Every field here came from batchlabel.record_events. `recordedAt` is `occurred_at` — when
+ * the maker says the thing happened — and not `recorded_at`, which is when we learned of it;
+ * a batch written up on Friday must not claim to have been made on Friday, and the same
+ * applies to signing a declaration.
+ */
+export type RecordedEvidence = {
+  id: string;
+  /** `occurred_at`: when the maker says it happened. */
+  recordedAt: string;
+  /** A document number, a submission reference, a person's name. Optional by design. */
+  reference: string | null;
+  summary: string;
+};
+
+/**
+ * What the account has RECORDED about a product. Not what is true of it.
+ *
+ * THE DISTINCTION IS THE ENTIRE POINT. Batchlabel does not hold a product information file,
+ * has never seen a shop listing and cannot inspect a signed declaration. What it can hold is
+ * the maker's own entry in an append-only log saying they did it and when. So every sentence
+ * built from this must be about our record — "you have not recorded this" — and never about
+ * their business — "no product information file has been assembled".
+ */
+export type ProductEvidence = {
+  /** Keyed by obligation id; see src/lib/regimes.ts. */
+  obligations: Record<string, RecordedEvidence>;
+  /** Keyed by safety data sheet section number, 1 to 16. */
+  sdsSections: Record<number, RecordedEvidence>;
+};
+
+export const NO_EVIDENCE: ProductEvidence = { obligations: {}, sdsSections: {} };
 
 /* -------------------------------------------------------------- product */
 
@@ -252,8 +426,17 @@ export type Product = {
     weeeRegistration?: string;
     modelYear?: string;
   };
-  /** Keyed by obligation id. Missing means not satisfied. */
-  obligations: Record<string, boolean>;
+  /**
+   * What the maker has recorded against this product in the append-only log.
+   *
+   * THIS REPLACED `obligations: Record<string, boolean>`, which was read from the
+   * `products.obligations` jsonb column — a column written by nothing. createProduct inserted
+   * no key and no screen ever set one, so every obligation evaluated to "outstanding" forever
+   * on every product of every account, and fifteen of them said so in the voice of a finding
+   * about the maker's business. The column is no longer read; `batchlabel.record_events`,
+   * filtered on its typed `obligation_id`, is the source, and it has a write path.
+   */
+  evidence: ProductEvidence;
 };
 
 /* --------------------------------------------------------------- record */

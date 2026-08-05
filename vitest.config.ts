@@ -85,6 +85,13 @@ export default defineConfig({
         // SKUs it reads as data loss.
         'src/lib/products.ts',
         'src/lib/product-store.tsx',
+        // The record log. On this list under the third clause and under the first: a recall
+        // search that answers "no batch used this lot" when it had no batches to look in is a
+        // false negative on the one screen somebody opens the morning a supplier withdraws a
+        // drum, and the difference between that sentence and "there was nothing to search" is
+        // one number this file is responsible for carrying. Everything it writes is
+        // append-only, so a write reported wrongly cannot be undone by anybody.
+        'src/lib/records.ts',
         // The two the shell stream left for whoever next opened this list (TODO entry 6's
         // follow-up). Both meet the rule above on the third clause rather than the first two:
         // `hasErrorSink()` drives a sentence the crash screen says to a customer about whether
@@ -112,6 +119,35 @@ export default defineConfig({
         // failure reached us when it did not.
         'src/lib/scrub-report.ts',
         'src/lib/error-sink.ts',
+        // The settings rail. On this list under the third clause and hard: between them these
+        // three decide what a CLP label and sections 1 and 15 of a safety data sheet print as
+        // the supplier — the name, address and telephone a regulator reads — and whether a
+        // write that PostgREST answered with 204 and no rows is reported to a maker as a save.
+        // identity.ts is also the one module-level holder in the app that survives a route
+        // change, so getting its clearing wrong prints one account's registered address under
+        // another account's product.
+        'src/lib/identity.ts',
+        'src/lib/settings-data.ts',
+        'src/lib/settings-store.tsx',
+        // The materials register, added when this list was reconciled across four branches —
+        // and added because of the rule above rather than in spite of it. All three clauses
+        // apply. materials.ts is every read and write of the rows a maker's classification is
+        // derived from, account-filtered in the same way products.ts is. material-index.ts is
+        // the synchronous holder those derivations read during render, and it is the one place
+        // that can tell "the register says no" apart from "the register has not answered" — a
+        // mistake there is a screen saying no hazard statements are required by a lookup that
+        // had not landed. materials-store.tsx clears the holder on every account change, so
+        // getting it wrong shows one account's materials under another's product.
+        'src/lib/materials.ts',
+        'src/lib/material-index.ts',
+        'src/lib/materials-store.tsx',
+        // The compliance write. Third clause, squarely: this is the only thing that can move an
+        // obligation off "outstanding", and it does it by writing an append-only row nobody can
+        // afterwards correct. domain.ts is one exported constant and one line, on the list
+        // because every one of the files above reads its schema through it and a wrong schema
+        // does not error — it answers empty.
+        'src/lib/evidence.ts',
+        'src/lib/domain.ts',
       ],
       thresholds: {
         lines: 70,

@@ -71,43 +71,60 @@ describe('the product fixtures', () => {
 });
 
 /**
- * The shipped catalogue must hold reference data only, never account-scoped state.
+ * NO SHIPPING MODULE MAY DECLARE A MATERIALS CATALOGUE.
  *
- * The guard above watches imports of fixtures.ts, and INBOX and DOCUMENT_HISTORY lived in
- * catalog.ts — which ships — so it saw nothing while Materials opened on "3 documents
- * received, none read yet" for an account that had received none, and while the pipeline
- * told makers, under their own product name, that a newer sheet was waiting and their
- * allergen table had changed.
+ * WHAT THIS TEST USED TO BE. It read `src/lib/catalog.ts` and asserted that two names —
+ * INBOX and DOCUMENT_HISTORY — were not declared in it. That file existed because the app
+ * shipped a materials catalogue in its bundle: fourteen ingredients, seven packs and five
+ * components, with hazard classifications, specific concentration limits, allergen
+ * percentages and RoHS declarations, every figure invented, every one rendered as fact on a
+ * label and in a safety data sheet.
  *
- * The distinction the catalogue has to hold: a fragrance oil that exists in the world is
- * REFERENCE data and belongs here; a document THIS account received is per-account STATE and
- * belongs in Supabase. Both look like a const array in a bundle. Only one is a lie when it
- * renders for somebody who never saw it.
+ * The file is deleted. Materials are rows in `batchlabel.materials` and
+ * `batchlabel.reference_materials` now, the reference catalogue ships empty, and a reference
+ * row cannot be published without declaring where its figures came from. The data itself is
+ * in fixtures.ts — it is test data, which is what it always was — and the guard at the top of
+ * this file is what keeps it out of the bundle.
  *
- * This assertion is narrow by design — it names the two that escaped rather than pretending
- * to recognise the category. A regex cannot tell reference from state. What it can do is
- * stop these two coming back, and put the question in front of whoever adds the next one.
+ * SO THE ASSERTION IS THE STRONGER ONE NOW: no shipping module declares a catalogue at all.
+ * The distinction the old comment drew is still exactly right and is worth keeping in front
+ * of whoever adds the next const — a fragrance oil that exists in the world is reference data
+ * and a document THIS account received is per-account state, and both look like a const array
+ * in a bundle. What has changed is that the first one is a database row too, because a
+ * classification a maker prints onto a legal label has to be traceable to a document rather
+ * than to a literal somebody typed.
  */
-describe('the shipped materials catalogue', () => {
-  const catalogue = readFileSync(join(SRC, 'lib', 'catalog.ts'), 'utf8');
+describe('the deleted materials catalogue', () => {
+  const shipping = walk(SRC).
+  filter((path) => !isTestFile(path)).
+  filter((path) => path !== join(SRC, 'lib', 'fixtures.ts'));
 
-  it.each(['INBOX', 'DOCUMENT_HISTORY'])(
-    'does not declare %s — that is per-account state, not reference data',
+  it.each(['INGREDIENTS', 'PACKAGING', 'COMPONENTS', 'MATERIALS', 'INBOX', 'DOCUMENT_HISTORY'])(
+    'is not declared as %s by anything that ships',
     (name) => {
+      const offenders = shipping.
+      filter((path) => new RegExp(`export\\s+const\\s+${name}\\b`).test(readFileSync(path, 'utf8'))).
+      map((path) => relative(SRC, path));
+
       expect(
-        new RegExp(`export\\s+const\\s+${name}\\b`).test(catalogue),
-        `catalog.ts declares ${name}. It ships to every browser, so anything here renders ` +
-        'identically for every account. A document an account received is that account\'s ' +
-        'state and belongs in Supabase; if there is no table for it yet, the screen says ' +
-        '"not built yet" rather than showing a plausible example.'
-      ).toBe(false);
+        offenders,
+        `${offenders.join(', ')} declares ${name}. It ships to every browser, so anything in ` +
+        'it renders identically for every account. A material a maker buys is their row in ' +
+        'batchlabel.materials; a material Batchlabel publishes is a row in ' +
+        'reference_materials with a stated provenance. Neither is a literal in a bundle.'
+      ).toEqual([]);
     }
   );
 
-  it('still holds the reference data the app legitimately ships', () => {
-    // Non-vacuity, and the other half of the point: this file is not the problem, its
-    // contents were. A materials catalogue everyone shares is exactly right.
-    expect(/export\s+const\s+MATERIALS\b/.test(catalogue)).toBe(true);
+  it('still exists as test data, because the derivation tests need materials with shape', () => {
+    // Non-vacuity, and the other half of the point: the data was not the problem, the claim
+    // it made was. A fragrance oil with a supplier specific concentration limit is exactly
+    // what a classification test should reason about.
+    const fixtures = readFileSync(join(SRC, 'lib', 'fixtures.ts'), 'utf8');
+    expect(/export\s+const\s+FIXTURE_MATERIALS\b/.test(fixtures)).toBe(true);
+    // And it says what it is: every entry declares itself an illustrative example, which is
+    // the one provenance the database accepts without a named document.
+    expect(fixtures).toContain("provenance: 'illustrative-example'");
   });
 });
 

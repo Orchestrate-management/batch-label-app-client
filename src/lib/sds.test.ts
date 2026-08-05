@@ -35,7 +35,7 @@ function freshMixture(): Product {
     spec: { ...spec, kind: 'mixture', load: 8 } as Product['spec'],
     artefacts: artefactsFor(category, 'mixture'),
     identifiers: {},
-    obligations: {}
+    evidence: { obligations: {}, sdsSections: {} }
   };
 }
 
@@ -49,11 +49,25 @@ describe('what section 16 claims about where the sheet came from', () => {
     expect(lines.join(' ')).not.toMatch(/supplier documents on file/i);
   });
 
-  it('names the reference data it actually used, and says none of theirs is held', () => {
+  /**
+   * THE ATTRIBUTION MOVED, BECAUSE THE DATA MOVED.
+   *
+   * This asserted that the sheet credited "Batchlabel's reference data", which was the honest
+   * sentence while every classification came from a catalogue shipped in the bundle. That
+   * catalogue is deleted: the figures now come from the maker's OWN materials register, and
+   * crediting them to us on the one document a regulator reads would understate whose figures
+   * they are — the mirror image of the fault this test was written to catch.
+   *
+   * What has not changed, and is still asserted, is the second half: no supplier document of
+   * theirs is held, because there is still nowhere to upload one.
+   */
+  it('credits the maker\'s own register, and still says no document of theirs is held', () => {
     const lines = sheetFor(freshMixture()).sections.flatMap((section) => section.lines ?? []);
     const joined = lines.join(' ');
-    expect(joined).toMatch(/Batchlabel's reference data/i);
-    expect(joined).toMatch(/No supplier document of yours is held/i);
+    expect(joined).toMatch(/your own register/i);
+    expect(joined).toMatch(/holds no copy of any supplier document/i);
+    // And it does not credit a shipped library that no longer exists.
+    expect(joined).not.toMatch(/Batchlabel's reference data/i);
     // Still a draft until a competent person signs it — that part was true and stays.
     expect(joined).toMatch(/not issued until signed/i);
   });
@@ -84,6 +98,9 @@ describe('what section 16 claims about where the sheet came from', () => {
     sections.
     flatMap((section) => section.lines ?? []).
     join(' ');
-    expect(joined).toMatch(/Revision v2, issued 2026-07-01\./);
+    // The date is FORMATTED, not echoed. `printedOn` comes off a timestamptz column, so an
+    // unformatted line printed "issued 2026-07-01T09:00:00.000Z." in the one section of a
+    // safety data sheet a person reads for provenance.
+    expect(joined).toMatch(/Revision v2, issued 1 Jul 2026\./);
   });
 });

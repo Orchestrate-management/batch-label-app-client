@@ -8,7 +8,9 @@ import { AuthProvider, RequireAuth } from './lib/auth';
 import { EntitlementProvider } from './lib/entitlement';
 import { lazyScreen } from './lib/lazy-screen';
 import { MetaTrackingProvider } from './lib/meta-consent';
+import { MaterialsProvider } from './lib/materials-store';
 import { ProductsProvider } from './lib/product-store';
+import { SettingsProvider } from './lib/settings-store';
 import { WorkspaceProvider } from './lib/workspace';
 import { BillingReturn } from './pages/BillingReturn';
 import { Studio } from './pages/Studio';
@@ -101,9 +103,27 @@ export function App() {
         <RequireAuth>
           <MetaTrackingProvider>
             <EntitlementProvider>
-              <ProductsProvider>
-                <AppRoutes />
-              </ProductsProvider>
+              {/* THREE ACCOUNT-SCOPED READS, ALL INSIDE THE ENTITLEMENT AND ALL OUTSIDE THE
+                  ROUTER, and the nesting order between them carries no meaning: nothing in one
+                  read depends on another, so they fire in parallel.
+
+                  Inside the entitlement, because the account to scope each read to is the one
+                  the entitlement resolved for this brand.
+
+                  Outside the router, because none of the three is a screen's data.
+                  SettingsProvider holds the printed supplier block, which every label preview
+                  and every safety data sheet section 1 renders from any route, and which has
+                  to be loaded whether or not anybody opened Settings. MaterialsProvider holds
+                  the register that the specification pickers, the classification and the
+                  pipeline all read. ProductsProvider holds the list, so a maker moving between
+                  Studio and a product does not re-query on each hop. */}
+              <SettingsProvider>
+                <MaterialsProvider>
+                  <ProductsProvider>
+                    <AppRoutes />
+                  </ProductsProvider>
+                </MaterialsProvider>
+              </SettingsProvider>
             </EntitlementProvider>
           </MetaTrackingProvider>
         </RequireAuth>

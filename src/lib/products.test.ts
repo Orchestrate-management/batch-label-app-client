@@ -18,6 +18,24 @@ const db = vi.hoisted(() => {
     // are consumed: the lookup ends in maybeSingle(), these are awaited directly.
     productsRead: { data: [] as unknown, error: null as unknown },
     specificationsRead: { data: [] as unknown, error: null as unknown },
+    // The two reads that joined the pair. Artefacts are what turn "Not yet produced" into a
+    // version and a date; record_events carries the obligation evidence that used to come from
+    // a jsonb column nothing wrote. Both are settable independently, because the failure that
+    // matters is one of the four coming back broken while the others are fine.
+    artefactsRead: { data: [] as unknown, error: null as unknown },
+    eventsRead: { data: [] as unknown, error: null as unknown },
+    // What batchlabel.artefact_source_fingerprint returned, per product id, plus the calls
+    // made. `null` is a fingerprint we could not get, which must render as `unknown` and never
+    // as either real answer.
+    fingerprints: {} as Record<string, unknown>,
+    fingerprintError: null as unknown,
+    fingerprintCalls: [] as string[],
+    // Every INSERT this fake saw, by table. The artefact write path is two inserts across two
+    // tables and the half that lands matters.
+    inserts: [] as Array<[string, Record<string, unknown>]>,
+    artefactInsert: { data: null as unknown, error: null as unknown },
+    eventInsert: { data: null as unknown, error: null as unknown },
+    versionLookup: { data: null as unknown, error: null as unknown },
     specPayload: null as Record<string, unknown> | null,
     productPayload: null as Record<string, unknown> | null,
     lookupFilters: [] as Array<[string, unknown]>,
@@ -66,12 +84,29 @@ const db = vi.hoisted(() => {
       state.schemas.push(name);
       return supabase;
     },
+    // The domain functions the app calls through PostgREST. Only one today.
+    async rpc(name: string, args: Record<string, unknown>) {
+      if (name !== 'artefact_source_fingerprint') return { data: null, error: null };
+      const id = String(args.p_product_id);
+      state.fingerprintCalls.push(id);
+      if (state.fingerprintError) return { data: null, error: state.fingerprintError };
+      return { data: state.fingerprints[id] ?? null, error: null };
+    },
     from(table: string) {
       return {
         insert(payload: Record<string, unknown>) {
+          state.inserts.push([table, payload]);
           if (table === 'specifications') state.specPayload = payload;
-          else state.productPayload = payload;
-          return query(() => table === 'specifications' ? state.specInsert : state.productInsert);
+          else if (table === 'products') state.productPayload = payload;
+          return query(() =>
+          table === 'specifications' ?
+          state.specInsert :
+          table === 'products' ?
+          state.productInsert :
+          table === 'artefacts' ?
+          state.artefactInsert :
+          state.eventInsert
+          );
         },
         // Two callers reach this: createProduct's "did it land anyway?" lookup, which ends in
         // maybeSingle(), and fetchProducts' two table reads, which are awaited directly.
@@ -83,15 +118,31 @@ const db = vi.hoisted(() => {
             is: chain,
             limit: chain,
             order: chain,
+            // `in` is how fetchProducts narrows the log to the compliance kinds. Recorded, not
+            // ignored: a read that forgot it would drag every batch record onto a screen
+            // assembling a product.
+            in: (column: string, values: unknown) => {
+              state.lookupFilters.push([`in:${column}`, values]);
+              return q;
+            },
             eq: (column: string, value: unknown) => {
               state.lookupFilters.push([column, value]);
               return q;
             },
-            single: async () => state.lookup,
-            maybeSingle: async () => state.lookup,
+            // The version lookup before an artefact insert ends in maybeSingle() on the
+            // artefacts table; createProduct's "did it land anyway?" lookup ends the same way
+            // on products.
+            single: async () => table === 'artefacts' ? state.versionLookup : state.lookup,
+            maybeSingle: async () => table === 'artefacts' ? state.versionLookup : state.lookup,
             then: (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
             Promise.resolve(
-              table === 'products' ? state.productsRead : state.specificationsRead
+              table === 'products' ?
+              state.productsRead :
+              table === 'specifications' ?
+              state.specificationsRead :
+              table === 'artefacts' ?
+              state.artefactsRead :
+              state.eventsRead
             ).then(resolve, reject)
           });
           return q;
@@ -125,18 +176,49 @@ const db = vi.hoisted(() => {
 
 vi.mock('./supabase', () => ({ supabase: db.supabase, isSupabaseConfigured: true }));
 
+/**
+ * The record log, stubbed, and stubbed for two reasons rather than one.
+ *
+ * The first is isolation: `createProduct` and `saveComposition` now write a line to
+ * `batchlabel.record_events` when they succeed, and the fake above answers every table the
+ * same way — so an unstubbed log insert lands in `productPayload` and every assertion about
+ * what a product INSERT sent starts reading the log entry instead.
+ *
+ * The second is that the calls themselves are worth asserting. A create that saved and did not
+ * appear in the log is a hole in a compliance record, and a REFUSED create that appeared in it
+ * would be a record of something that never happened — which is worse. Both are checked below.
+ */
+const recordLog = vi.hoisted(() => ({
+  created: [] as Array<[string | null, {id: string;name: string;}]>,
+  changed: [] as Array<[string | null, {id: string;name: string;}]>
+}));
+
+vi.mock('./records', () => ({
+  logProductCreated: async (accountId: string | null, product: {id: string;name: string;}) => {
+    recordLog.created.push([accountId, product]);
+  },
+  logCompositionChanged: async (accountId: string | null, product: {id: string;name: string;}) => {
+    recordLog.changed.push([accountId, product]);
+  }
+}));
+
 import {
+  artefactsFor,
   blankSpec,
   classifyWriteError,
   createProduct,
+  evidenceByProduct,
   fetchProducts,
   saveComposition,
   toProduct,
+  type ArtefactRow,
   type NewProductInput,
   type ProductRow,
+  type RecordEventRow,
   type SpecificationRow } from
 './products';
 import { categoryById } from './categories';
+import type { ProductEvidence } from './model';
 
 /**
  * The two things in lib/products.ts that can be tested without a database, and both of them
@@ -261,12 +343,21 @@ describe('reading a product row', () => {
     expect(product.regimes.length).toBeGreaterThan(0);
   });
 
-  it('keeps only boolean obligations', () => {
+  /**
+   * `products.obligations` IS NO LONGER READ, AND THAT IS THE ASSERTION.
+   *
+   * It used to be mapped onto `Product.obligations` and consulted by `obligationState`, which
+   * is how fifteen obligations came to be permanently outstanding on every product: the column
+   * is written by nothing, so it was always `{}`. Evidence now comes from the append-only log.
+   * This pins the replacement rather than the removal — a product assembled from two rows with
+   * no log behind it claims no evidence at all, which is the true answer for one.
+   */
+  it('takes no evidence from the products.obligations column', () => {
     const product = toProduct(
-      productRow({ obligations: { 'clp-classification': true, 'clp-ufi': 'yes', other: null } }),
+      productRow({ obligations: { 'clp-classification': true, 'cpr-pif': true } }),
       specRow()
     );
-    expect(product.obligations).toEqual({ 'clp-classification': true });
+    expect(product.evidence).toEqual({ obligations: {}, sdsSections: {} });
   });
 
   /**
@@ -328,7 +419,10 @@ describe('reading a product row', () => {
       // Leave-on is the safer of the two to assume: it is the longer exposure, and it is what
       // the blank composition starts as.
       expect(product.spec.application).toBe('Leave-on');
-      expect(product.spec.paoMonths).toBe(12);
+      // ZERO, NOT 12. An unreadable period after opening is an unset one, and the label prints
+      // no open-jar figure for it. Defaulting to 12 here put a legal marking on a cosmetic on
+      // the strength of a blob this very test describes as the wrong shape.
+      expect(product.spec.paoMonths).toBe(0);
     }
   });
 
@@ -367,10 +461,12 @@ describe('reading a product row', () => {
 
     expect(product.spec.kind).toBe('bom');
     if (product.spec.kind === 'bom') {
-      // "Not yet assigned" and an em dash, never a plausible-looking model or voltage: a
-      // rating plate is a legal statement about a device, and a placeholder that reads like
-      // data is how one gets printed.
-      expect(product.spec.model).toBe('Not yet assigned');
+      // Empty and an em dash, never a plausible-looking model or voltage: a rating plate is a
+      // legal statement about a device, and a placeholder that reads like data is how one gets
+      // printed. "Not yet assigned" was the old fallback here — a sentence rather than a blank,
+      // which is worse in a field whose contents reach a plate. It is now the input's
+      // placeholder, where it is visibly not a value.
+      expect(product.spec.model).toBe('');
       expect(product.spec.items).toEqual([]);
       expect(product.spec.ratings).toEqual({ voltage: '—', current: '—', power: '—' });
     }
@@ -406,22 +502,59 @@ describe('the composition a new product starts from', () => {
     expect(blankSpec(homeFragrance, 'Room spray').netUnit).toBe('ml');
   });
 
-  it('starts each home fragrance type in its own base and its own packaging', () => {
-    const diffuser = blankSpec(homeFragrance, 'Reed diffuser');
-    const spray = blankSpec(homeFragrance, 'Room spray');
-    const melt = blankSpec(homeFragrance, 'Wax melt');
-    const candle = blankSpec(homeFragrance, 'Container candle');
+  /**
+   * THE ASSERTION HERE IS THE OPPOSITE OF THE ONE IT REPLACES, and the reversal is the point.
+   *
+   * It used to require that each product type start in a specific base and a specific pack —
+   * 'ing-dpg' for a diffuser, 'ing-crw45' for a melt, 'pkg-tumbler-250' for a candle — on the
+   * reasoning that a diffuser base in a candle is a product that cannot be made. That
+   * reasoning was sound and the conclusion was still wrong: the maker was never asked. The
+   * new-product dialog collects a name, a code, a category and a type, and the INSERT behind
+   * it carried one particular wax from a supplier they may never have bought from, in one
+   * particular 250 ml amber tumbler, at 100 g. All three print: the wax into the
+   * classification, the tumbler's capacity into the CLP minimum label size, the 100 g onto the
+   * label itself.
+   *
+   * Those defaults existed because there was nowhere else to point — materials were a shipped
+   * catalogue and an empty base derived silently to nothing. Materials are the maker's own
+   * rows now, an unresolved id is reported rather than skipped, and the pickers are populated
+   * from the register. So the composition starts empty and stays empty until somebody chooses,
+   * and the composition stage raises each gap as outstanding work instead. What survives from
+   * the old test is the ban on plausible data, applied to the fields it used to exempt.
+   */
+  it('seeds no base, no packaging, no dye and no quantity — nobody has chosen one', () => {
+    for (const type of ['Container candle', 'Wax melt', 'Reed diffuser', 'Room spray']) {
+      const spec = blankSpec(homeFragrance, type);
+      expect(spec.packagingId).toBe('');
+      // A quantity is a declaration under the average-quantity rules. Zero is unset, and the
+      // screens render it as unset rather than printing "0 g" on a container that is not empty.
+      expect(spec.netQuantity).toBe(0);
+      if (spec.kind === 'mixture') {
+        expect(spec.baseId).toBe('');
+        expect(spec.dyeId).toBe('');
+        // Not "None", which is an answer about the formula rather than the absence of one.
+        expect(spec.additive).toBe('');
+      }
+    }
+  });
 
-    // A diffuser base in a candle, or wax in a spray bottle, is a product that cannot be
-    // made — and the maker would be the one to find out.
-    if (diffuser.kind === 'mixture') expect(diffuser.baseId).toBe('ing-dpg');
-    if (spray.kind === 'mixture') expect(spray.baseId).toBe('ing-alcohol');
-    if (melt.kind === 'mixture') expect(melt.baseId).toBe('ing-crw45');
+  it('leaves a cosmetic and a device empty of packaging too', () => {
+    const cosmetic = blankSpec(categoryById('cosmetics'), 'Face oil');
+    const device = blankSpec(categoryById('electronics'), 'Wax warmer');
+    expect(cosmetic.packagingId).toBe('');
+    expect(device.packagingId).toBe('');
+    expect(cosmetic.netQuantity).toBe(0);
+    expect(device.netQuantity).toBe(0);
+  });
 
-    expect(diffuser.packagingId).toBe('pkg-diffuser-100');
-    expect(spray.packagingId).toBe('pkg-spray-100');
-    expect(melt.packagingId).toBe('pkg-clamshell');
-    expect(candle.packagingId).toBe('pkg-tumbler-250');
+  it('carries no id from the deleted catalogue anywhere in a new composition', () => {
+    // The catalogue's ids had a shape — 'ing-', 'pkg-', 'cmp-' — and the cheapest way for one
+    // to come back is a default somebody restores because a screen looked empty without it.
+    for (const category of ['home-fragrance', 'cosmetics', 'electronics'] as const) {
+      const pack = categoryById(category);
+      const json = JSON.stringify(blankSpec(pack, pack.productTypes[0]));
+      expect(json).not.toMatch(/"(ing|pkg|cmp)-/);
+    }
   });
 
   it('starts a fragrance load at zero rather than at a plausible number', () => {
@@ -457,19 +590,31 @@ describe('the composition a new product starts from', () => {
     }
   });
 
-  it('starts a cosmetic with its phases and a device with an unassigned model', () => {
+  it('starts a cosmetic with empty phases and no period after opening', () => {
     const cosmetic = blankSpec(categoryById('cosmetics'), 'Face oil');
     expect(cosmetic.kind).toBe('phased');
     if (cosmetic.kind === 'phased') {
       expect(cosmetic.phases.map((phase) => phase.name)).toEqual(['Oil phase', 'Cool down']);
       // Empty, not seeded. A phase list with ingredients in it is a recipe nobody wrote.
       expect(cosmetic.phases.every((phase) => phase.items.length === 0)).toBe(true);
+      /**
+       * ZERO, AND THIS IS THE ONE THAT WAS PRINTING.
+       *
+       * It seeded 12, `derivePhased` emitted a Period after opening group unconditionally, and
+       * the label preview rendered "12M" at actual size — a legal marking on a cosmetic, from a
+       * constant, that nothing had measured. The obligations list on the same screen
+       * simultaneously read "Neither a period after opening nor a date of minimum durability is
+       * shown". Both halves read this field now, so they cannot disagree again.
+       */
+      expect(cosmetic.paoMonths).toBe(0);
     }
+  });
 
+  it('starts a device with no model and no components', () => {
     const device = blankSpec(categoryById('electronics'), 'Wax warmer');
     expect(device.kind).toBe('bom');
     if (device.kind === 'bom') {
-      expect(device.model).toBe('Not yet assigned');
+      expect(device.model).toBe('');
       expect(device.items).toEqual([]);
     }
   });
@@ -612,6 +757,45 @@ describe('creating a product', () => {
     db.state.lookupFilters = [];
     db.state.archived = [];
   });
+
+  beforeEach(() => {
+    recordLog.created.length = 0;
+    recordLog.changed.length = 0;
+  });
+
+  it('writes a line to the record log for a product that was actually created', async () => {
+    const result = await createProduct(input, 'acct-1111');
+
+    expect(result.ok).toBe(true);
+    expect(recordLog.created).toHaveLength(1);
+    const [accountId, product] = recordLog.created[0];
+    // The account comes from the entitlement, exactly as the two INSERTs' does. There is no
+    // second source for it anywhere in this file.
+    expect(accountId).toBe('acct-1111');
+    expect(product.id).toBe('prod-1');
+  });
+
+  it('writes no log line for a create the database refused', async () => {
+    db.state.specInsert = { data: null, error: { code: 'P0001', hint: 'sku_limit_reached' } };
+
+    const result = await createProduct(input, 'acct-1111');
+
+    expect(result.ok).toBe(false);
+    // A record of a product that was never created is worse than a missing record: the log is
+    // append-only, so nobody could ever take it back out.
+    expect(recordLog.created).toHaveLength(0);
+  });
+
+  it('writes the log line for a create recovered from a lost response, because it did happen', async () => {
+    db.state.productInsert = { data: null, error: { message: 'Failed to fetch' } };
+    db.state.lookup = { data: PRODUCT, error: null };
+
+    const result = await createProduct(input, 'acct-1111');
+
+    expect(result.ok).toBe(true);
+    expect(recordLog.created).toHaveLength(1);
+  });
+
 
   it('sends the account id it was given, on both rows', async () => {
     await createProduct(input, 'acct-1111');
@@ -909,7 +1093,7 @@ describe('saving a composition', () => {
     },
     artefacts: [],
     identifiers: {},
-    obligations: {}
+    evidence: { obligations: {}, sdsSections: {} }
   };
 
   beforeEach(() => {
@@ -921,6 +1105,41 @@ describe('saving a composition', () => {
     db.state.updated = [];
     db.state.updatePayloads = [];
   });
+
+  beforeEach(() => {
+    recordLog.changed.length = 0;
+  });
+
+  it('records a composition change once both halves are stored', async () => {
+    const result = await saveComposition(product, product.spec, 'acct-1111');
+
+    expect(result.ok).toBe(true);
+    expect(recordLog.changed).toHaveLength(1);
+    expect(recordLog.changed[0][0]).toBe('acct-1111');
+  });
+
+  it('records nothing when only half of the edit landed', async () => {
+    // A partial save DID commit the composition, so a log line would not be false — but the
+    // maker is being asked to press save again, and two entries for one edit would read as
+    // two edits. The successful save writes the line.
+    db.state.productUpdate = { data: [], error: null };
+
+    const result = await saveComposition(product, product.spec, 'acct-1111');
+
+    expect(result.ok === false && result.reason).toBe('partial_save');
+    expect(recordLog.changed).toHaveLength(0);
+  });
+
+  it('still saves when no account was passed, and simply does not log it', async () => {
+    const result = await saveComposition(product, product.spec);
+
+    expect(result.ok).toBe(true);
+    // The stub records the call; the real implementation returns early on a null account. A
+    // composition edit refusing to commit because we could not file its log entry would be the
+    // tail wagging the dog.
+    expect(recordLog.changed[0]?.[0] ?? null).toBeNull();
+  });
+
 
   it('stores an unchosen material and an unstated quantity as null, never as blank', async () => {
     // Both halves of this are label copy. A net quantity of 0 is a DECLARATION — the average
@@ -1101,13 +1320,18 @@ describe('a products read that could not be answered', () => {
     }
   });
 
-  it('scopes both reads to the account, and to live rows only', async () => {
+  it('scopes every read to the account, and to live rows only', async () => {
     await fetchProducts('acct-1111');
 
-    // Once per table. RLS is the boundary; this is the narrowing, and dropping it is what
-    // renders one workspace of a person's under another one's chrome.
+    // Once per table, and there are FOUR now: products, specifications, artefacts and the
+    // record log. RLS is the boundary; this is the narrowing, and dropping it on any one of
+    // them is what renders one workspace of a person's under another one's chrome. The two
+    // that joined carry a maker's print history and their compliance record, so an unscoped
+    // read of either is the same defect with worse contents.
     const accountFilters = db.state.lookupFilters.filter(([column]) => column === 'account_id');
     expect(accountFilters).toEqual([
+    ['account_id', 'acct-1111'],
+    ['account_id', 'acct-1111'],
     ['account_id', 'acct-1111'],
     ['account_id', 'acct-1111']]
     );
@@ -1230,5 +1454,289 @@ describe('the schema every domain read and write goes through', () => {
     );
 
     expect([...new Set(db.state.schemas)]).toEqual(['batchlabel']);
+  });
+});
+
+/* ------------------------------------------------------------------------ */
+
+const artefactRow = (over: Partial<ArtefactRow> = {}): ArtefactRow => ({
+  id: 'art-1',
+  product_id: 'prod-1',
+  artefact_type: 'unit-label',
+  version: 1,
+  width_mm: 52,
+  height_mm: 74,
+  produced_at: '2026-07-01T09:00:00.000Z',
+  printed_at: '2026-07-01T09:00:00.000Z',
+  specification_hash: 'hash-a',
+  is_placeholder: true,
+  notes: null,
+  ...over
+});
+
+/**
+ * The four states an artefact can be in, and why a boolean could not hold them.
+ *
+ * `current: boolean` resolved every unproduced surface to `true`, so the specification screen
+ * painted a green "Current" pill on every row of a list whose every row also said "Not yet
+ * produced". A maker scanning the pills concluded their label and their sheet were up to date
+ * and in existence. Currency is now a comparison of the hash stored at print time against what
+ * `batchlabel.artefact_source_fingerprint` returns now — a database answer, not an assumption.
+ */
+describe('an artefact, against the composition it was produced from', () => {
+  const category = categoryById('home-fragrance');
+
+  const label = (rows: ArtefactRow[], live: string | null) => {
+    const surface = artefactsFor(category, 'mixture', rows, live).
+    find((a) => a.type === 'unit-label');
+    if (!surface) throw new Error('home fragrance has no unit label surface');
+    return surface;
+  };
+
+  it('is current only when the stored fingerprint still matches', () => {
+    expect(label([artefactRow({ specification_hash: 'hash-a' })], 'hash-a').currency).toBe('current');
+    expect(label([artefactRow({ specification_hash: 'hash-a' })], 'hash-b').currency).toBe('out-of-date');
+  });
+
+  it('is unknown, never current, when the fingerprint could not be computed', () => {
+    // The RPC failed, or returned null for a row this caller cannot see. Borrowing either
+    // answer here is how a maker is told their label is fine by code that did not look.
+    expect(label([artefactRow()], null).currency).toBe('unknown');
+    expect(label([artefactRow({ specification_hash: null })], 'hash-a').currency).toBe('unknown');
+  });
+
+  it('is not-produced when no row exists, and claims no version or date', () => {
+    const surface = label([], 'hash-a');
+    expect(surface.currency).toBe('not-produced');
+    expect(surface.version).toBe('Not yet produced');
+    expect(surface.printedOn).toBe('—');
+  });
+
+  it('describes the highest version, because an artefact IS a version', () => {
+    const surface = label(
+      [
+      artefactRow({ id: 'a1', version: 1, specification_hash: 'hash-old' }),
+      artefactRow({ id: 'a3', version: 3, specification_hash: 'hash-a' }),
+      artefactRow({ id: 'a2', version: 2, specification_hash: 'hash-old' })],
+      'hash-a'
+    );
+    expect(surface.version).toBe('v3');
+    expect(surface.currency).toBe('current');
+  });
+
+  it('falls back to the production date when nothing was printed', () => {
+    const surface = label([artefactRow({ printed_at: null })], 'hash-a');
+    expect(surface.printedOn).toBe('2026-07-01T09:00:00.000Z');
+  });
+
+  it('treats an unreadable is_placeholder as a placeholder, never as a real file', () => {
+    // The column is NOT NULL DEFAULT TRUE, so a null is a shape this build does not
+    // understand — and "we are not sure whether Batchlabel generated this file" has exactly
+    // one safe reading.
+    expect(label([artefactRow({ is_placeholder: null })], 'hash-a').isPlaceholder).toBe(true);
+    expect(label([artefactRow({ is_placeholder: true })], 'hash-a').isPlaceholder).toBe(true);
+    expect(label([artefactRow({ is_placeholder: false })], 'hash-a').isPlaceholder).toBe(false);
+  });
+});
+
+/** One product's evidence, or a failure saying the log produced none for it. */
+function evidenceFor(map: Map<string, ProductEvidence>, productId: string): ProductEvidence {
+  const found = map.get(productId);
+  if (!found) throw new Error(`no evidence was grouped under ${productId}`);
+  return found;
+}
+
+const eventRow = (over: Partial<RecordEventRow> = {}): RecordEventRow => ({
+  id: 'ev-1',
+  kind: 'compliance.evidence_recorded',
+  product_id: 'prod-1',
+  occurred_at: '2026-07-01T00:00:00.000Z',
+  obligation_id: 'cpr-pif',
+  reference: 'PIF-1',
+  summary: 'Assembled the product information file.',
+  ...over
+});
+
+/**
+ * Reading the append-only log into the evidence a screen renders.
+ *
+ * This replaced `products.obligations`, a jsonb column written by nothing, which is why every
+ * obligation was permanently outstanding. The rules below are the ones a log has that a flag
+ * does not: entries supersede rather than overwrite, and an entry about no product in
+ * particular is not evidence about every product.
+ */
+describe('the evidence a product carries, read from the log', () => {
+  it('takes the most recent entry per obligation, the earlier one being superseded', () => {
+    // The read orders by occurred_at descending and a correction is a new event, because the
+    // log refuses UPDATE three separate ways. First-seen therefore means most recent.
+    const map = evidenceByProduct([
+    eventRow({ id: 'ev-new', occurred_at: '2026-08-01T00:00:00.000Z', reference: 'PIF-2' }),
+    eventRow({ id: 'ev-old', occurred_at: '2026-07-01T00:00:00.000Z', reference: 'PIF-1' })]
+    );
+    expect(evidenceFor(map, 'prod-1').obligations['cpr-pif'].reference).toBe('PIF-2');
+  });
+
+  it('keeps one product\'s record out of another\'s', () => {
+    const map = evidenceByProduct([
+    eventRow({ id: 'a', product_id: 'prod-1', obligation_id: 'cpr-pif' }),
+    eventRow({ id: 'b', product_id: 'prod-2', obligation_id: 'ce-doc-signed' })]
+    );
+    expect(Object.keys(evidenceFor(map, 'prod-1').obligations)).toEqual(['cpr-pif']);
+    expect(Object.keys(evidenceFor(map, 'prod-2').obligations)).toEqual(['ce-doc-signed']);
+  });
+
+  it('attaches an account-level event to no product at all', () => {
+    // An identity change or a data request is evidence about nothing in particular. Spreading
+    // it across every product would be an invented finding on each of them.
+    expect(evidenceByProduct([eventRow({ product_id: null })]).size).toBe(0);
+  });
+
+  it('reads a safety data sheet review onto the section it names', () => {
+    const map = evidenceByProduct([
+    eventRow({
+      kind: 'compliance.sds_section_reviewed',
+      obligation_id: null,
+      reference: '4',
+      summary: 'Section 4 confirmed.'
+    })]
+    );
+    expect(evidenceFor(map, 'prod-1').sdsSections[4].summary).toBe('Section 4 confirmed.');
+  });
+
+  it('drops a review that names no section rather than guessing one', () => {
+    // Marking the wrong section signed off is worse than showing it still outstanding: it
+    // takes a row off a work queue that a competent person has never looked at.
+    for (const reference of [null, 'four', '0', '17', '']) {
+      const map = evidenceByProduct([
+      eventRow({ kind: 'compliance.sds_section_reviewed', obligation_id: null, reference })]
+      );
+      expect(map.get('prod-1')?.sdsSections ?? {}).toEqual({});
+    }
+  });
+});
+
+/**
+ * The two reads that joined the products list, and what happens when one of them fails.
+ */
+describe('assembling a product from four reads', () => {
+  beforeEach(() => {
+    db.state.productsRead = {
+      data: [
+      {
+        id: 'prod-1',
+        account_id: 'acct-1',
+        specification_id: 'spec-1',
+        name: 'Candle',
+        sku: 'C-1',
+        net_quantity: 220,
+        net_unit: 'g',
+        packaging_id: 'pkg-tumbler-250',
+        identifiers: {},
+        data: {},
+        created_at: '2026-07-01'
+      }],
+      error: null
+    };
+    db.state.specificationsRead = {
+      data: [
+      {
+        id: 'spec-1',
+        account_id: 'acct-1',
+        name: 'Candle',
+        category_id: 'home-fragrance',
+        kind: 'mixture',
+        product_type: 'Container candle',
+        fragrance_id: 'ing-black-fig',
+        base_id: 'ing-crw45',
+        dye_id: null,
+        load: 8,
+        additive: null,
+        markets: ['GB'],
+        regimes: ['clp'],
+        ufi: null,
+        data: {}
+      }],
+      error: null
+    };
+    db.state.artefactsRead = { data: [], error: null };
+    db.state.eventsRead = { data: [], error: null };
+    db.state.fingerprints = {};
+    db.state.fingerprintError = null;
+    db.state.fingerprintCalls = [];
+    db.state.lookupFilters = [];
+  });
+
+  it('refuses the whole read when the evidence log could not be read', async () => {
+    // NOT "here are your products, with nothing recorded against any of them". That sentence
+    // is a specific claim about the maker's compliance and it is indistinguishable from the
+    // true version — which is the exact shape of failure this repository keeps finding.
+    db.state.eventsRead = { data: null, error: { message: 'boom' } };
+    const result = await fetchProducts('acct-1');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toMatch(/could not read your products/i);
+  });
+
+  it('refuses the whole read when the artefacts could not be read', async () => {
+    db.state.artefactsRead = { data: null, error: { message: 'boom' } };
+    const result = await fetchProducts('acct-1');
+    expect(result.ok).toBe(false);
+  });
+
+  it('asks for no fingerprint at all when nothing has been produced', async () => {
+    // A brand new account makes zero of these calls. The fingerprint is only meaningful
+    // against something that was produced, and a round trip per product on a screen that
+    // needs none is a cost with no answer at the end of it.
+    const result = await fetchProducts('acct-1');
+    expect(result.ok).toBe(true);
+    expect(db.state.fingerprintCalls).toEqual([]);
+    if (result.ok) {
+      expect(result.products[0].artefacts.every((a) => a.currency === 'not-produced')).toBe(true);
+    }
+  });
+
+  it('compares a produced artefact against the live fingerprint', async () => {
+    db.state.artefactsRead = { data: [artefactRow({ specification_hash: 'hash-a' })], error: null };
+    db.state.fingerprints = { 'prod-1': 'hash-a' };
+
+    const result = await fetchProducts('acct-1');
+    expect(db.state.fingerprintCalls).toEqual(['prod-1']);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const label = result.products[0].artefacts.find((a) => a.type === 'unit-label');
+      expect(label?.currency).toBe('current');
+      expect(label?.version).toBe('v1');
+    }
+  });
+
+  it('renders a fingerprint it could not get as unknown, and still returns the products', async () => {
+    db.state.artefactsRead = { data: [artefactRow()], error: null };
+    db.state.fingerprintError = { message: 'rpc down' };
+
+    const result = await fetchProducts('acct-1');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const label = result.products[0].artefacts.find((a) => a.type === 'unit-label');
+      expect(label?.currency).toBe('unknown');
+    }
+  });
+
+  it('narrows the log to the compliance kinds rather than reading the whole history', async () => {
+    await fetchProducts('acct-1');
+    const kinds = db.state.lookupFilters.find(([column]) => column === 'in:kind');
+    if (!kinds) throw new Error('the log was read without narrowing it to a set of kinds');
+    expect(kinds[1]).toContain('compliance.evidence_recorded');
+    expect(kinds[1]).toContain('compliance.sds_section_reviewed');
+    // A production run is the Records screen's to render. This function assembles a product.
+    expect(kinds[1]).not.toContain('batch.produced');
+  });
+
+  it('carries recorded evidence onto the product', async () => {
+    db.state.eventsRead = { data: [eventRow()], error: null };
+    const result = await fetchProducts('acct-1');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.products[0].evidence.obligations['cpr-pif'].reference).toBe('PIF-1');
+    }
   });
 });

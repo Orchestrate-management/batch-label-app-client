@@ -1,4 +1,4 @@
-import { ingredientById, materialById } from './catalog';
+import { materialById, materialsSettled } from './material-index';
 import { Derivation } from './derive';
 import { Market, Product } from './model';
 import { outstandingObligations } from './regimes';
@@ -44,9 +44,9 @@ export type Stage = {
 export function materialIdsFor(product: Product): string[] {
   const spec = product.spec;
   if (spec.kind === 'mixture') {
-    return [spec.fragranceId, spec.baseId, spec.dyeId].filter(
-      (id) => id && id !== 'ing-no-dye'
-    );
+    // 'ing-no-dye' was a sentinel row in the deleted catalogue — a material called "No dye"
+    // that every caller had to know to skip by id. An unset slot is now an empty string.
+    return [spec.fragranceId, spec.baseId, spec.dyeId].filter((id) => Boolean(id));
   }
   if (spec.kind === 'phased') {
     return spec.phases.flatMap((phase) => phase.items.map((item) => item.materialId));
@@ -59,6 +59,7 @@ product: Product,
 derivation: Derivation,
 market: Market)
 : Stage[] {
+  const registerSettled = materialsSettled();
   const ids = materialIdsFor(product);
   const materials = ids.map((id) => materialById(id)).filter(Boolean);
 
@@ -80,22 +81,69 @@ market: Market)
 
   /* ---------------------------------------------------------- composition */
   const compositionIssues: StageIssue[] = [];
+  const to = `/products/${product.id}`;
+
+  /**
+   * THE GAPS `blankSpec` USED TO FILL IN SILENTLY.
+   *
+   * A new product no longer arrives holding a paraffin wax, a 250 ml tumbler and 100 g of
+   * something nobody weighed, so those fields are genuinely empty until the maker sets them —
+   * and an empty field that drives a label has to be visible work rather than a quiet blank.
+   * Each of these is a CLP Article 17 element or a component of the classification the label
+   * carries, which is why they are raised here and not merely left to look unfilled on a form.
+   */
   if (product.spec.kind === 'mixture') {
+    if (!product.spec.baseId) {
+      compositionIssues.push({
+        label: 'No base wax or carrier chosen yet',
+        detail:
+        'The base is most of what is in the pack, and its classification is part of the label. Nothing is assumed for you — pick the one you actually use.',
+        to
+      });
+    }
     if (!product.spec.fragranceId) {
       compositionIssues.push({
         label: 'No fragrance chosen yet',
         detail:
         'Pick a fragrance oil from the materials register. Nothing can be classified until the composition has something hazardous in it.',
-        to: `/products/${product.id}`
+        to
       });
     } else if (product.spec.load === 0) {
       compositionIssues.push({
         label: 'Fragrance load is 0 percent',
         detail:
         'Set the load and the classification will follow. Both outputs redraw as you change it.',
-        to: `/products/${product.id}`
+        to
       });
     }
+  }
+
+  if (product.spec.kind !== 'bom') {
+    if (product.spec.netQuantity <= 0) {
+      compositionIssues.push({
+        label: 'No net quantity set',
+        detail:
+        'The nominal quantity is a required label element. It is not filled in for you, because how much you put in the pack is not something this app can know.',
+        to
+      });
+    }
+    if (!product.spec.packagingId) {
+      compositionIssues.push({
+        label: 'No packaging chosen yet',
+        detail:
+        'The pack fixes the printable area and, under CLP, the minimum pictogram size the label is checked against. Both checks are waiting on it.',
+        to
+      });
+    }
+  }
+
+  if (product.spec.kind === 'phased' && product.spec.paoMonths <= 0) {
+    compositionIssues.push({
+      label: 'No period after opening set',
+      detail:
+      'A cosmetic label carries a period after opening or a date of minimum durability. Nothing here has measured one, so it is yours to set and to justify.',
+      to
+    });
   }
   if (product.spec.kind === 'phased') {
     const total = product.spec.phases.reduce(
@@ -110,59 +158,115 @@ market: Market)
       });
     }
   }
-  if (product.spec.kind === 'bom') {
-    const undeclared = product.spec.items.filter(
-      (item) => materialById(item.materialId)?.class === 'component' &&
-      (materialById(item.materialId) as {rohsStatus?: string;}).rohsStatus === 'Not declared'
-    );
-    for (const item of undeclared) {
-      compositionIssues.push({
-        label: `${materialById(item.materialId)?.name} has no material declaration`,
-        detail: 'The declaration of conformity cannot be signed while a component is undeclared.',
-        to: '/materials/component'
-      });
-    }
-  }
+  /*
+   * NO BILL-OF-MATERIALS ISSUES, AND THE BRANCH THAT RAISED THEM IS GONE.
+   *
+   * It read `rohsStatus === 'Not declared'` off the shipped COMPONENTS catalogue and raised
+   * "<component> has no material declaration" with a Resolve link to /materials/component —
+   * a page whose save button toasted "Saving a material is not built yet". So it was a
+   * compliance finding about the maker's technical file, produced from a constant, pointing
+   * at a screen that could not change it. Components are deleted (Rhys's ruling; the database
+   * refuses the class), so there is nothing left to read and nothing left to claim.
+   *
+   * The RoHS obligation itself did not disappear with them — it is recorded against the
+   * product from the compliance-record control on the specification screen, where a control
+   * that writes actually lives.
+   */
 
   /* -------------------------------------------------------- classification */
-  const missingClassification = ids.
-  map((id) => ingredientById(id)).
-  filter((ingredient) => ingredient && ingredient.hazards.length === 0 && ingredient.role === 'Fragrance oil');
-  const classificationIssues: StageIssue[] = missingClassification.map((ingredient) => ({
-    label: `${ingredient!.name} has no hazard data`,
-    // Not "the sheet on file": no sheet of this account's is held. The gap is in Batchlabel's
-    // reference data for the material, which is a different sentence and a different owner.
-    detail: 'Batchlabel\'s reference data for it carries no classification, so this component contributes nothing.',
-    to: `/materials/ingredient/${ingredient!.id}`
-  }));
+  //
+  // TWO DIFFERENT GAPS, AND THEY ARE NOT THE SAME SENTENCE.
+  //
+  //   A material the register could not produce at all. `derive` reports these as
+  //   `unresolved`, and they are the dangerous ones: the classification silently loses an
+  //   input, and every group under it renders as "nothing required".
+  //
+  //   A fragrance oil that IS in the register and carries no hazard rows. That is a real gap
+  //   in what the maker has entered, and the fix is on the material rather than on the
+  //   product — so the link goes to the material.
+  //
+  // Neither may be reported before the register has settled. `checked` is what says so; it
+  // exists because "we found nothing wrong" and "we did not look" used to render as the same
+  // green tick.
+  const classificationIssues: StageIssue[] = registerSettled ?
+  [
+  ...derivation.unresolved.map((entry) => ({
+    label: `${entry.slot} is not in your materials register`,
+    detail:
+    `The composition names "${entry.id}" and the register has no live material with that id — ` +
+    'it may have been archived. Nothing has been classified from it, so the label and the ' +
+    'sheet are missing whatever it contributes. Pick a material that is in the register.',
+    to: `/products/${product.id}`
+  })),
+  ...ids.
+  map((id) => materialById(id)).
+  filter(
+    (material) =>
+    material?.class === 'ingredient' &&
+    material.role === 'Fragrance oil' &&
+    material.hazards.length === 0
+  ).
+  map((material) => ({
+    label: `${material!.name} carries no hazard data`,
+    detail:
+    'No hazard statements are recorded against this material, so it contributes nothing to ' +
+    'the classification. Add what the supplier\'s safety data sheet says in section 2.',
+    to: `/materials/${material!.class}/${material!.id}`
+  }))] :
+
+  [];
 
   /* ---------------------------------------------------------------- outputs */
-  // Nothing stores artefacts, so nothing a real account holds is ever out of date: an output
-  // that has never been produced cannot have drifted from the composition. The branch stays
-  // because a fixture product in the test suite does carry stale artefacts, and because the
-  // day artefacts are stored this is where "out of date" comes back.
-  const stale = product.artefacts.filter((artefact) => !artefact.current);
+  //
+  // `out-of-date` AND ONLY `out-of-date`. This read `!artefact.current` over a boolean that was
+  // `true` for every unproduced surface, so the branch was unreachable on a real account and
+  // would have fired on all four states the day it was not. `ArtefactCurrency` has four names
+  // now: an artefact nobody produced is not stale, and one whose fingerprint we could not
+  // compute is not stale either — it is unknown, and this queue is a list of things we have
+  // established are wrong.
+  const stale = product.artefacts.filter((artefact) => artefact.currency === 'out-of-date');
+  const produced = product.artefacts.filter((artefact) => artefact.currency !== 'not-produced');
   const sds = product.artefacts.some((artefact) => artefact.type === 'sds') ?
   buildSds(product, derivation, market) :
   null;
   const outstanding = outstandingObligations(product);
 
+  /**
+   * Sections of the sheet still waiting on a competent person, MINUS the ones signed off.
+   *
+   * `sds.outstanding` was always 4. Sections 4, 8, 11 and 13 are hardcoded `kind: 'needs-you'`
+   * in lib/sds.ts, so every mixture and every phased product carried this row from the moment
+   * it was created, forever, and its Resolve link went to a screen that listed the same four
+   * and offered no control to sign any of them off. It was a permanent line in a work queue
+   * that no amount of work could clear.
+   *
+   * There is a control now, on the specification screen, and it writes a
+   * `compliance.sds_section_reviewed` event per section. This counts what is left.
+   */
+  const sectionsAwaitingReview = sds ?
+  sds.sections.
+  filter((section) => section.kind === 'needs-you').
+  filter((section) => !(section.number in product.evidence.sdsSections)) :
+  [];
+
   const outputIssues: StageIssue[] = [
   ...(stale.length ?
   [
   {
-    label: `${stale.length} output${stale.length === 1 ? '' : 's'} out of date`,
-    detail: 'The composition changed after these were produced.',
+    label: `${stale.length} recorded print${stale.length === 1 ? '' : 's'} no longer match${stale.length === 1 ? 'es' : ''} this composition`,
+    detail:
+    'The composition, the pack, a pinned material or your printed business details changed after these were printed. Reprint, then record the new print.',
     to: `/products/${product.id}`
   }] :
 
   []),
-  ...(sds && sds.outstanding ?
+  ...(sectionsAwaitingReview.length ?
   [
   {
-    label: `${sds.outstanding} sections of the safety data sheet need a competent person`,
-    detail:
-    'First aid, exposure controls, toxicological information and disposal cannot be derived from the composition.',
+    label: `${sectionsAwaitingReview.length} section${sectionsAwaitingReview.length === 1 ? '' : 's'} of the safety data sheet ${sectionsAwaitingReview.length === 1 ? 'needs' : 'need'} a competent person`,
+    detail: `${sectionsAwaitingReview.
+    map((section) => section.title.toLowerCase()).
+    join(', ')} cannot be derived from the composition. Record the review once somebody competent has confirmed the wording.`,
     to: `/products/${product.id}`
   }] :
 
@@ -189,7 +293,9 @@ market: Market)
     // Not "every sheet current": nothing checks whether a supplier has reissued, so that
     // was a reassurance the product had not earned. Count what we know — the materials on
     // the composition — and claim nothing about their currency.
-    summary: `Nothing watches supplier documents yet. ${materials.length} ${materials.length === 1 ? 'material is' : 'materials are'} on this composition`,
+    summary: registerSettled ?
+    `Nothing watches supplier documents yet. ${materials.length} ${materials.length === 1 ? 'material is' : 'materials are'} on this composition` :
+    'Nothing watches supplier documents yet, and your materials register has not loaded',
     issues: documentIssues
   },
   {
@@ -208,9 +314,14 @@ market: Market)
   {
     id: 'classification',
     label: 'Classification',
-    checked: true,
-    settled: classificationIssues.length === 0,
-    summary: derivation.summary.map((entry) => entry.value).join(' · '),
+    // NOT ALWAYS TRUE ANY MORE. Materials are read from a database now, so there is a state
+    // where nothing has been classified because nothing has loaded — and `settled` is derived
+    // from `issues.length === 0`, which would turn that into a green tick.
+    checked: registerSettled,
+    settled: registerSettled && classificationIssues.length === 0,
+    summary: registerSettled ?
+    derivation.summary.map((entry) => entry.value).join(' · ') :
+    'Your materials register has not loaded, so nothing has been classified yet',
     issues: classificationIssues
   },
   {
@@ -218,12 +329,15 @@ market: Market)
     label: 'Outputs',
     checked: true,
     settled: outputIssues.length === 0,
-    // NOT "all current". `artefactsFor` gives every artefact version "Not yet produced" and
-    // no print date, precisely because there is no artefacts table and nothing has been
-    // produced — so "current" was describing the currency of documents that do not exist.
-    // What IS settled here is the work the maker owed: the obligations are ticked and the
-    // sheet has no section left needing a competent person.
-    summary: `${product.artefacts.length} outputs, none produced yet`,
+    // COUNTED, not asserted. This said "none produced yet" unconditionally, which was true
+    // while nothing could be produced and would have gone on being said afterwards. `produced`
+    // is the number of surfaces with a recorded print behind them, and the sentence still
+    // refuses to call any of them generated — Batchlabel writes no file, and every one of
+    // these rows carries `is_placeholder`.
+    summary:
+    produced.length === 0 ?
+    `${product.artefacts.length} outputs, no print recorded yet` :
+    `${product.artefacts.length} outputs, ${produced.length} with a recorded print`,
     issues: outputIssues
   }];
 

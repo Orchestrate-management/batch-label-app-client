@@ -147,19 +147,31 @@ export function Products() {
                       <tr className="border-b border-paper-line bg-paper-panel/60 text-2xs uppercase tracking-[0.1em] text-ink-tertiary">
                         <th scope="col" className="px-5 py-3 font-medium">Product</th>
                         <th scope="col" className="px-5 py-3 font-medium">Composition</th>
-                        {/* NOT "Outputs", which read as outputs the product HOLDS. Nothing
-                            stores artefacts, so on a real account the number is always the
-                            count of surfaces this product will produce once there is an
-                            exporter — never a count of files anybody has. */}
+                        {/* NOT "Outputs", which read as outputs the product HOLDS. Batchlabel
+                            generates no file, so this is still the count of surfaces this
+                            product needs — never a count of files anybody has. What CAN be
+                            counted now is how many of them the maker has recorded printing,
+                            which is the clause after the comma. */}
                         <th scope="col" className="px-5 py-3 font-medium">Outputs to produce</th>
-                        <th scope="col" className="px-5 py-3 font-medium">Last produced</th>
+                        <th scope="col" className="px-5 py-3 font-medium">Last print recorded</th>
                         <th scope="col" className="px-5 py-3 font-medium">Status</th>
                       </tr>
                     </thead>
                     <tbody>
                       {inCategory.map((product) => {
                         const outstanding = outstandingObligations(product).length;
-                        const stale = product.artefacts.filter((a) => !a.current).length;
+                        // `out-of-date` only. This read `!a.current`, and `current` was true
+                        // for every surface nobody had produced — so the count was structurally
+                        // zero on a real account and would have counted unproduced and
+                        // uncheckable surfaces as stale the moment it was not.
+                        const stale = product.artefacts.filter(
+                          (a) => a.currency === 'out-of-date'
+                        ).length;
+                        const printed = product.artefacts.
+                        filter((a) => a.currency !== 'not-produced').
+                        map((a) => a.printedOn).
+                        filter((date) => date && date !== '\u2014').
+                        sort();
                         return (
                           <React.Fragment key={product.id}>
                             <tr
@@ -187,11 +199,21 @@ export function Products() {
                               <td className="tabular px-5 py-3.5 text-ink-secondary">
                                 {product.artefacts.length}
                                 {stale > 0 &&
-                                <span className="text-clay-dark">, {stale} out of date</span>
+                                <span className="text-clay-dark">
+                                    , {stale} no longer matching
+                                  </span>
                                 }
                               </td>
+                              {/* The most recent print this account RECORDED, or a dash.
+                                  It used to read `product.artefacts[0]?.printedOn`, which was
+                                  the em dash placeholder on every row of every real account
+                                  under a heading saying "Last produced" — a column that could
+                                  only ever be empty. It now has a source, and an empty one
+                                  still means nothing was recorded rather than nothing exists. */}
                               <td className="tabular px-5 py-3.5 text-ink-secondary">
-                                {formatDate(product.artefacts[0]?.printedOn)}
+                                {printed.length ?
+                                formatDate(printed[printed.length - 1]) :
+                                <span className="text-ink-tertiary">No print recorded</span>}
                               </td>
                               <td className="px-5 py-3.5">
                                 <Pill tone={outstanding ? 'warn' : 'good'}>

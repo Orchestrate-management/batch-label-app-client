@@ -1,5 +1,5 @@
 import { BUSINESS, addressForMarket } from './identity';
-import { ingredientById } from './catalog';
+import { ingredientById, materialCitation } from './material-index';
 import { Derivation, WhyLine } from './derive';
 import {
   ARTEFACT_NOT_PRODUCED,
@@ -8,6 +8,7 @@ import {
   MixtureSpec,
   PhasedSpec,
   Product,
+  formatDate,
   round } from
 './model';
 
@@ -43,7 +44,14 @@ export type SdsComponentRow = {
   ec: string | null;
   range: string;
   classification: string;
-  source: string;
+  /**
+   * The supplier document this row's classification was read from, or nothing.
+   *
+   * OPTIONAL, and SdsDocument renders the "Source:" line only when it is set. A maker's own
+   * material may carry no document reference at all, and section 3 of a safety data sheet is
+   * the last place in this application where a citation may be invented to fill a gap.
+   */
+  source?: string;
   note?: string;
   constituents?: SdsConstituent[];
 };
@@ -134,7 +142,7 @@ function portions(product: Product): Portion[] {
     const dye = ingredientById(mixture.dyeId);
     if (fragrance) result.push({ ingredient: fragrance, pct: mixture.load });
     if (base) result.push({ ingredient: base, pct: round(100 - mixture.load, 2) });
-    if (dye && dye.id !== 'ing-no-dye') result.push({ ingredient: dye, pct: 0.4 });
+    if (dye) result.push({ ingredient: dye, pct: 0.4 });
   }
 
   if (spec.kind === 'phased') {
@@ -173,7 +181,7 @@ function componentRows(product: Product): SdsComponentRow[] {
       classification: ingredient.hazards.
       map((hazard) => `${hazard.hazardClass}, ${hazard.code}`).
       join('; '),
-      source: `${ingredient.supplier}, ${ingredient.document.kind.toLowerCase()} ${ingredient.document.version}, ${ingredient.document.date}`,
+      source: materialCitation(ingredient),
       note: isMixture ?
       'A fragrance mixture. No single CAS or EC number exists; the declarable constituents are listed beneath.' :
       ingredient.cas ?
@@ -211,7 +219,7 @@ function physicalFields(product: Product): SdsField[] {
   {
     label: 'Colour',
     value:
-    spec.kind === 'mixture' && spec.dyeId !== 'ing-no-dye' ?
+    spec.kind === 'mixture' && spec.dyeId ?
     'Coloured, per the dye on file' :
     'Off-white to pale straw, undyed',
     why: {
@@ -234,7 +242,7 @@ function physicalFields(product: Product): SdsField[] {
     why: {
       lead: `The lowest flash point of any component is ${flash.data!.flashPointC} °C, from ${flash.portion.ingredient.name}.`,
       meta: 'The mixture is assigned the lowest component flash point unless measured data for the finished product is available.',
-      source: `${flash.portion.ingredient.supplier}, ${flash.portion.ingredient.document.kind.toLowerCase()} ${flash.portion.ingredient.document.version}`
+      source: materialCitation(flash.portion.ingredient)
     }
   } :
   {
@@ -248,7 +256,7 @@ function physicalFields(product: Product): SdsField[] {
     value: `${density.data!.densityGMl} g/ml at 20 °C`,
     why: {
       lead: `Taken from ${density.portion.ingredient.name}, the principal component by weight.`,
-      source: `${density.portion.ingredient.supplier}, ${density.portion.ingredient.document.kind.toLowerCase()} ${density.portion.ingredient.document.version}`
+      source: materialCitation(density.portion.ingredient)
     }
   } :
   { label: 'Relative density', value: 'No value on file', missing: true },
@@ -262,14 +270,20 @@ export function buildSds(product: Product, derivation: Derivation, market: Marke
   const clp = derivation.clp;
   const rows = componentRows(product);
   const sdsArtefact = product.artefacts.find((artefact) => artefact.type === 'sds');
-  // Null on a real account, always: nothing stores artefacts, so no sheet has a revision or an
-  // issue date. Section 16 then prints no revision line at all, rather than printing the
-  // placeholders — "Revision Not yet produced, issued —." on the face of the document is worse
-  // than an absent line, and a revision history is a regulatory claim. The branch stays rather
-  // than being deleted, because the day artefacts are stored a real revision MUST be stated.
+  // Null until a sheet has actually been recorded as produced, and then a real revision.
+  //
+  // "Revision Not yet produced, issued —." on the face of a sixteen-section safety data sheet
+  // somebody may hand to a regulator is worse than an absent line, and a revision history is a
+  // regulatory claim. That case is still guarded. What changed is that the other branch is now
+  // reachable: `batchlabel.artefacts` holds a version and a date, so a produced sheet states a
+  // real one.
+  //
+  // THE DATE IS FORMATTED. `printedOn` is a timestamptz off the row, so this printed
+  // "issued 2026-07-01T09:00:00.000Z." — a machine timestamp, in the one section of the
+  // document a person reads for provenance.
   const revisionLine =
   sdsArtefact && sdsArtefact.version !== ARTEFACT_NOT_PRODUCED ?
-  `Revision ${sdsArtefact.version}, issued ${sdsArtefact.printedOn}.` :
+  `Revision ${sdsArtefact.version}, issued ${formatDate(sdsArtefact.printedOn)}.` :
   null;
 
   const sections: SdsSection[] = [
@@ -343,7 +357,7 @@ export function buildSds(product: Product, derivation: Derivation, market: Marke
     // account holds supplier SDSs it has never uploaded and cannot upload, two sections above
     // section 16 saying the opposite. Same wording as section 16 now.
     intro:
-    'Hazardous components of the mixture, assembled from Batchlabel\'s reference data for those materials. No supplier document of yours is held. Concentrations are declared as bands.',
+    'Hazardous components of the mixture, assembled from the materials in your own register as you recorded them. Batchlabel holds no copy of any supplier document. Concentrations are declared as bands.',
     components: rows
   },
   {
@@ -430,7 +444,7 @@ export function buildSds(product: Product, derivation: Derivation, market: Marke
     lines: rows.length ?
     rows.map(
       (row) =>
-      `${row.name}: classified ${row.classification}. Read across from the supplier sheet.`
+      `${row.name}: classified ${row.classification}. Read across from the classification recorded for this material.`
     ) :
     ['No hazardous component is present above a threshold requiring classification.']
   },
@@ -508,10 +522,17 @@ export function buildSds(product: Product, derivation: Derivation, market: Marke
     // WHERE THE DATA ACTUALLY CAME FROM. This said "assembled from the supplier documents on
     // file", printed at A4 on a document a maker would hand to a customer or a regulator.
     // There is no document store, no account holds a supplier document, and every
-    // classification in the sheet comes from Batchlabel's shipped reference library — which
-    // is what the materials register was rewritten to say plainly, and the same sentence has
-    // to survive onto the artefact itself.
-    'This sheet was assembled from Batchlabel\'s reference data for the materials in this composition. No supplier document of yours is held. It is a draft for review by a competent person and is not issued until signed.']
+    // classification in the sheet came from Batchlabel's shipped reference library — which is
+    // what the materials register was rewritten to say plainly, and the same sentence had to
+    // survive onto the artefact itself.
+    //
+    // IT HAS NOW MOVED AGAIN, IN THE OTHER DIRECTION, and leaving it would have been the same
+    // fault mirrored: the shipped library is deleted and the classification comes from the
+    // maker's OWN materials, so crediting it to Batchlabel's reference data would understate
+    // whose figures they are on the one document a regulator reads. What has not changed is
+    // the second half — no supplier document of theirs is held, because there is still
+    // nowhere to put one.
+    'This sheet was assembled from the materials in your own register, as you recorded them. Batchlabel holds no copy of any supplier document — there is nowhere to upload one — so nothing here has been checked against a document we hold. It is a draft for review by a competent person and is not issued until signed.']
 
   }];
 

@@ -19,6 +19,7 @@ import { categoryById } from '../lib/categories';
 import { derive } from '../lib/derive';
 import { useEntitlement } from '../lib/entitlement';
 import { createIsCertainToFail, readSkuCount, skuCountBeside } from '../lib/membership';
+import { useOptionalMaterials } from '../lib/materials-store';
 import { outstandingFor } from '../lib/pipeline';
 import { useProducts } from '../lib/product-store';
 
@@ -43,6 +44,23 @@ import { useProducts } from '../lib/product-store';
 export function Studio() {
   const { status, products, error, refresh } = useProducts();
   const entitlement = useEntitlement();
+  /**
+   * SUBSCRIBED TO, AND IN THE MEMO KEY BELOW, because this queue's answer depends on it.
+   *
+   * `outstandingFor` and `derive` both read the synchronous material index, and both now tell
+   * "the register says no" apart from "the register has not answered": with materials
+   * unsettled, `clp-classification` resolves to `not-tracked` rather than to a finding, which
+   * is correct and is also not the final answer.
+   *
+   * MaterialsProvider publishes that read asynchronously, from above the router. A component
+   * that does not consume its context is not re-rendered when it lands — the provider's
+   * `children` is the same element object, so React bails out of the subtree and only context
+   * consumers re-render. Without this hook, the first screen a maker sees after signing in
+   * would count their outstanding work once, against a register that had not loaded, and would
+   * keep showing that count for the rest of the session. A work queue that is quietly wrong in
+   * the reassuring direction is worse than one that is missing.
+   */
+  const register = useOptionalMaterials();
   const [creating, setCreating] = useState(false);
 
   const outstanding = useMemo(
@@ -57,7 +75,13 @@ export function Studio() {
       )
     })).
     filter((entry) => entry.issues.length > 0),
-    [products]
+    // `register` looks unused to the exhaustive-deps rule and is not:
+    // the register they describe is read through a module-level index rather than passed in as
+    // an argument, so the rule cannot see the edge. DO NOT DELETE THEM TO SILENCE IT — that
+    // restores a queue that is computed once, before the register has answered, and never
+    // again. There is a test for exactly this in src/pages/studio-register.test.tsx.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [products, register]
   );
 
   const total = outstanding.reduce((sum, entry) => sum + entry.issues.length, 0);

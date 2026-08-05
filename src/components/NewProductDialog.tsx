@@ -9,7 +9,7 @@ import { createProduct, type WriteFailure } from '../lib/products';
 import { useProducts } from '../lib/product-store';
 import { regimeById } from '../lib/regimes';
 import { CategoryId } from '../lib/model';
-import { ingredientById } from '../lib/catalog';
+import { ingredientById } from '../lib/material-index';
 import { useWorkspace } from '../lib/workspace';
 
 /**
@@ -223,10 +223,35 @@ export function NewProductDialog({
             </Select>
           </Field>
 
+          {/* WHAT THIS SENTENCE USED TO PROMISE. "…and will produce N outputs", where N was
+              `category.artefacts.length + 1` from a shipped constant. Nothing produces an
+              output: both export controls on the designer are stubs that say so when pressed,
+              and no file is written anywhere in this application. A maker read this before
+              typing anything and reasonably concluded that creating the product would result in
+              N things they could send to a printer.
+
+              The regimes half is true and stays — those are the rules that attach to this
+              category, and they decide the shape of everything downstream. The outputs half now
+              says what actually happens: previews, drawn at actual size, from the composition. */}
           <p className="rounded-control border border-paper-line bg-paper-panel/60 px-4 py-3 text-2xs leading-relaxed text-ink-tertiary">
             This product will be subject to{' '}
-            {category.regimes.map((regime) => regimeById(regime).short).join(', ')}, and will
-            produce {category.artefacts.length + (category.specKind === 'bom' ? 0 : 1)} outputs.
+            {category.regimes.map((regime) => regimeById(regime).short).join(', ')}. Batchlabel
+            will draw{' '}
+            {category.artefacts.length + (category.specKind === 'bom' ? 0 : 1)} previews for it
+            at actual size — {category.artefacts.length}{' '}
+            {category.artefacts.length === 1 ? 'label surface' : 'label surfaces'}
+            {category.specKind === 'bom' ? '' : ' and a draft safety data sheet'}. Producing a
+            print-ready file is not built yet.
+          </p>
+
+          {/* Said here rather than discovered on the composition screen. The four fields above
+              are the whole form, and a maker who assumes the rest is filled in for them will
+              print a label carrying a base wax and a net quantity nobody chose — which is
+              exactly what this dialog used to do. */}
+          <p className="text-2xs leading-relaxed text-ink-tertiary">
+            Nothing else is filled in for you. The composition starts empty — no base, no
+            packaging, no net quantity — because those are facts about your product that this app
+            cannot guess, and every one of them ends up on the label.
           </p>
 
           {/* The meter refused it. The allowance, not the Postgres sentence: the trigger's own
