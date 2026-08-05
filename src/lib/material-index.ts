@@ -205,7 +205,7 @@ export const MATERIAL_CLASSES: Array<{
   label: 'Ingredients',
   blurb:
   'Anything that goes into the mixture. Classified at 100 percent, before any load is applied.',
-  documentRule: 'A safety data sheet, or for cosmetics an INCI and allergen certificate.'
+  documentRule: 'A safety data sheet from your supplier.'
 },
 {
   id: 'packaging',

@@ -14,7 +14,6 @@ import { outstandingObligations } from '../lib/regimes';
 import { specSummary } from '../lib/derive';
 import { formatDate } from '../lib/model';
 import { useProducts } from '../lib/product-store';
-import { useWorkspace } from '../lib/workspace';
 
 /**
  * Grouped by category, so a separate category filter would say the same thing
@@ -30,7 +29,6 @@ import { useWorkspace } from '../lib/workspace';
  */
 export function Products() {
   const navigate = useNavigate();
-  const { enabledCategories } = useWorkspace();
   const { status, products, error, refresh } = useProducts();
   const entitlement = useEntitlement();
   const [creating, setCreating] = useState(false);
@@ -46,14 +44,10 @@ export function Products() {
   // would have worked. The whole argument is on `createIsCertainToFail`.
   const offerCreate = !createIsCertainToFail(entitlement);
 
-  // Only categories that hold something get a section. A brand new account gets ONE empty
-  // state rather than three — "nothing in home fragrance yet", "nothing in cosmetics yet",
-  // "nothing in electronics yet" is the same sentence three times and reads as a broken
-  // screen rather than as a beginning.
-  const categories = CATEGORIES.filter(
-    (category) =>
-    enabledCategories.includes(category.id) &&
-    products.some((product) => product.categoryId === category.id)
+  // A category only gets a section once it holds something, so a brand new account gets the
+  // empty state rather than a heading over nothing.
+  const categories = CATEGORIES.filter((category) =>
+  products.some((product) => product.categoryId === category.id)
   );
 
   return (

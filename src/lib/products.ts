@@ -1,5 +1,5 @@
 import { DOMAIN_SCHEMA, NOT_CONFIGURED_MESSAGE, domainClient } from './domain';
-import { ARTEFACT_LABELS, CategoryPack, categoryById, categoryForKind } from './categories';
+import { ARTEFACT_LABELS, CategoryPack, categoryById } from './categories';
 /**
  * The record log. Two lines are written from this file, deliberately.
  *
@@ -16,12 +16,10 @@ import {
   ArtefactCurrency,
   ArtefactInstance,
   ArtefactType,
-  BomSpec,
   CategoryId,
   Market,
   MixtureSpec,
   NO_EVIDENCE,
-  PhasedSpec,
   Product,
   ProductEvidence,
   RecordedEvidence,
@@ -516,7 +514,7 @@ function unit(value: unknown, fallback: 'g' | 'ml'): 'g' | 'ml' {
 }
 
 const KNOWN_MARKETS: Market[] = ['GB', 'EU'];
-const KNOWN_REGIMES: RegimeId[] = ['clp', 'en15494', 'cpr', 'ce', 'rohs', 'weee', 'gpsr'];
+const KNOWN_REGIMES: RegimeId[] = ['clp', 'en15494', 'gpsr'];
 
 function markets(value: unknown): Market[] {
   const list = Array.isArray(value) ?
@@ -538,15 +536,16 @@ function regimes(value: unknown, category: CategoryPack): RegimeId[] {
   return list.length ? list : category.regimes;
 }
 
+/**
+ * The pack for a stored row.
+ *
+ * `category_id` is still READ rather than assumed, because rows written before home fragrance
+ * was the only category still carry their own value and the column is not being migrated.
+ * Anything this build does not recognise resolves to the one pack there is, which is what
+ * `categoryById` already does — a row must stay renderable.
+ */
 function categoryFor(row: SpecificationRow): CategoryPack {
-  const stored = str(row.category_id);
-  const known = ['home-fragrance', 'cosmetics', 'electronics'].includes(stored);
-  if (known) return categoryById(stored as CategoryId);
-  // `kind` and `category_id` are separate columns, so a row can carry a category this build
-  // does not know while still saying which shape its composition has. Resolving through the
-  // kind keeps such a row renderable instead of silently becoming home fragrance.
-  const kind = row.kind === 'phased' || row.kind === 'bom' ? row.kind : 'mixture';
-  return categoryForKind(kind);
+  return categoryById(str(row.category_id) as CategoryId);
 }
 
 /* ------------------------------------------------------------- artefacts */
@@ -555,17 +554,17 @@ function categoryFor(row: SpecificationRow): CategoryPack {
 export function defaultArtefactSize(type: ArtefactType): {widthMm: number;heightMm: number;} {
   if (type === 'sds') return { widthMm: 210, heightMm: 297 };
   if (type === 'listing') return { widthMm: 96, heightMm: 60 };
-  if (type === 'carton') return { widthMm: 88, heightMm: 58 };
-  if (type === 'rating-plate') return { widthMm: 40, heightMm: 25 };
   return { widthMm: 52, heightMm: 74 };
 }
 
-/** The surfaces a product's category requires, in order, with the sheet where one is due. */
-export function artefactTypesFor(category: CategoryPack, kind: Spec['kind']): ArtefactType[] {
-  // The safety data sheet is the second output of the same derivation, so every product that
-  // is a mixture carries one alongside its label surfaces. A device is an article rather than
-  // a mixture and has no sheet to issue.
-  return kind === 'bom' ? [...category.artefacts] : [...category.artefacts, 'sds'];
+/**
+ * The surfaces a product's category requires, in order, with the safety data sheet.
+ *
+ * The sheet is the second output of the same derivation, so every product carries one
+ * alongside its label surfaces.
+ */
+export function artefactTypesFor(category: CategoryPack): ArtefactType[] {
+  return [...category.artefacts, 'sds'];
 }
 
 /**
@@ -587,7 +586,6 @@ export function artefactTypesFor(category: CategoryPack, kind: Spec['kind']): Ar
  */
 export function artefactsFor(
 category: CategoryPack,
-kind: Spec['kind'],
 rows: ArtefactRow[] = [],
 liveHash: string | null = null)
 : ArtefactInstance[] {
@@ -600,7 +598,7 @@ liveHash: string | null = null)
     if (!held || num(row.version, 0) > num(held.version, 0)) latest.set(type, row);
   }
 
-  return artefactTypesFor(category, kind).map((type) => {
+  return artefactTypesFor(category).map((type) => {
     const size = defaultArtefactSize(type);
     const row = latest.get(type);
 
@@ -702,64 +700,12 @@ export function evidenceByProduct(rows: RecordEventRow[]): Map<string, ProductEv
 
 /** The composition, assembled from the specification row and the product's pack fields. */
 function toSpec(spec: SpecificationRow, product: ProductRow, category: CategoryPack): Spec {
-  const data = (spec.data ?? {}) as Json;
   const productType = str(spec.product_type, category.productTypes[0]);
   const pack = {
     netQuantity: num(product.net_quantity, 0),
     netUnit: unit(product.net_unit, 'ml'),
     packagingId: str(product.packaging_id)
   };
-
-  if (spec.kind === 'phased') {
-    const phases = Array.isArray(data.phases) ?
-    (data.phases as PhasedSpec['phases']).map((phase) => ({
-      name: str(phase?.name, 'Phase'),
-      items: Array.isArray(phase?.items) ?
-      phase.items.map((item) => ({
-        materialId: str(item?.materialId),
-        pct: num(item?.pct, 0)
-      })) :
-      []
-    })) :
-    [];
-    const phased: PhasedSpec = {
-      kind: 'phased',
-      productType,
-      phases,
-      application: data.application === 'Rinse-off' ? 'Rinse-off' : 'Leave-on',
-      // Zero, not twelve. Unset is a state a cosmetic label has to be able to be in, and the
-      // twelve that used to be defaulted here printed "12M" onto the preview.
-      paoMonths: num(data.paoMonths, 0),
-      ...pack
-    };
-    return phased;
-  }
-
-  if (spec.kind === 'bom') {
-    const ratings = (data.ratings ?? {}) as Json;
-    const bom: BomSpec = {
-      kind: 'bom',
-      productType,
-      // Empty, not "Not yet assigned". The model and type reference is what a rating plate is
-      // printed from and what a declaration of conformity names, so a stored blank has to stay
-      // a blank the editor shows as empty rather than a sentence that could reach a plate.
-      model: str(data.model),
-      items: Array.isArray(data.items) ?
-      (data.items as BomSpec['items']).map((item) => ({
-        materialId: str(item?.materialId),
-        quantity: num(item?.quantity, 1),
-        position: str(item?.position, 'Unplaced')
-      })) :
-      [],
-      ratings: {
-        voltage: str(ratings.voltage, '—'),
-        current: str(ratings.current, '—'),
-        power: str(ratings.power, '—')
-      },
-      ...pack
-    };
-    return bom;
-  }
 
   const mixture: MixtureSpec = {
     kind: 'mixture',
@@ -796,7 +742,6 @@ recorded: {artefacts?: ArtefactRow[];evidence?: ProductEvidence;liveHash?: strin
 : Product {
   const category = categoryFor(spec);
   const composition = toSpec(spec, product, category);
-  const identifiers = (product.identifiers ?? {}) as Json;
 
   return {
     id: product.id,
@@ -807,21 +752,13 @@ recorded: {artefacts?: ArtefactRow[];evidence?: ProductEvidence;liveHash?: strin
     markets: markets(spec.markets),
     regimes: regimes(spec.regimes, category),
     spec: composition,
-    artefacts: artefactsFor(
-      category,
-      composition.kind,
-      recorded.artefacts ?? [],
-      recorded.liveHash ?? null
-    ),
+    artefacts: artefactsFor(category, recorded.artefacts ?? [], recorded.liveHash ?? null),
     identifiers: {
       // The UFI is read from the SPECIFICATION, which is where CLP Annex VIII puts it and
       // where the schema put the column: one composition, one UFI, however many pack sizes.
       // Nothing in Batchlabel generates one, so in practice this is always absent — and
       // `obligationSatisfied` refuses to mark the UFI obligation done whatever is stored.
-      ufi: str(spec.ufi) || undefined,
-      model: str(identifiers.model) || undefined,
-      weeeRegistration: str(identifiers.weee_registration ?? identifiers.weeeRegistration) || undefined,
-      modelYear: str(identifiers.model_year ?? identifiers.modelYear) || undefined
+      ufi: str(spec.ufi) || undefined
     },
     evidence: recorded.evidence ?? NO_EVIDENCE
   };
@@ -1072,21 +1009,15 @@ productIds: string[])
  * honest place for it.
  *
  * WHAT IS STILL SET, and why none of it is a claim about the product: the SHAPE of the
- * composition (a mixture has a base and a fragrance; a cosmetic has phases) and the phase
- * names, which are a starting structure the maker edits. `netUnit` IS THE ONE SCALAR AND IT
+ * composition, which is a base, a fragrance and a dye. `netUnit` IS THE ONE SCALAR AND IT
  * IS NOT A CLAIM: it is a unit, not a quantity, and it follows from the product type the
  * maker did pick — candles and melts are sold by weight and everything else here by volume.
  * `netQuantity` stays 0, which packColumns writes as NULL rather than as a quantity, so
  * nothing is asserted about how much is in the pack — a unit with no number beside it prints
  * nothing.
  */
-export function blankSpec(
-category: CategoryPack,
-productType: string,
-fragranceId?: string)
-: Spec {
-  if (category.specKind === 'mixture') {
-    return {
+export function blankSpec(productType: string, fragranceId?: string): Spec {
+  return {
       kind: 'mixture',
       productType,
       baseId: '',
@@ -1098,80 +1029,24 @@ fragranceId?: string)
       netQuantity: 0,
       netUnit: productType === 'Container candle' || productType === 'Wax melt' ? 'g' : 'ml',
       packagingId: ''
-    };
-  }
-  if (category.specKind === 'phased') {
-    return {
-      kind: 'phased',
-      productType,
-      phases: [
-      { name: 'Oil phase', items: [] },
-      { name: 'Cool down', items: [] }],
-
-      application: 'Leave-on',
-      /**
-       * NOT 12, WHICH IS WHAT THIS SEEDED UNTIL NOW.
-       *
-       * A period after opening is a legal marking on a cosmetic and it is one the maker has to
-       * justify from stability data. Twelve months was a constant here, it printed as "12M" on
-       * the label preview at actual size, and the obligations list on the same screen read
-       * "Neither a period after opening nor a date of minimum durability is shown" — the screen
-       * contradicting itself over a number nothing had measured. Zero means unset, `derive`
-       * renders it as unset rather than as a figure, and `cpr-pao` reads the same field, so the
-       * two halves of the screen cannot disagree again.
-       */
-      paoMonths: 0,
-      netQuantity: 0,
-      netUnit: 'ml',
-      packagingId: ''
-    };
-  }
-  return {
-    kind: 'bom',
-    productType,
-    model: '',
-    items: [],
-    /**
-     * NOT 5 V / 2 A / 10 W, WHICH IS WHAT THIS SEEDED UNTIL NOW.
-     *
-     * Those three numbers are what a rating plate is printed from, and a rating plate is a
-     * legal marking on a device. A maker who creates a wax warmer, never opens the ratings
-     * fields and produces the plate would have got 5 V / 2 A / 10 W on a mains product —
-     * plausible enough to survive a glance, and invented by us. Nothing on the screen said
-     * they were a placeholder, because they did not look like one.
-     *
-     * The em dash is what `toProduct` already maps an absent rating to (the `str(…, '—')`
-     * fallback in the bom branch), so a spec that has never been filled in now reads the same
-     * whether it came from here or from a stored row — and the line above has always taken
-     * the same view of the model, which is the other field the plate carries.
-     */
-    ratings: { voltage: '—', current: '—', power: '—' },
-    netQuantity: 0,
-    netUnit: 'g',
-    packagingId: ''
   };
 }
 
-/** The shape-varying half of a composition, which is what `specifications.data` is for. */
-function specData(spec: Spec): Json {
-  if (spec.kind === 'phased') {
-    return { phases: spec.phases, application: spec.application, paoMonths: spec.paoMonths };
-  }
-  if (spec.kind === 'bom') {
-    return { model: spec.model, items: spec.items, ratings: spec.ratings };
-  }
-  return {};
-}
-
-/** The typed half. The four classification inputs get columns; everything else does not. */
+/**
+ * The typed half. The four classification inputs get columns; everything else does not.
+ *
+ * `data` is written EMPTY and stays a column rather than being dropped: it held the phase list
+ * and the bill of materials, both of which belonged to categories that no longer exist, and
+ * the column itself is not being migrated.
+ */
 function specColumns(spec: Spec) {
   return {
     product_type: spec.productType,
-    fragrance_id: spec.kind === 'mixture' ? spec.fragranceId || null : null,
-    base_id: spec.kind === 'mixture' ? spec.baseId || null : null,
-    dye_id: spec.kind === 'mixture' ? spec.dyeId || null : null,
-    load: spec.kind === 'mixture' ? spec.load : null,
-    data: specData(spec)
+    fragrance_id: spec.fragranceId || null,
+    base_id: spec.baseId || null,
+    dye_id: spec.dyeId || null,
+    load: spec.load,
+    data: {} as Json
   };
 }
 
@@ -1235,7 +1110,7 @@ accountId: string | null = null)
   if (!client) return { ok: false, reason: 'not_configured', message: NOT_CONFIGURED_MESSAGE };
 
   const category = categoryById(input.categoryId);
-  const spec = blankSpec(category, input.productType, input.fragranceId);
+  const spec = blankSpec(input.productType, input.fragranceId);
   const name = input.name.trim();
   const sku = input.sku.trim();
   const account = accountId ? { account_id: accountId } : {};
@@ -1246,7 +1121,7 @@ accountId: string | null = null)
     ...account,
     name,
     category_id: category.id,
-    kind: category.specKind,
+    kind: 'mixture',
     markets: ['GB'],
     regimes: category.regimes,
     ...specColumns(spec)

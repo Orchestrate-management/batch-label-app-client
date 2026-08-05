@@ -30,17 +30,6 @@
   --ink-secondary: 74 68 61;
   --ink-tertiary: 107 98 89;
 }
-/* The neutral set is this app's own — there is no brand equivalent, because the
-   marketing site never has to sit behind a photograph of a drill. Same ladder,
-   hue pulled out. */
-[data-surface='neutral'] {
-  --paper: 246 246 245;
-  --paper-panel: 237 237 235;
-  --paper-line: 224 224 222;
-  --ink: 26 26 25;
-  --ink-secondary: 68 68 65;
-  --ink-tertiary: 100 100 96;
-}
 html,
 body,
 #root {

@@ -85,7 +85,7 @@ function Probe() {
       <button
         onClick={() =>
         void settings.savePreferences({
-          enabledCategories: ['cosmetics'],
+          enabledCategories: ['home-fragrance'],
           defaultMarket: null,
           defaultExport: null
         })
@@ -134,7 +134,7 @@ beforeEach(() => {
   });
   data.savePreferences.mockReset().mockResolvedValue({
     ok: true,
-    value: { enabledCategories: ['cosmetics'], defaultMarket: null, defaultExport: null }
+    value: { enabledCategories: ['home-fragrance'], defaultMarket: null, defaultExport: null }
   });
   data.createRequest.mockReset().mockResolvedValue({
     ok: true,
@@ -276,7 +276,7 @@ describe('the other three writes', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'save preferences' }));
 
-    await waitFor(() => expect(screen.getByText('categories:cosmetics')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('categories:home-fragrance')).toBeInTheDocument());
   });
 
   it('shows a recorded request only once the row exists', async () => {

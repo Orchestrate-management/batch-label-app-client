@@ -38,11 +38,10 @@ import {
 import { packagingById } from '../lib/material-index';
 import { useOptionalMaterials } from '../lib/materials-store';
 import { useOptionalSettings } from '../lib/settings-store';
-import { ARTEFACT_LABELS, STOCK, categoryById } from '../lib/categories';
+import { ARTEFACT_LABELS, STOCK } from '../lib/categories';
 import { addressForMarket } from '../lib/identity';
 import { useProduct, useProducts } from '../lib/product-store';
 import { blocksFor, regimeById } from '../lib/regimes';
-import { useCategorySurface } from '../lib/workspace';
 
 /**
  * Resolves the product first, for the same reason the specification screen does.
@@ -145,11 +144,6 @@ function ArtefactDesignerView({ product }: {product: Product;}) {
   const entitlement = useEntitlement();
   const canExport = entitlement.active;
 
-  // The designer always knows what it is designing: both the product and the
-  // surface come from the route, never from a picker inside the screen.
-  useCategorySurface(product.categoryId);
-  const category = categoryById(product.categoryId);
-
   // The safety data sheet is a document, not a designed surface. It is produced
   // on the product screen and previewed in the rail, never laid out here.
   const available = product.artefacts.filter((item) => item.type !== 'sds');
@@ -225,7 +219,7 @@ function ArtefactDesignerView({ product }: {product: Product;}) {
   // placeholder now that `batchlabel.record_events` holds real batch records, for the reason
   // set out at the same line in Specification.tsx: a label belongs to a composition and a batch
   // code belongs to a fill, so there is no "the" batch code for a product to print here.
-  const identityCode = category.recordIdentity === 'batch' ? '[Batch code]' : '[Serial number]';
+  const identityCode = '[Batch code]';
 
   return (
     <main className="flex-1 pb-24 xl:pb-0">

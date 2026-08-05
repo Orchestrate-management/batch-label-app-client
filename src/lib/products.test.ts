@@ -328,18 +328,19 @@ describe('reading a product row', () => {
   it('falls back rather than throwing on a row it does not recognise', () => {
     const product = toProduct(
       productRow({ name: null, sku: null, net_unit: 'furlongs', net_quantity: null }),
-      specRow({ category_id: 'something-new', kind: 'phased', markets: [], regimes: null })
+      specRow({ category_id: 'something-new', kind: 'something-else', markets: [], regimes: null })
     );
     expect(product.name).toBe('Untitled product');
     expect(product.sku).toBe('');
-    // An unknown category resolves through `kind`, which still says what shape the
-    // composition has, rather than silently becoming home fragrance.
-    expect(product.categoryId).toBe('cosmetics');
-    expect(product.spec.kind).toBe('phased');
+    // `category_id` is not being migrated, so a row written by another build can carry a value
+    // this one has never heard of. It has to stay RENDERABLE — home fragrance is the only pack
+    // there is, so that is what an unrecognised value resolves to rather than throwing.
+    expect(product.categoryId).toBe('home-fragrance');
+    expect(product.spec.kind).toBe('mixture');
     // GB is the column's own default; a product sold nowhere would render no address block.
     expect(product.markets).toEqual(['GB']);
     // Which rules apply is a fact about what the product is. An empty list would tell a maker
-    // that no regime applies to a cosmetic.
+    // that no regime applies to a candle.
     expect(product.regimes.length).toBeGreaterThan(0);
   });
 
@@ -354,7 +355,7 @@ describe('reading a product row', () => {
    */
   it('takes no evidence from the products.obligations column', () => {
     const product = toProduct(
-      productRow({ obligations: { 'clp-classification': true, 'cpr-pif': true } }),
+      productRow({ obligations: { 'clp-classification': true, 'clp-pcn-gb': true } }),
       specRow()
     );
     expect(product.evidence).toEqual({ obligations: {}, sdsSections: {} });
@@ -369,115 +370,8 @@ describe('reading a product row', () => {
    * its label, which is a compliance statement about a product nobody has checked. Round-tripping
    * them is the only thing standing between a schema change and that.
    */
-  it('reads a phased composition back out of the data blob', () => {
-    const product = toProduct(
-      productRow({ net_quantity: 30, net_unit: 'ml', packaging_id: 'pkg-dropper-30' }),
-      specRow({
-        category_id: 'cosmetics',
-        kind: 'phased',
-        product_type: 'Face oil',
-        data: {
-          phases: [
-          { name: 'Oil phase', items: [{ materialId: 'ing-jojoba', pct: 80 }] },
-          { name: 'Cool down', items: [{ materialId: 'ing-vit-e', pct: 1 }] }],
-
-          application: 'Rinse-off',
-          paoMonths: 6
-        }
-      })
-    );
-
-    expect(product.spec.kind).toBe('phased');
-    if (product.spec.kind === 'phased') {
-      expect(product.spec.phases).toHaveLength(2);
-      expect(product.spec.phases[0].name).toBe('Oil phase');
-      expect(product.spec.phases[0].items).toEqual([{ materialId: 'ing-jojoba', pct: 80 }]);
-      expect(product.spec.application).toBe('Rinse-off');
-      expect(product.spec.paoMonths).toBe(6);
-    }
-    // The pack is still the product's, on this shape as much as on a mixture.
-    expect(product.spec.netQuantity).toBe(30);
-  });
-
-  it('does not throw on a phased row whose blob is the wrong shape', () => {
-    const product = toProduct(
-      productRow(),
-      specRow({
-        category_id: 'cosmetics',
-        kind: 'phased',
-        // A phase with no name and a non-array item list, and an application this build has
-        // never heard of. All three have to degrade, because one malformed row must not cost
-        // the maker every other row on the screen.
-        data: { phases: [{ items: 'not a list' }], application: 'Sprayed on', paoMonths: 'six' }
-      })
-    );
-
-    expect(product.spec.kind).toBe('phased');
-    if (product.spec.kind === 'phased') {
-      expect(product.spec.phases[0].name).toBe('Phase');
-      expect(product.spec.phases[0].items).toEqual([]);
-      // Leave-on is the safer of the two to assume: it is the longer exposure, and it is what
-      // the blank composition starts as.
-      expect(product.spec.application).toBe('Leave-on');
-      // ZERO, NOT 12. An unreadable period after opening is an unset one, and the label prints
-      // no open-jar figure for it. Defaulting to 12 here put a legal marking on a cosmetic on
-      // the strength of a blob this very test describes as the wrong shape.
-      expect(product.spec.paoMonths).toBe(0);
-    }
-  });
-
-  it('reads a bill of materials back out of the data blob', () => {
-    const product = toProduct(
-      productRow({ net_quantity: 400, net_unit: 'g', packaging_id: 'pkg-device-box' }),
-      specRow({
-        category_id: 'electronics',
-        kind: 'bom',
-        product_type: 'Wax warmer',
-        data: {
-          model: 'WW-100',
-          items: [{ materialId: 'cmp-element', quantity: 2, position: 'Base' }],
-          ratings: { voltage: '230 V', current: '0.2 A', power: '46 W' }
-        }
-      })
-    );
-
-    expect(product.spec.kind).toBe('bom');
-    if (product.spec.kind === 'bom') {
-      expect(product.spec.model).toBe('WW-100');
-      expect(product.spec.items).toEqual([
-      { materialId: 'cmp-element', quantity: 2, position: 'Base' }]
-      );
-      // The rating plate is printed from these three, so a dropped one is a device shipped
-      // with a blank plate rather than a wrong one.
-      expect(product.spec.ratings).toEqual({ voltage: '230 V', current: '0.2 A', power: '46 W' });
-    }
-  });
-
-  it('does not invent a model number or a rating for a device row that has none', () => {
-    const product = toProduct(
-      productRow(),
-      specRow({ category_id: 'electronics', kind: 'bom', data: {} })
-    );
-
-    expect(product.spec.kind).toBe('bom');
-    if (product.spec.kind === 'bom') {
-      // Empty and an em dash, never a plausible-looking model or voltage: a rating plate is a
-      // legal statement about a device, and a placeholder that reads like data is how one gets
-      // printed. "Not yet assigned" was the old fallback here — a sentence rather than a blank,
-      // which is worse in a field whose contents reach a plate. It is now the input's
-      // placeholder, where it is visibly not a value.
-      expect(product.spec.model).toBe('');
-      expect(product.spec.items).toEqual([]);
-      expect(product.spec.ratings).toEqual({ voltage: '—', current: '—', power: '—' });
-    }
-  });
-
-  it('gives a device no safety data sheet, and a mixture one', () => {
-    // An article is not a mixture, so there is no sheet to issue. Listing one against a wax
-    // warmer would tell a maker they owe a document that does not exist for that product.
-    const device = toProduct(productRow(), specRow({ category_id: 'electronics', kind: 'bom' }));
-    expect(device.artefacts.some((artefact) => artefact.type === 'sds')).toBe(false);
-
+  it('gives a mixture a safety data sheet alongside its label surfaces', () => {
+    // The sheet is the second output of the same derivation, so a product always has one.
     const candle = toProduct(productRow(), specRow());
     expect(candle.artefacts.some((artefact) => artefact.type === 'sds')).toBe(true);
   });
@@ -496,10 +390,10 @@ describe('the composition a new product starts from', () => {
   const homeFragrance = categoryById('home-fragrance');
 
   it('fills a candle and a melt by weight, and a diffuser and a spray by volume', () => {
-    expect(blankSpec(homeFragrance, 'Container candle').netUnit).toBe('g');
-    expect(blankSpec(homeFragrance, 'Wax melt').netUnit).toBe('g');
-    expect(blankSpec(homeFragrance, 'Reed diffuser').netUnit).toBe('ml');
-    expect(blankSpec(homeFragrance, 'Room spray').netUnit).toBe('ml');
+    expect(blankSpec('Container candle').netUnit).toBe('g');
+    expect(blankSpec('Wax melt').netUnit).toBe('g');
+    expect(blankSpec('Reed diffuser').netUnit).toBe('ml');
+    expect(blankSpec('Room spray').netUnit).toBe('ml');
   });
 
   /**
@@ -524,7 +418,7 @@ describe('the composition a new product starts from', () => {
    */
   it('seeds no base, no packaging, no dye and no quantity — nobody has chosen one', () => {
     for (const type of ['Container candle', 'Wax melt', 'Reed diffuser', 'Room spray']) {
-      const spec = blankSpec(homeFragrance, type);
+      const spec = blankSpec(type);
       expect(spec.packagingId).toBe('');
       // A quantity is a declaration under the average-quantity rules. Zero is unset, and the
       // screens render it as unset rather than printing "0 g" on a container that is not empty.
@@ -538,29 +432,18 @@ describe('the composition a new product starts from', () => {
     }
   });
 
-  it('leaves a cosmetic and a device empty of packaging too', () => {
-    const cosmetic = blankSpec(categoryById('cosmetics'), 'Face oil');
-    const device = blankSpec(categoryById('electronics'), 'Wax warmer');
-    expect(cosmetic.packagingId).toBe('');
-    expect(device.packagingId).toBe('');
-    expect(cosmetic.netQuantity).toBe(0);
-    expect(device.netQuantity).toBe(0);
-  });
-
   it('carries no id from the deleted catalogue anywhere in a new composition', () => {
     // The catalogue's ids had a shape — 'ing-', 'pkg-', 'cmp-' — and the cheapest way for one
     // to come back is a default somebody restores because a screen looked empty without it.
-    for (const category of ['home-fragrance', 'cosmetics', 'electronics'] as const) {
-      const pack = categoryById(category);
-      const json = JSON.stringify(blankSpec(pack, pack.productTypes[0]));
-      expect(json).not.toMatch(/"(ing|pkg|cmp)-/);
+    for (const productType of homeFragrance.productTypes) {
+      expect(JSON.stringify(blankSpec(productType))).not.toMatch(/"(ing|pkg|cmp)-/);
     }
   });
 
   it('starts a fragrance load at zero rather than at a plausible number', () => {
     // The load drives the CLP classification. A default of 8% would classify a product nobody
     // has weighed, and the classification is the whole output.
-    const candle = blankSpec(homeFragrance, 'Container candle');
+    const candle = blankSpec('Container candle');
     if (candle.kind === 'mixture') {
       expect(candle.load).toBe(0);
       expect(candle.fragranceId).toBe('');
@@ -568,56 +451,10 @@ describe('the composition a new product starts from', () => {
   });
 
   it('carries a starting material through when the product was begun from a sheet', () => {
-    const fromSheet = blankSpec(homeFragrance, 'Container candle', 'ing-black-fig');
+    const fromSheet = blankSpec('Container candle', 'ing-black-fig');
     if (fromSheet.kind === 'mixture') expect(fromSheet.fragranceId).toBe('ing-black-fig');
   });
 
-  it('starts a device with no electrical ratings, rather than with plausible ones', () => {
-    // THE ONE VALUE IN blankSpec THAT WOULD HAVE BEEN A LEGAL MARKING. It seeded
-    // 5 V / 2 A / 10 W: the three numbers a rating plate is printed from, invented by us,
-    // and not distinguishable from ones a maker had entered. A wax warmer is a mains
-    // product. The em dash is what `toProduct` maps an absent rating to, so the seed and the
-    // read now agree, and a plate cannot carry a figure nobody stated.
-    const device = blankSpec(categoryById('electronics'), 'Wax warmer');
-    expect(device.kind).toBe('bom');
-    if (device.kind === 'bom') {
-      expect(device.ratings).toEqual({ voltage: '—', current: '—', power: '—' });
-      // Belt and braces, and the assertion that survives a change of placeholder: whatever
-      // it is, it may not parse as a quantity anybody could print.
-      for (const value of Object.values(device.ratings)) {
-        expect(value).not.toMatch(/\d/);
-      }
-    }
-  });
-
-  it('starts a cosmetic with empty phases and no period after opening', () => {
-    const cosmetic = blankSpec(categoryById('cosmetics'), 'Face oil');
-    expect(cosmetic.kind).toBe('phased');
-    if (cosmetic.kind === 'phased') {
-      expect(cosmetic.phases.map((phase) => phase.name)).toEqual(['Oil phase', 'Cool down']);
-      // Empty, not seeded. A phase list with ingredients in it is a recipe nobody wrote.
-      expect(cosmetic.phases.every((phase) => phase.items.length === 0)).toBe(true);
-      /**
-       * ZERO, AND THIS IS THE ONE THAT WAS PRINTING.
-       *
-       * It seeded 12, `derivePhased` emitted a Period after opening group unconditionally, and
-       * the label preview rendered "12M" at actual size — a legal marking on a cosmetic, from a
-       * constant, that nothing had measured. The obligations list on the same screen
-       * simultaneously read "Neither a period after opening nor a date of minimum durability is
-       * shown". Both halves read this field now, so they cannot disagree again.
-       */
-      expect(cosmetic.paoMonths).toBe(0);
-    }
-  });
-
-  it('starts a device with no model and no components', () => {
-    const device = blankSpec(categoryById('electronics'), 'Wax warmer');
-    expect(device.kind).toBe('bom');
-    if (device.kind === 'bom') {
-      expect(device.model).toBe('');
-      expect(device.items).toEqual([]);
-    }
-  });
 });
 
 describe('classifying a refused write', () => {
@@ -889,28 +726,6 @@ describe('creating a product', () => {
       // It states no number: the allowance has one source and this is not it.
       expect(result.message).not.toMatch(/\d/);
     }
-  });
-
-  it('writes a cosmetic as phases and a device as a bill of materials', async () => {
-    // The shape-varying half of a composition goes in `specifications.data`, and the typed
-    // columns stay null for a shape that has no fragrance and no load. Sending a mixture's
-    // columns for a face oil would classify it against a recipe it does not have.
-    await createProduct(
-      { name: 'Rosehip Face Oil', sku: 'FO-RH-30', categoryId: 'cosmetics', productType: 'Face oil' },
-      'acct-1111'
-    );
-    expect(db.state.specPayload?.kind).toBe('phased');
-    expect(db.state.specPayload?.fragrance_id).toBeNull();
-    expect(db.state.specPayload?.load).toBeNull();
-    expect(db.state.specPayload?.data).toHaveProperty('phases');
-
-    await createProduct(
-      { name: 'Wax Warmer', sku: 'WW-100', categoryId: 'electronics', productType: 'Wax warmer' },
-      'acct-1111'
-    );
-    expect(db.state.specPayload?.kind).toBe('bom');
-    expect(db.state.specPayload?.data).toHaveProperty('items');
-    expect(db.state.specPayload?.data).toHaveProperty('ratings');
   });
 
   it('trims the name and the code, and sends an empty code as no code', async () => {
@@ -1487,7 +1302,7 @@ describe('an artefact, against the composition it was produced from', () => {
   const category = categoryById('home-fragrance');
 
   const label = (rows: ArtefactRow[], live: string | null) => {
-    const surface = artefactsFor(category, 'mixture', rows, live).
+    const surface = artefactsFor(category, rows, live).
     find((a) => a.type === 'unit-label');
     if (!surface) throw new Error('home fragrance has no unit label surface');
     return surface;
@@ -1551,8 +1366,8 @@ const eventRow = (over: Partial<RecordEventRow> = {}): RecordEventRow => ({
   kind: 'compliance.evidence_recorded',
   product_id: 'prod-1',
   occurred_at: '2026-07-01T00:00:00.000Z',
-  obligation_id: 'cpr-pif',
-  reference: 'PIF-1',
+  obligation_id: 'clp-pcn-gb',
+  reference: 'REF-1',
   summary: 'Assembled the product information file.',
   ...over
 });
@@ -1570,18 +1385,18 @@ describe('the evidence a product carries, read from the log', () => {
     // The read orders by occurred_at descending and a correction is a new event, because the
     // log refuses UPDATE three separate ways. First-seen therefore means most recent.
     const map = evidenceByProduct([
-    eventRow({ id: 'ev-new', occurred_at: '2026-08-01T00:00:00.000Z', reference: 'PIF-2' }),
-    eventRow({ id: 'ev-old', occurred_at: '2026-07-01T00:00:00.000Z', reference: 'PIF-1' })]
+    eventRow({ id: 'ev-new', occurred_at: '2026-08-01T00:00:00.000Z', reference: 'REF-2' }),
+    eventRow({ id: 'ev-old', occurred_at: '2026-07-01T00:00:00.000Z', reference: 'REF-1' })]
     );
-    expect(evidenceFor(map, 'prod-1').obligations['cpr-pif'].reference).toBe('PIF-2');
+    expect(evidenceFor(map, 'prod-1').obligations['clp-pcn-gb'].reference).toBe('REF-2');
   });
 
   it('keeps one product\'s record out of another\'s', () => {
     const map = evidenceByProduct([
-    eventRow({ id: 'a', product_id: 'prod-1', obligation_id: 'cpr-pif' }),
+    eventRow({ id: 'a', product_id: 'prod-1', obligation_id: 'clp-pcn-gb' }),
     eventRow({ id: 'b', product_id: 'prod-2', obligation_id: 'ce-doc-signed' })]
     );
-    expect(Object.keys(evidenceFor(map, 'prod-1').obligations)).toEqual(['cpr-pif']);
+    expect(Object.keys(evidenceFor(map, 'prod-1').obligations)).toEqual(['clp-pcn-gb']);
     expect(Object.keys(evidenceFor(map, 'prod-2').obligations)).toEqual(['ce-doc-signed']);
   });
 
@@ -1736,7 +1551,7 @@ describe('assembling a product from four reads', () => {
     const result = await fetchProducts('acct-1');
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.products[0].evidence.obligations['cpr-pif'].reference).toBe('PIF-1');
+      expect(result.products[0].evidence.obligations['clp-pcn-gb'].reference).toBe('REF-1');
     }
   });
 });

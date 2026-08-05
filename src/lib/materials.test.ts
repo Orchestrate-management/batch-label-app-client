@@ -1135,7 +1135,9 @@ describe('a child row missing a column the schema says it cannot be missing', ()
 
     const result = await fetchMaterials('acct-1');
     if (!result.ok) throw new Error('expected a read');
-    expect(result.materials[0].categories).toEqual(['home-fragrance', 'cosmetics']);
+    // Both 'aromatherapy' and 'cosmetics' are ids this build cannot draw — one it never had,
+    // one it removed — and neither survives the read.
+    expect(result.materials[0].categories).toEqual(['home-fragrance']);
   });
 
   it('names the thing that is already there for every kind of duplicate', async () => {

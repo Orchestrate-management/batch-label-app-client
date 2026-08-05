@@ -316,7 +316,7 @@ function numOrUndefined(value: unknown): number | undefined {
   return undefined;
 }
 
-const KNOWN_CATEGORIES: CategoryId[] = ['home-fragrance', 'cosmetics', 'electronics'];
+const KNOWN_CATEGORIES: CategoryId[] = ['home-fragrance'];
 
 function categories(value: unknown): CategoryId[] {
   if (!Array.isArray(value)) return [];
@@ -341,10 +341,7 @@ function signal(value: unknown): HazardAt100['signal'] {
   return value === 'Warning' || value === 'Danger' ? value : undefined;
 }
 
-export const DOCUMENT_KINDS: DocumentKind[] = [
-'Safety data sheet',
-'INCI and allergen certificate',
-'Technical drawing'];
+export const DOCUMENT_KINDS: DocumentKind[] = ['Safety data sheet', 'Technical drawing'];
 
 
 function provenance(value: unknown): MaterialProvenance | undefined {
@@ -469,8 +466,6 @@ function accountMaterialFromRow(row: MaterialRow, children: Children): Material 
     ...base,
     class: 'ingredient',
     role: str(row.role) ?? 'Other',
-    inci: str(row.inci),
-    inciFunction: str(row.inci_function),
     cas: str(row.cas),
     hazards: children.hazards.get(row.id) ?? [],
     allergens: children.allergens.get(row.id) ?? [],
@@ -584,8 +579,6 @@ version: ReferenceVersionRow | undefined)
     ...base,
     class: 'ingredient',
     role: str(row.role) ?? 'Other',
-    inci: str(payload.inci),
-    inciFunction: str(payload.inciFunction),
     cas: str(payload.cas),
     hazards,
     allergens,

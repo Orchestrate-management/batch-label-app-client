@@ -14,33 +14,33 @@ import { artefactsFor, blankSpec } from './products';
  * The "why" lines, and the documents they are allowed to cite.
  *
  * A why-line's `source` renders on the Specification screen as "Source: X." — a citation, in
- * the panel a maker opens to find out where a classification came from. The declaration of
- * conformity row cited "HH-DOC-WW100-01, issued 8 June 2026": HH is Hearth and Hollow, WW100
- * is its wax warmer, and both belong to the invented business this round removed. It was a
- * hardcoded literal, so it was identical for every account and every model, and a reference
- * number plus an issue date is precisely what a market surveillance officer asks for.
+ * the panel a maker opens to find out where a classification came from. A citation may name a
+ * PUBLIC document — a regulation, a directive, a published standard — because that exists
+ * whoever is reading it. It may never name a document held FOR THIS ACCOUNT, because there is
+ * no document store and no account holds one.
  *
- * All three categories are on by default, so a brand-new account can create an Electronics
- * product on its first visit and read it on the blank specification — model "Not yet assigned",
- * no components, and a declaration reference for a device nobody has.
+ * The rule was found on a declaration-of-conformity row citing "HH-DOC-WW100-01, issued 8 June
+ * 2026" — a hardcoded literal naming the invented business this round removed, identical for
+ * every account. That row and the category behind it are gone; the rule is not, and it is
+ * asserted here on the composition shape that remains.
  *
  * fixtures.guard.test.ts cannot see this: it watches imports, and a copied string literal is
  * invisible to it. Hence a behavioural test.
  */
 
-function freshDevice(): Product {
-  const category = categoryById('electronics');
-  const spec = blankSpec(category, category.productTypes[0]);
+function freshFragrance(): Product {
+  const category = categoryById('home-fragrance');
+  const spec = blankSpec(category.productTypes[0]);
   return {
     id: 'prod-1',
     specificationId: 'spec-1',
-    name: 'First device',
-    sku: 'FD-001',
-    categoryId: 'electronics',
+    name: 'First candle',
+    sku: 'FC-001',
+    categoryId: 'home-fragrance',
     markets: ['GB'],
     regimes: category.regimes,
     spec,
-    artefacts: artefactsFor(category, spec.kind),
+    artefacts: artefactsFor(category),
     identifiers: {},
     evidence: { obligations: {}, sdsSections: {} }
   };
@@ -56,173 +56,24 @@ function sourcesOf(product: Product): string[] {
 }
 
 describe('what a derivation is allowed to cite as its source', () => {
-  it('cites no declaration of conformity, because none is held', () => {
-    // Citing LEGISLATION is fine and stays — "Directive 2012/19/EU" is a public document that
-    // exists whoever is reading. Citing a DOCUMENT HELD FOR THIS ACCOUNT is the lie, because
-    // there is no document store and no account holds one.
-    const sources = sourcesOf(freshDevice());
-    expect(sources.join(' ')).not.toMatch(/declaration/i);
+  it('cites no document held for this account', () => {
+    // Citing a PUBLIC document is fine and stays — "EN 15494:2019" is a published standard
+    // that exists whoever is reading. Citing a DOCUMENT HELD FOR THIS ACCOUNT is the lie,
+    // because there is no document store and no account holds one.
+    const sources = sourcesOf(freshFragrance());
+    expect(sources.length).toBeGreaterThan(0);
+    expect(sources.join(' ')).not.toMatch(/declaration|certificate|report\b/i);
     for (const source of sources) {
-      expect(source).toMatch(/Directive|Regulation|Act\b/);
+      expect(source).toMatch(/Directive|Regulation|Act\b|EN \d|guidance/);
     }
   });
 
   it('carries no trace of the deleted fixture business', () => {
-    const derivation = derive(freshDevice().spec, freshDevice(), 'GB');
+    const derivation = derive(freshFragrance().spec, freshFragrance(), 'GB');
     const everything = JSON.stringify(derivation);
     expect(everything).not.toMatch(/HH-/);
     expect(everything).not.toMatch(/WW100/);
     expect(everything).not.toMatch(/Hearth/i);
-  });
-
-  it('still explains the declaration, without inventing a document for it', () => {
-    const derivation = derive(freshDevice().spec, freshDevice(), 'GB');
-    const doc = derivation.groups.
-    flatMap((group) => group.items).
-    find((item) => item.code === 'DoC');
-    if (!doc) throw new Error('no declaration-of-conformity row');
-    // The explanation the maker needs is which directives it covers and why it cannot be
-    // signed yet. Neither is a claim about a document that exists.
-    expect(doc.why[0].lead).toMatch(/Low Voltage Directive/);
-    expect(doc.why[0].source).toBeUndefined();
-  });
-});
-
-/**
- * The same rule, on the cosmetics derivation, which the test above could not see.
- *
- * It asserted only that no HH-/WW100/Hearth string survived, so it was blind to a second
- * citation of a document nobody holds: the Classification section of a brand new cosmetics
- * product credited its period after opening to "the stability data in the product information
- * file" and "Source: Cosmetic product safety report, stability and challenge testing", and
- * every label warning to "Source: Cosmetic product safety report, section on warnings".
- * Further down the SAME screen the obligations list read "No product information file has been
- * assembled for this product" and "No signed cosmetic product safety report is on file".
- *
- * Nothing holds a CPSR, nothing has measured a durability, and the 12 is a constant in
- * blankSpec. The number is still shown — a maker does have to set one — but as a value on
- * their composition rather than as the finding of a study.
- */
-function freshCosmetic(): Product {
-  const category = categoryById('cosmetics');
-  const spec = blankSpec(category, category.productTypes[0]);
-  return {
-    id: 'prod-2',
-    specificationId: 'spec-2',
-    name: 'First serum',
-    sku: 'FS-001',
-    categoryId: 'cosmetics',
-    markets: ['GB'],
-    regimes: category.regimes,
-    spec,
-    artefacts: artefactsFor(category, spec.kind),
-    identifiers: {},
-    evidence: { obligations: {}, sdsSections: {} }
-  };
-}
-
-describe('what a brand new cosmetics product is allowed to cite', () => {
-  it('cites no safety report and no product information file, because it holds neither', () => {
-    const sources = sourcesOf(freshCosmetic());
-    expect(sources.join(' ')).not.toMatch(
-      /safety report|product information file|challenge testing|stability data/i
-    );
-  });
-
-  /**
-   * A BRAND NEW COSMETIC NOW SHOWS NO PERIOD AFTER OPENING AT ALL, which is the correction.
-   *
-   * This group used to emit an item unconditionally, from `spec.paoMonths`, which `blankSpec`
-   * seeded to 12 — so the label preview rendered "12M" beside an open jar symbol at actual
-   * size while the obligations list on the same screen read "Neither a period after opening nor
-   * a date of minimum durability is shown". A period after opening is a legal marking on a
-   * cosmetic and nothing in this application has measured one.
-   *
-   * The group stays, with `emptyText`, so the panel still says the duty exists.
-   */
-  it('shows no period after opening until one has been set', () => {
-    const derivation = derive(freshCosmetic().spec, freshCosmetic(), 'GB');
-    const durability = derivation.groups.find((group) => group.id === 'durability');
-    if (!durability) throw new Error('no durability group');
-    expect(durability.items).toEqual([]);
-    expect(durability.emptyText).toMatch(/no period after opening is set/i);
-    // Nothing anywhere in the group may read as a figure a label could carry.
-    expect(JSON.stringify(durability)).not.toMatch(/\d+M\b/);
-    expect(derivation.cosmetic?.pao).toBe('');
-  });
-
-  it('attributes a period after opening that HAS been set to the composition, not to a study', () => {
-    const product = freshCosmetic();
-    if (product.spec.kind !== 'phased') throw new Error('expected a phased spec');
-    const withPao = { ...product, spec: { ...product.spec, paoMonths: 6 } };
-    const derivation = derive(withPao.spec, withPao, 'GB');
-    const durability = derivation.groups.find((group) => group.id === 'durability');
-    if (!durability) throw new Error('no durability group');
-    const line = durability.items[0].why[0];
-    expect(line.source).toBeUndefined();
-    expect(line.meta).toMatch(/value set on this composition/i);
-    // The lead asserted a minimum durability of more than thirty months. Nothing has measured
-    // the durability at all, so there is no number for it to be more than.
-    expect(JSON.stringify(durability)).not.toMatch(/30 months/i);
-    expect(derivation.cosmetic?.pao).toBe('6M');
-  });
-
-  it('does not describe every cosmetic as a leave-on facial product', () => {
-    const derivation = derive(freshCosmetic().spec, freshCosmetic(), 'GB');
-    const precautions = derivation.groups.find((group) => group.id === 'precautions');
-    if (!precautions) throw new Error('no precautions group');
-    for (const item of precautions.items) {
-      expect(item.why[0].source).toBeUndefined();
-      // "leave-on facial product" was hardcoded, for every product type in the category.
-      expect(item.why[0].lead).not.toMatch(/facial/i);
-      expect(item.why[0].lead).toContain(freshCosmetic().spec.productType.toLowerCase());
-    }
-  });
-});
-
-/**
- * WHAT A DEVICE'S CONFORMITY FILE MAY SAY NOW THE COMPONENT CATALOGUE IS GONE.
- *
- * The test this replaces asserted the WORDING of a certificate-expiry countdown: a date from
- * the shipped COMPONENTS array, rendered as a note against the maker's own model. The wording
- * had already been corrected once ("Batchlabel's document, not your evidence"), which is what
- * the old test protected. Rhys's ruling removed the array underneath it, so there is no date,
- * no RoHS status and no standards list left to word — and the assertion worth keeping is that
- * none of them comes back.
- */
-describe('a device whose bill of materials has parts on it', () => {
-  it('states no RoHS status, no standard and no certificate date for any of them', () => {
-    const product = freshDevice();
-    const spec = {
-      ...product.spec,
-      items: [{ materialId: 'PTC heating element', quantity: 1, position: 'A1' }]
-    };
-    if (spec.kind !== 'bom') throw new Error('expected a bill of materials');
-    const derivation = derive(spec, { ...product, spec }, 'GB');
-    const everything = JSON.stringify(derivation);
-
-    // Every one of these was rendered from a constant, under the maker's own model name.
-    // The word RoHS is fine and stays — "nothing here has been checked for RoHS" is the
-    // honest sentence; what may not come back is a STATUS, which is a finding.
-    expect(everything).not.toMatch(/compliant/i);
-    expect(everything).not.toMatch(/not declared/i);
-    expect(everything).not.toMatch(/EN IEC/);
-    expect(everything).not.toMatch(/exemption/i);
-    expect(derivation.proximity.filter((note) => note.code === 'Certificate')).toEqual([]);
-    // And no count of declarations held, because none is held and none is examined.
-    expect(everything).not.toMatch(/\d+ of \d+/);
-  });
-
-  it('lists the part as entered and says nothing has been checked', () => {
-    const product = freshDevice();
-    const spec = {
-      ...product.spec,
-      items: [{ materialId: 'PTC heating element', quantity: 1, position: 'A1' }]
-    };
-    if (spec.kind !== 'bom') throw new Error('expected a bill of materials');
-    const group = derive(spec, { ...product, spec }, 'GB').groups.find((g) => g.id === 'components');
-    expect(group?.items[0].text).toBe('PTC heating element');
-    expect(group?.items[0].why[0].meta).toMatch(/nothing here has been checked/i);
   });
 });
 

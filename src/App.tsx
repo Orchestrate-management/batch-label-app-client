@@ -11,7 +11,6 @@ import { MetaTrackingProvider } from './lib/meta-consent';
 import { MaterialsProvider } from './lib/materials-store';
 import { ProductsProvider } from './lib/product-store';
 import { SettingsProvider } from './lib/settings-store';
-import { WorkspaceProvider } from './lib/workspace';
 import { BillingReturn } from './pages/BillingReturn';
 import { Studio } from './pages/Studio';
 
@@ -134,25 +133,23 @@ export function App() {
 
 function AppRoutes() {
   return (
-    <WorkspaceProvider>
-      <BrowserRouter>
-        <AppShell>
-          <RoutedScreens />
-        </AppShell>
-        <Toaster
-          position="bottom-right"
-          toastOptions={{
-            style: {
-              background: 'rgb(var(--paper))',
-              border: '1px solid rgb(var(--paper-line))',
-              borderRadius: '0.875rem',
-              color: 'rgb(var(--ink))',
-              fontFamily: '"IBM Plex Sans", sans-serif'
-            }
-          }} />
+    <BrowserRouter>
+      <AppShell>
+        <RoutedScreens />
+      </AppShell>
+      <Toaster
+        position="bottom-right"
+        toastOptions={{
+          style: {
+            background: 'rgb(var(--paper))',
+            border: '1px solid rgb(var(--paper-line))',
+            borderRadius: '0.875rem',
+            color: 'rgb(var(--ink))',
+            fontFamily: '"IBM Plex Sans", sans-serif'
+          }
+        }} />
 
-      </BrowserRouter>
-    </WorkspaceProvider>);
+  </BrowserRouter>);
 
 }
 

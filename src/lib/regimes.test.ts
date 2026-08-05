@@ -106,7 +106,7 @@ describe('the UFI obligation', () => {
    * and the UFI column it would come from is on the SPECIFICATION rather than here.
    */
   it('has nowhere to come from in a brand new composition', () => {
-    const spec = blankSpec(categoryById('home-fragrance'), 'Container candle');
+    const spec = blankSpec('Container candle');
     expect(JSON.stringify(spec)).not.toContain('ufi');
   });
 });
@@ -132,9 +132,9 @@ describe('every other obligation', () => {
  */
 describe('artefacts derived for a stored product', () => {
   it('claims no version and no print date', () => {
-    for (const category of ['home-fragrance', 'cosmetics', 'electronics'] as const) {
-      const pack = categoryById(category);
-      for (const artefact of artefactsFor(pack, pack.specKind)) {
+    {
+      const pack = categoryById('home-fragrance');
+      for (const artefact of artefactsFor(pack)) {
         expect(artefact.version).toBe('Not yet produced');
         expect(artefact.printedOn).toBe('—');
         // NOT 'current'. `current: true` for an unproduced surface is what painted a green
@@ -147,11 +147,12 @@ describe('artefacts derived for a stored product', () => {
     }
   });
 
-  it('gives a safety data sheet to a mixture and none to a device', () => {
-    const fragrance = artefactsFor(categoryById('home-fragrance'), 'mixture');
-    const device = artefactsFor(categoryById('electronics'), 'bom');
+  it('gives a safety data sheet alongside the label surfaces', () => {
+    // The sheet is the second output of the same derivation, so it is always there — and it is
+    // NOT a label surface, which is what stops it discharging a CLP labelling duty.
+    const fragrance = artefactsFor(categoryById('home-fragrance'));
     expect(fragrance.some((a) => a.type === 'sds')).toBe(true);
-    expect(device.some((a) => a.type === 'sds')).toBe(false);
+    expect(fragrance.some((a) => a.type === 'unit-label')).toBe(true);
   });
 });
 
@@ -165,9 +166,9 @@ describe('artefacts derived for a stored product', () => {
  * every account is in on its first afternoon, and it is the state the fifteen invented
  * findings were being rendered in.
  */
-function freshProduct(categoryId: 'home-fragrance' | 'cosmetics' | 'electronics'): Product {
+function freshProduct(categoryId: 'home-fragrance'): Product {
   const category = categoryById(categoryId);
-  const spec = blankSpec(category, category.productTypes[0]);
+  const spec = blankSpec(category.productTypes[0]);
   return {
     id: `p-${categoryId}`,
     specificationId: `s-${categoryId}`,
@@ -177,7 +178,7 @@ function freshProduct(categoryId: 'home-fragrance' | 'cosmetics' | 'electronics'
     markets: ['GB', 'EU'],
     regimes: category.regimes,
     spec,
-    artefacts: artefactsFor(category, spec.kind),
+    artefacts: artefactsFor(category),
     identifiers: {},
     evidence: { obligations: {}, sdsSections: {} }
   };
@@ -220,9 +221,8 @@ describe('every obligation, whatever regime it belongs to', () => {
 
   it('has a route out of outstanding: derived, recordable, or honestly not tracked', () => {
     for (const obligation of all) {
-      const notTracked = obligationState(freshProduct('home-fragrance'), obligation.id) === 'not-tracked' ||
-      obligationState(freshProduct('cosmetics'), obligation.id) === 'not-tracked' ||
-      obligationState(freshProduct('electronics'), obligation.id) === 'not-tracked';
+      const notTracked =
+      obligationState(freshProduct('home-fragrance'), obligation.id) === 'not-tracked';
       const routed =
       DERIVED_OBLIGATIONS.has(obligation.id) || obligation.recordable === true || notTracked;
       expect(
@@ -233,7 +233,7 @@ describe('every obligation, whatever regime it belongs to', () => {
   });
 
   it('turns met the moment evidence is recorded, for every recordable one', () => {
-    const product = freshProduct('electronics');
+    const product = freshProduct('home-fragrance');
     for (const obligation of all.filter((o) => o.recordable)) {
       expect(obligationState(product, obligation.id)).toBe('outstanding');
       expect(obligationState(withEvidence(product, obligation.id), obligation.id)).toBe('met');
@@ -241,9 +241,9 @@ describe('every obligation, whatever regime it belongs to', () => {
   });
 
   it('says when it happened, from the log rather than from the clock', () => {
-    const product = withEvidence(freshProduct('cosmetics'), 'cpr-pif', '2026-03-04T00:00:00.000Z');
-    const obligation = all.find((o) => o.id === 'cpr-pif');
-    if (!obligation) throw new Error('cpr-pif is no longer an obligation');
+    const product = withEvidence(freshProduct('home-fragrance'), 'clp-pcn-gb', '2026-03-04T00:00:00.000Z');
+    const obligation = all.find((o) => o.id === 'clp-pcn-gb');
+    if (!obligation) throw new Error('clp-pcn-gb is no longer an obligation');
     const outcome = obligationOutcome(product, obligation);
 
     expect(outcome.state).toBe('met');
@@ -262,35 +262,6 @@ describe('every obligation, whatever regime it belongs to', () => {
       expect(outcome.text).not.toBe(obligation.missingText);
       expect(outcome.text.length).toBeGreaterThan(0);
     }
-  });
-});
-
-/**
- * The period after opening, which was the clearest self-contradiction on the screen.
- *
- * `derivePhased` emitted a Period after opening group unconditionally and the label preview
- * rendered "12M" at actual size, from a constant `blankSpec` seeded — while this obligation,
- * on the same screen, read "Neither a period after opening nor a date of minimum durability is
- * shown". Both halves read `spec.paoMonths` now.
- */
-describe('the period after opening obligation', () => {
-  it('is outstanding when nothing is set, and met when a figure is', () => {
-    const cosmetic = freshProduct('cosmetics');
-    expect(cosmetic.spec.kind).toBe('phased');
-    expect(obligationState(cosmetic, 'cpr-pao')).toBe('outstanding');
-
-    const withPao: Product =
-    cosmetic.spec.kind === 'phased' ?
-    { ...cosmetic, spec: { ...cosmetic.spec, paoMonths: 6 } } :
-    cosmetic;
-    expect(obligationState(withPao, 'cpr-pao')).toBe('met');
-  });
-
-  it('cannot be satisfied by recording evidence over the top of the composition', () => {
-    // It is a property of what the label carries, not of what the maker says. Letting an
-    // entry in the log flip it would put back the exact claim this work removed.
-    const cosmetic = freshProduct('cosmetics');
-    expect(obligationState(withEvidence(cosmetic, 'cpr-pao'), 'cpr-pao')).toBe('outstanding');
   });
 });
 

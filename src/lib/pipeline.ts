@@ -43,15 +43,9 @@ export type Stage = {
 /** The materials a product's composition actually draws on. */
 export function materialIdsFor(product: Product): string[] {
   const spec = product.spec;
-  if (spec.kind === 'mixture') {
-    // 'ing-no-dye' was a sentinel row in the deleted catalogue — a material called "No dye"
-    // that every caller had to know to skip by id. An unset slot is now an empty string.
-    return [spec.fragranceId, spec.baseId, spec.dyeId].filter((id) => Boolean(id));
-  }
-  if (spec.kind === 'phased') {
-    return spec.phases.flatMap((phase) => phase.items.map((item) => item.materialId));
-  }
-  return spec.items.map((item) => item.materialId);
+  // 'ing-no-dye' was a sentinel row in the deleted catalogue — a material called "No dye"
+  // that every caller had to know to skip by id. An unset slot is now an empty string.
+  return [spec.fragranceId, spec.baseId, spec.dyeId].filter((id) => Boolean(id));
 }
 
 export function stagesFor(
@@ -118,45 +112,21 @@ market: Market)
     }
   }
 
-  if (product.spec.kind !== 'bom') {
-    if (product.spec.netQuantity <= 0) {
-      compositionIssues.push({
-        label: 'No net quantity set',
-        detail:
-        'The nominal quantity is a required label element. It is not filled in for you, because how much you put in the pack is not something this app can know.',
-        to
-      });
-    }
-    if (!product.spec.packagingId) {
-      compositionIssues.push({
-        label: 'No packaging chosen yet',
-        detail:
-        'The pack fixes the printable area and, under CLP, the minimum pictogram size the label is checked against. Both checks are waiting on it.',
-        to
-      });
-    }
-  }
-
-  if (product.spec.kind === 'phased' && product.spec.paoMonths <= 0) {
+  if (product.spec.netQuantity <= 0) {
     compositionIssues.push({
-      label: 'No period after opening set',
+      label: 'No net quantity set',
       detail:
-      'A cosmetic label carries a period after opening or a date of minimum durability. Nothing here has measured one, so it is yours to set and to justify.',
+      'The nominal quantity is a required label element. It is not filled in for you, because how much you put in the pack is not something this app can know.',
       to
     });
   }
-  if (product.spec.kind === 'phased') {
-    const total = product.spec.phases.reduce(
-      (sum, phase) => sum + phase.items.reduce((inner, item) => inner + item.pct, 0),
-      0
-    );
-    if (Math.abs(total - 100) > 0.01) {
-      compositionIssues.push({
-        label: 'Formula does not total 100 percent',
-        detail: `The phases add to ${total.toFixed(2)} percent. Every derived figure depends on the total being exact.`,
-        to: `/products/${product.id}`
-      });
-    }
+  if (!product.spec.packagingId) {
+    compositionIssues.push({
+      label: 'No packaging chosen yet',
+      detail:
+      'The pack fixes the printable area and, under CLP, the minimum pictogram size the label is checked against. Both checks are waiting on it.',
+      to
+    });
   }
   /*
    * NO BILL-OF-MATERIALS ISSUES, AND THE BRANCH THAT RAISED THEM IS GONE.
@@ -303,12 +273,7 @@ market: Market)
     label: 'Composition',
     checked: true,
     settled: compositionIssues.length === 0,
-    summary:
-    product.spec.kind === 'mixture' ?
-    `${product.spec.productType}, ${product.spec.load} percent load` :
-    product.spec.kind === 'phased' ?
-    `${product.spec.phases.length} phases, totalling 100 percent` :
-    `${product.spec.items.length} components`,
+    summary: `${product.spec.productType}, ${product.spec.load} percent load`,
     issues: compositionIssues
   },
   {

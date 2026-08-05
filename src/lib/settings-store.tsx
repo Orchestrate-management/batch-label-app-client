@@ -6,11 +6,9 @@ import React, {
   useMemo,
   useState } from
 'react';
-import { CATEGORIES } from './categories';
 import { setPrintedIdentity, ADDRESS_BLOCKS, type PrintedMarket } from './identity';
 import { isSupabaseConfigured } from './supabase';
 import { useEntitlement } from './entitlement';
-import type { CategoryId } from './model';
 import {
   createDataRequest,
   fetchBusinessIdentity,
@@ -81,13 +79,12 @@ export interface SettingsValue {
 /**
  * What the app behaves as before anybody has saved a preference.
  *
- * ALL THREE CATEGORIES, which is what the workspace has always done and what the create dialog
- * expects. The column's own default is home-fragrance alone; the two never disagree in
- * practice because every write from here sends the whole array, so the column default is
- * reachable only by a row this app did not write.
+ * `enabled_categories` is NOT NULL with a `cardinality(...) > 0` CHECK and is not being
+ * migrated, so every write still sends the one category there is. It matches the column's own
+ * default now, which it did not when there were three.
  */
 export const DEFAULT_PREFERENCES: WorkspacePreferences = {
-  enabledCategories: CATEGORIES.map((category) => category.id),
+  enabledCategories: ['home-fragrance'],
   defaultMarket: null,
   defaultExport: null
 };
@@ -336,15 +333,3 @@ export function useOptionalSettings(): SettingsValue | null {
   return useContext(SettingsContext);
 }
 
-/** The categories switched on for this account, defaults included. Never empty. */
-export function enabledCategoriesOf(settings: SettingsValue | null): CategoryId[] {
-  const stored = settings?.preferences?.enabledCategories;
-  if (!stored || stored.length === 0) return DEFAULT_PREFERENCES.enabledCategories;
-  const known = new Set(CATEGORIES.map((category) => category.id as string));
-  // A category id we do not recognise is one a later version of this app added, or one this
-  // version removed, and it cannot be drawn. Dropping it is right; dropping ALL of them and
-  // returning nothing is not — an empty list reads on the create screen as "no categories are
-  // available", which is a claim about this account rather than about this build.
-  const drawable = stored.filter((id) => known.has(id));
-  return drawable.length > 0 ? drawable : DEFAULT_PREFERENCES.enabledCategories;
-}

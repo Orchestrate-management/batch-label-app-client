@@ -5,9 +5,9 @@
 
 export type Market = 'GB' | 'EU';
 
-export type CategoryId = 'home-fragrance' | 'cosmetics' | 'electronics';
+export type CategoryId = 'home-fragrance';
 
-export type RegimeId = 'clp' | 'en15494' | 'cpr' | 'ce' | 'rohs' | 'weee' | 'gpsr';
+export type RegimeId = 'clp' | 'en15494' | 'gpsr';
 
 /**
  * WHAT A MATERIAL CAN BE, AND WHY 'component' IS NOT ONE OF THEM.
@@ -18,10 +18,6 @@ export type RegimeId = 'clp' | 'en15494' | 'cpr' | 'ce' | 'rohs' | 'weee' | 'gps
  * pipeline branch all went with it. The database says the same thing and says it harder:
  * `materials_class_check` and `reference_materials_class_check` list two values, so the row
  * cannot come back through a side door either.
- *
- * A bill of materials still EXISTS as a specification shape — BomSpec below — because the
- * electronics category is still a category. What it no longer has is materials to point at,
- * and deriveBom now says that plainly instead of reading conformity facts off a constant.
  */
 export type MaterialClass = 'ingredient' | 'packaging';
 
@@ -53,10 +49,7 @@ export type MaterialProvenance =
  */
 export type ArtefactType =
 'unit-label' |
-'carton' |
-'leaflet' |
 'listing' |
-'rating-plate' |
 'sds';
 
 /** A supplier document as it was received, kept so a revision can be explained. */
@@ -82,12 +75,14 @@ export type InboxDocument = {
   note: string;
 };
 
-export type DocumentKind =
-'Safety data sheet' |
-'INCI and allergen certificate' |
-'Technical drawing' |
-'Declaration of conformity' |
-'Test report';
+/**
+ * A supplier document as this app classifies it.
+ *
+ * 'Technical drawing' is a PACKAGING document — a glass bottle or a clamshell comes with one,
+ * and the label area on it is what the geometry rules read. The cosmetics and electronics
+ * kinds that used to sit beside these two went with their categories.
+ */
+export type DocumentKind = 'Safety data sheet' | 'Technical drawing';
 
 /**
  * The supplier document a reference material's data was read from.
@@ -231,8 +226,6 @@ type MaterialBase = {
 export type IngredientMaterial = MaterialBase & {
   class: 'ingredient';
   role: IngredientRole;
-  inci?: string;
-  inciFunction?: string;
   cas?: string;
   hazards: HazardAt100[];
   allergens: Allergen[];
@@ -267,33 +260,15 @@ export type MixtureSpec = {
   packagingId: string;
 };
 
-export type PhaseItem = {materialId: string;pct: number;};
-
-export type PhasedSpec = {
-  kind: 'phased';
-  productType: string;
-  phases: Array<{name: string;items: PhaseItem[];}>;
-  application: 'Leave-on' | 'Rinse-off';
-  paoMonths: number;
-  netQuantity: number;
-  netUnit: 'g' | 'ml';
-  packagingId: string;
-};
-
-export type BomItem = {materialId: string;quantity: number;position: string;};
-
-export type BomSpec = {
-  kind: 'bom';
-  productType: string;
-  model: string;
-  items: BomItem[];
-  ratings: {voltage: string;current: string;power: string;};
-  netQuantity: number;
-  netUnit: 'g' | 'ml';
-  packagingId: string;
-};
-
-export type Spec = MixtureSpec | PhasedSpec | BomSpec;
+/**
+ * The composition. ONE SHAPE, because there is one category.
+ *
+ * This was a three-way union — a mixture, a phased cosmetic formula and a bill of materials —
+ * back when cosmetics and electronics were categories. They are not, and a union of one is a
+ * switch every reader has to walk to reach the only arm. `kind` stays on MixtureSpec because
+ * `specifications.kind` is a NOT NULL column and a row still has to be written with it.
+ */
+export type Spec = MixtureSpec;
 
 /* ------------------------------------------------------------ artefacts */
 
@@ -422,9 +397,6 @@ export type Product = {
      * which is 1:1 with a SKU, and onto whatever holds the composition.
      */
     ufi?: string;
-    model?: string;
-    weeeRegistration?: string;
-    modelYear?: string;
   };
   /**
    * What the maker has recorded against this product in the append-only log.
@@ -441,9 +413,13 @@ export type Product = {
 
 /* --------------------------------------------------------------- record */
 
-export type RecordIdentity =
-{kind: 'batch';code: string;} |
-{kind: 'serial-range';code: string;from: string;to: string;};
+/**
+ * How a production run is identified. A BATCH, and only a batch.
+ *
+ * The serial-range arm belonged to electronics, which is not a category. A candle, a wax melt,
+ * a diffuser and a room spray are all made in batches.
+ */
+export type RecordIdentity = {kind: 'batch';code: string;};
 
 export type ProductionRecord = {
   code: string;
@@ -499,16 +475,6 @@ export type TeamMember = {
   email: string;
   role: 'Owner' | 'Maker' | 'Read only';
   lastActive: string;
-};
-
-export type ConformityDocument = {
-  id: string;
-  title: string;
-  reference: string;
-  issued: string;
-  expires?: string;
-  owner: string;
-  productId?: string;
 };
 
 export function formatDate(iso?: string): string {

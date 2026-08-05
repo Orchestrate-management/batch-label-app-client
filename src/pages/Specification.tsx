@@ -22,17 +22,15 @@ import { ArtefactRail } from '../components/artefact/ArtefactRail';
 import { ArtefactRenderer, defaultArtefactOptions } from '../components/artefact/ArtefactRenderer';
 import {
   ArtefactCurrency,
-  BomSpec,
   IngredientMaterial,
   Market,
   Material,
   MixtureSpec,
-  PhasedSpec,
   Product,
   Spec,
   formatDate } from
 '../lib/model';
-import { clpMinimumDimensions, derive, phasedTotal } from '../lib/derive';
+import { clpMinimumDimensions, derive } from '../lib/derive';
 import { ProductPipeline } from '../components/ProductPipeline';
 import { StageId, stagesFor } from '../lib/pipeline';
 import { SdsDocumentModel, buildSds } from '../lib/sds';
@@ -56,7 +54,6 @@ import {
   obligationsFor,
   regimeById } from
 '../lib/regimes';
-import { useCategorySurface } from '../lib/workspace';
 
 /**
  * Resolves the product before anything renders, so the screen below can assume it has one.
@@ -149,7 +146,6 @@ export function Specification() {
 
 function SpecificationView({ product }: {product: Product;}) {
   const category = categoryById(product.categoryId);
-  useCategorySurface(product.categoryId);
   const { reload } = useProducts();
   // For the record log only. A saved composition writes a line saying so, and the account it
   // is filed under comes from the entitlement, never from this screen. See lib/records.ts.
@@ -227,7 +223,7 @@ function SpecificationView({ product }: {product: Product;}) {
    * whichever jars are in front of them, which we have no way to know. The batch code goes on
    * at fill time and belongs to the maker; the proof shows where it goes.
    */
-  const identityCode = category.recordIdentity === 'batch' ? '[Batch code]' : '[Serial number]';
+  const identityCode = '[Batch code]';
 
   const stages = useMemo(
     () => stagesFor(working, derivation, market),
@@ -346,13 +342,7 @@ function SpecificationView({ product }: {product: Product;}) {
 
           <section aria-label="Composition" className="space-y-5">
             <SectionTitle>Composition</SectionTitle>
-            {spec.kind === 'mixture' &&
             <MixtureEditor spec={spec} onChange={(next) => setSpec(next)} />
-            }
-            {spec.kind === 'phased' &&
-            <PhasedEditor spec={spec} onChange={(next) => setSpec(next)} />
-            }
-            {spec.kind === 'bom' && <BomEditor spec={spec} onChange={(next) => setSpec(next)} />}
 
             <Card className="px-5 py-5">
               <SectionTitle className="mb-3">Market</SectionTitle>
@@ -505,7 +495,7 @@ function SpecificationView({ product }: {product: Product;}) {
                       <th scope="col" className="px-5 py-3 font-medium">European Union</th>
                     </tr>
                   </thead>
-                  <tbody>{comparisonRows(product, spec)}</tbody>
+                  <tbody>{comparisonRows(product)}</tbody>
                 </table>
               </div>
             </Card>
@@ -901,7 +891,7 @@ function EvidenceForm({
 
 }
 
-function comparisonRows(product: Product, spec: Spec) {
+function comparisonRows(product: Product) {
   const rows: React.ReactNode[] = [
   <DiffRow
     key="address"
@@ -932,58 +922,6 @@ function comparisonRows(product: Product, spec: Spec) {
         element="Hazard statements"
         gb="Identical, both jurisdictions retain CLP Annex VI"
         eu="Identical, both jurisdictions retain CLP Annex VI" />
-
-    );
-  }
-
-  if (product.regimes.includes('cpr')) {
-    rows.push(
-      <DiffRow
-        key="rp"
-        element="Responsible person"
-        gb={addressForMarket('GB').lines[0]}
-        eu={addressForMarket('EU').lines[0]}
-        differs />,
-
-      <DiffRow
-        key="notification"
-        element="Notification"
-        gb="Submit through the Office for Product Safety and Standards service"
-        eu="Submit through the CPNP"
-        differs />,
-
-      <DiffRow key="inci" element="Ingredient list" gb="Identical INCI list" eu="Identical INCI list" />,
-      <DiffRow
-        key="pao"
-        element="Period after opening"
-        gb={spec.kind === 'phased' ? `${spec.paoMonths}M` : '—'}
-        eu={spec.kind === 'phased' ? `${spec.paoMonths}M` : '—'} />
-
-    );
-  }
-
-  if (product.regimes.includes('ce')) {
-    rows.push(
-      <DiffRow
-        key="mark"
-        element="Conformity mark"
-        gb="UKCA accepted, CE recognised for these directives"
-        eu="CE mark required"
-        differs />,
-
-      <DiffRow
-        key="operator"
-        element="Economic operator"
-        gb="Manufacturer in Great Britain"
-        eu="Importer or authorised representative in the EU"
-        differs />,
-
-      <DiffRow
-        key="weee"
-        element="WEEE registration"
-        gb="UK producer registration"
-        eu="Registration required in each member state of supply"
-        differs />
 
     );
   }
@@ -1369,328 +1307,5 @@ function CompositionRow({
         {name ? `${pct.toFixed(1)} %` : '—'}
       </td>
     </tr>);
-
-}
-
-/* ------------------------------------------------- phased, cosmetics */
-
-function PhasedEditor({
-  spec,
-  onChange
-
-
-
-}: {spec: PhasedSpec;onChange: (next: PhasedSpec) => void;}) {
-  const total = phasedTotal(spec);
-  const balanced = Math.abs(total - 100) < 0.005;
-
-  const setItemPct = (phaseIndex: number, itemIndex: number, pct: number) => {
-    const phases = spec.phases.map((phase, pIndex) =>
-    pIndex !== phaseIndex ?
-    phase :
-    {
-      ...phase,
-      items: phase.items.map((item, iIndex) =>
-      iIndex !== itemIndex ? item : { ...item, pct }
-      )
-    }
-    );
-    onChange({ ...spec, phases });
-  };
-
-  const setItemMaterial = (phaseIndex: number, itemIndex: number, materialId: string) => {
-    const phases = spec.phases.map((phase, pIndex) =>
-    pIndex !== phaseIndex ?
-    phase :
-    {
-      ...phase,
-      items: phase.items.map((item, iIndex) =>
-      iIndex !== itemIndex ? item : { ...item, materialId }
-      )
-    }
-    );
-    onChange({ ...spec, phases });
-  };
-
-  const { materials } = useMaterials();
-  const cosmeticIngredients = materials.filter(
-    (material): material is IngredientMaterial =>
-    material.class === 'ingredient' && material.categories.includes('cosmetics')
-  );
-  const packs = materials.filter(
-    (material) => material.class === 'packaging' && material.categories.includes('cosmetics')
-  );
-  const pack = packagingById(spec.packagingId);
-
-  return (
-    <>
-      <Card className="space-y-5 px-5 py-5">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Product type">
-            <Select
-              value={spec.productType}
-              onChange={(event) => onChange({ ...spec, productType: event.target.value })}>
-              
-              {['Face oil', 'Balm', 'Body cream'].map((type) =>
-              <option key={type}>{type}</option>
-              )}
-            </Select>
-          </Field>
-          <Field label="Application" hint="Sets the allergen declaration threshold">
-            <Select
-              value={spec.application}
-              onChange={(event) =>
-              onChange({ ...spec, application: event.target.value as PhasedSpec['application'] })
-              }>
-              
-              <option value="Leave-on">Leave-on</option>
-              <option value="Rinse-off">Rinse-off</option>
-            </Select>
-          </Field>
-          <Field label="Nominal content">
-            <div className="flex items-center gap-2">
-              <Input
-                type="number"
-                className="tabular"
-                value={spec.netQuantity}
-                onChange={(event) => onChange({ ...spec, netQuantity: Number(event.target.value) })} />
-              
-              <span className="text-sm text-ink-tertiary">{spec.netUnit}</span>
-            </div>
-          </Field>
-          <Field
-            label="Period after opening"
-            hint={
-            spec.paoMonths > 0 ?
-            'Months. Nothing here has measured it — it is yours to set and to justify.' :
-            'Months. Not set, so the label prints no open-jar figure.'
-            }>
-
-            {/* Zero means unset and the label renders it as unset. This used to be seeded to
-                12 by `blankSpec`, which printed "12M" onto the preview at actual size while
-                the obligations list on the same screen said no period after opening was
-                shown. Both halves read this one field now. */}
-            <Input
-              type="number"
-              min={0}
-              className="tabular"
-              value={spec.paoMonths}
-              onChange={(event) => onChange({ ...spec, paoMonths: Number(event.target.value) })} />
-
-          </Field>
-          {/* "Printable area 0 × 0 mm" is what an unrecorded area used to render as, next to
-              an artefact the designer then checked against it. */}
-          <MaterialSelect
-            label="Packaging"
-            hint={
-            pack?.labelAreaMm ?
-            `Printable area ${pack.labelAreaMm.width} × ${pack.labelAreaMm.height} mm` :
-            pack ?
-            'No printable area recorded on this pack' :
-            undefined
-            }
-            className="sm:col-span-2"
-            value={spec.packagingId}
-            onChange={(id) => onChange({ ...spec, packagingId: id })}
-            options={packs}
-            emptyHint="You hold no packaging for cosmetics." />
-          
-        </div>
-      </Card>
-
-      {spec.phases.map((phase, phaseIndex) => {
-        const phaseTotal = phase.items.reduce((sum, item) => sum + item.pct, 0);
-        return (
-          <Card key={phase.name} className="px-5 py-5">
-            <div className="mb-3 flex items-center justify-between">
-              <SectionTitle>{phase.name}</SectionTitle>
-              <span className="tabular text-2xs text-ink-tertiary">
-                {phaseTotal.toFixed(1)} % of the formula
-              </span>
-            </div>
-            <div className="space-y-3">
-              {phase.items.map((item, itemIndex) => {
-                const ingredient = ingredientById(item.materialId);
-                return (
-                  <div
-                    key={`${phase.name}-${itemIndex}`}
-                    className="grid grid-cols-[minmax(0,1fr)_96px] items-center gap-3">
-                    
-                    <div className="min-w-0">
-                      <MaterialSelect
-                        value={item.materialId}
-                        ariaLabel={`Ingredient ${itemIndex + 1} in ${phase.name}`}
-                        onChange={(id) => setItemMaterial(phaseIndex, itemIndex, id)}
-                        options={cosmeticIngredients}
-                        emptyHint="You hold no ingredient marked for cosmetics." />
-                      
-                      <p className="mt-1 text-2xs text-ink-tertiary">
-                        {/* "No INCI name on file" was said for an ingredient that had one and
-                            for no ingredient at all. An INCI name is what prints in the
-                            ingredient list, so its absence is the maker's to fix and has to be
-                            told apart from nothing being chosen. */}
-                        {!ingredient ?
-                      'Nothing chosen for this line.' :
-                      ingredient.inci ?
-                      `${ingredient.inci}${ingredient.inciFunction ? ` · ${ingredient.inciFunction}` : ''}` :
-                      'No INCI name recorded on this material, so it cannot be declared in the ingredient list.'
-                      }
-                      </p>
-                    </div>
-                    <Input
-                      type="number"
-                      step={0.1}
-                      className="tabular text-right"
-                      aria-label={`Percentage of ${ingredient?.name ?? 'ingredient'}`}
-                      value={item.pct}
-                      onChange={(event) =>
-                      setItemPct(phaseIndex, itemIndex, Number(event.target.value))
-                      } />
-                    
-                  </div>);
-
-              })}
-            </div>
-          </Card>);
-
-      })}
-
-      <div
-        className={`flex items-center justify-between rounded-control border px-4 py-3 text-sm ${
-        balanced ?
-        'border-paper-line bg-paper-panel text-ink-secondary' :
-        'border-clay/30 bg-clay-tint text-clay-dark'}`
-        }>
-        
-        <span>{balanced ? 'Formula totals 100 percent' : 'Formula does not total 100 percent'}</span>
-        <span className="tabular font-display text-lg font-medium">{total.toFixed(2)} %</span>
-      </div>
-    </>);
-
-}
-
-/* --------------------------------------------- bill of materials, device */
-
-function BomEditor({ spec, onChange }: {spec: BomSpec;onChange: (next: BomSpec) => void;}) {
-  const { materials } = useMaterials();
-  const packs = materials.filter(
-    (material) => material.class === 'packaging' && material.categories.includes('electronics')
-  );
-  const setItemMaterial = (index: number, materialId: string) =>
-  onChange({
-    ...spec,
-    items: spec.items.map((item, i) => i === index ? { ...item, materialId } : item)
-  });
-
-  return (
-    <>
-      <Card className="space-y-5 px-5 py-5">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Product type">
-            <Select
-              value={spec.productType}
-              onChange={(event) => onChange({ ...spec, productType: event.target.value })}>
-              
-              {['Wax warmer', 'Diffuser, ultrasonic', 'Lamp'].map((type) =>
-              <option key={type}>{type}</option>
-              )}
-            </Select>
-          </Field>
-          <Field
-            label="Model and type reference"
-            hint="Printed on the rating plate and named on the declaration of conformity.">
-
-            {/* Empty until typed. It used to be seeded "Not yet assigned", which is a sentence
-                rather than a blank, and a sentence in this field reaches a rating plate. */}
-            <Input
-              value={spec.model}
-              placeholder="Not yet assigned"
-              onChange={(event) => onChange({ ...spec, model: event.target.value })} />
-
-          </Field>
-          <Field label="Supply voltage">
-            <Input
-              className="tabular"
-              value={spec.ratings.voltage}
-              onChange={(event) =>
-              onChange({ ...spec, ratings: { ...spec.ratings, voltage: event.target.value } })
-              } />
-            
-          </Field>
-          <Field label="Current">
-            <Input
-              className="tabular"
-              value={spec.ratings.current}
-              onChange={(event) =>
-              onChange({ ...spec, ratings: { ...spec.ratings, current: event.target.value } })
-              } />
-            
-          </Field>
-          <Field label="Rated power">
-            <Input
-              className="tabular"
-              value={spec.ratings.power}
-              onChange={(event) =>
-              onChange({ ...spec, ratings: { ...spec.ratings, power: event.target.value } })
-              } />
-            
-          </Field>
-          <MaterialSelect
-            label="Packaging"
-            value={spec.packagingId}
-            onChange={(id) => onChange({ ...spec, packagingId: id })}
-            options={packs}
-            emptyHint="You hold no packaging for electronics." />
-          
-        </div>
-      </Card>
-
-      {/*
-        THE COMPONENT PICKER IS GONE, AND SO IS EVERYTHING IT ASSERTED.
-        
-        It offered five shipped components and rendered, per line, a RoHS pill ("Compliant with
-        exemption"), a part number, a supplier and a declaration-of-conformity version — all of
-        it constants in the bundle, identical for every account that picked the part, presented
-        as evidence about the maker's own device. Rhys's ruling deleted components; the
-        database refuses the class. What is left is what the maker typed, said as such.
-      */}
-      <Card className="px-5 py-5">
-        <SectionTitle className="mb-3">Bill of materials</SectionTitle>
-        <Callout tone="info" title="Component materials are not built">
-          <p className="max-w-prose leading-relaxed">
-            You can name the parts on this device and their positions, and they are saved. What
-            Batchlabel cannot yet do is hold a component as a material — with its RoHS
-            declaration, its standards and its test evidence — so nothing on this list has been
-            checked, and the conformity file beside it says the same.
-          </p>
-        </Callout>
-        <div className="mt-4 space-y-3">
-          {spec.items.length === 0 ?
-          <p className="text-sm text-ink-secondary">
-              Nothing on the bill of materials yet.
-            </p> :
-
-          spec.items.map((item, index) =>
-          <div key={item.position} className="rounded-control border border-paper-line px-4 py-3">
-                <p className="text-2xs uppercase tracking-[0.1em] text-ink-tertiary">
-                  {item.position}
-                </p>
-                <div className="mt-2">
-                  <Input
-                value={item.materialId}
-                aria-label={`Part at ${item.position}`}
-                placeholder="Part name or number"
-                onChange={(event) => setItemMaterial(index, event.target.value)} />
-              
-                </div>
-                <p className="tabular mt-2 text-2xs text-ink-tertiary">
-                  Quantity {item.quantity}
-                </p>
-              </div>
-          )
-          }
-        </div>
-      </Card>
-    </>);
 
 }

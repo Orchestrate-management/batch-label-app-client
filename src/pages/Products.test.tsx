@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Products } from './Products';
-import { WorkspaceProvider } from '../lib/workspace';
 import { mapEntitlement, type EntitlementRow } from '../lib/membership';
 import type { EntitlementValue } from '../lib/entitlement';
 import type { ProductsStatus } from '../lib/product-store';
@@ -86,9 +85,7 @@ function stateFor(row: Partial<EntitlementRow>): EntitlementValue {
 function draw() {
   return render(
     <MemoryRouter>
-      <WorkspaceProvider>
-        <Products />
-      </WorkspaceProvider>
+      <Products />
     </MemoryRouter>
   );
 }
