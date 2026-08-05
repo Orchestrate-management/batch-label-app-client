@@ -35,7 +35,7 @@ import { SdsDocument } from '../components/artefact/SdsDocument';
 
 function mixture(artefacts: Product['artefacts']): Product {
   const category = categoryById('home-fragrance');
-  const spec = blankSpec(category, 'Container candle', 'ing-bfc');
+  const spec = blankSpec('Container candle', 'ing-bfc');
   return {
     id: 'prod-1',
     specificationId: 'spec-1',
@@ -55,7 +55,7 @@ function sheetFor(product: Product) {
   return buildSds(product, derive(product.spec, product, 'GB'), 'GB');
 }
 
-const ALL = artefactsFor(categoryById('home-fragrance'), 'mixture');
+const ALL = artefactsFor(categoryById('home-fragrance'));
 
 describe('the version and revision date in the header', () => {
   it('is nothing at all for a caller with no sds artefact to guard on', () => {

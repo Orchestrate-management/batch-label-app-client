@@ -4,7 +4,6 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { Products } from './Products';
 import { Studio } from './Studio';
 import { ArtefactDesigner } from './ArtefactDesigner';
-import { WorkspaceProvider } from '../lib/workspace';
 import { FIXTURE_MATERIALS } from '../lib/fixtures';
 import { publishMaterialStatus, publishMaterials, resetMaterials } from '../lib/material-index';
 import { mapEntitlement, type EntitlementRow } from '../lib/membership';
@@ -68,8 +67,8 @@ vi.mock('../lib/materials-store', () => ({
   })
 }));
 
-// Only the hook: WorkspaceProvider reads DEFAULT_PREFERENCES out of the same module, and a
-// wholesale mock takes it away. A null identity holder is what the designer already handles.
+// Only the hook, not the module: a wholesale mock would take the rest of it away too.
+// A null identity holder is what the designer already handles.
 vi.mock('../lib/settings-store', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/settings-store')>()),
   useOptionalSettings: () => null
@@ -143,7 +142,7 @@ afterEach(() => resetMaterials());
 function draw(node: React.ReactElement) {
   return render(
     <MemoryRouter>
-      <WorkspaceProvider>{node}</WorkspaceProvider>
+      {node}
     </MemoryRouter>
   );
 }
@@ -289,14 +288,12 @@ describe('the artefact designer, on a product with no pack chosen', () => {
   function drawDesigner() {
     return render(
       <MemoryRouter initialEntries={['/products/p-1/artefacts/unit-label']}>
-        <WorkspaceProvider>
           <Routes>
             <Route
               path="/products/:productId/artefacts/:artefactType"
               element={<ArtefactDesigner />} />
 
           </Routes>
-        </WorkspaceProvider>
       </MemoryRouter>
     );
   }
