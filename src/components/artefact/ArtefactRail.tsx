@@ -137,7 +137,7 @@ export function ArtefactRail(props: RailProps) {
           }
           {artefact.currency === 'out-of-date' &&
           <p className="mt-3 rounded-control border border-clay/30 bg-clay-tint px-3 py-2 text-2xs leading-relaxed text-clay-dark">
-              The composition, the pack, a pinned material or your printed business details
+              The composition, the pack, the classification of a material it names, or your printed business details
               changed after you recorded printing this version, so what is on the shelf no longer
               matches what is on screen.
             </p>

@@ -145,9 +145,10 @@ export const REGIMES: Regime[] = [
     id: 'clp-artefact-current',
     regimeId: 'clp',
     label: 'Label recorded and still matching the composition',
-    doneText: 'The label you last recorded printing was printed from the composition on file now.',
+    doneText:
+    'The label you last recorded printing was printed from the composition on file now, from the materials as they are classified now, and from your business details as they stand now.',
     missingText:
-    'The composition, the pack, a pinned material or your printed business details changed after the last label print you recorded. Reprint, then record the new print.',
+    'The composition, the pack, the classification of a material it names, or your printed business details changed after the last label print you recorded. Reprint, then record the new print.',
     untrackedText:
     'You have not recorded printing a label for this product, so Batchlabel cannot tell whether what is on your jars matches the composition on file. Record a print on the label designer and it will start checking.',
     to: '/products/:id/artefacts/unit-label'

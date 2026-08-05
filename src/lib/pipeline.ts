@@ -255,7 +255,7 @@ market: Market)
   {
     label: `${stale.length} recorded print${stale.length === 1 ? '' : 's'} no longer match${stale.length === 1 ? 'es' : ''} this composition`,
     detail:
-    'The composition, the pack, a pinned material or your printed business details changed after these were printed. Reprint, then record the new print.',
+    'The composition, the pack, the classification of a material it names, or your printed business details changed after these were printed. Reprint, then record the new print.',
     to: `/products/${product.id}`
   }] :
 

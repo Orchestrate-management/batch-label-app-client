@@ -587,8 +587,9 @@ function PrintState({ product, artefactType }: {product: Product;artefactType: A
       <Callout tone="warn" role="alert" title={`${artefact.version} no longer matches this product`}>
         <p className="max-w-prose leading-relaxed">
           You recorded printing {artefact.version} on {formatDate(artefact.printedOn)}. The
-          composition, the pack, a pinned material or your printed business details have changed
-          since. What is on screen is the current version; what is on your jars is not.
+          composition, the pack, the classification of a material it names, or your printed
+          business details have changed since. What is on screen is the current version; what is
+          on your jars is not.
         </p>
       </Callout>);
 
@@ -610,8 +611,9 @@ function PrintState({ product, artefactType }: {product: Product;artefactType: A
     <Callout tone="info" title={`${artefact.version} still matches this composition`}>
       <p className="max-w-prose leading-relaxed">
         You recorded printing it on {formatDate(artefact.printedOn)}, and nothing that goes onto
-        the label has changed since. Batchlabel did not generate the file — this is a record of
-        your print, checked against the composition.
+        the label has changed since: not the composition, not the pack, not the classification of
+        any material it is made from, not your printed business details. Batchlabel did not
+        generate the file — this is a record of your print, checked against all four.
       </p>
     </Callout>);
 

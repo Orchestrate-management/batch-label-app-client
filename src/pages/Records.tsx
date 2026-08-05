@@ -703,7 +703,8 @@ function Recall({
  * Whether the version being searched for still matches what would print today.
  *
  * A REAL FACT, FROM A REAL FUNCTION. `artefact_source_fingerprint` reads the composition, the
- * pack, the pinned materials and the printed business identity; the version carries what it
+ * pack, the state of every material the composition names, and the printed business identity;
+ * the version carries what it
  * returned when the version was recorded. Equal means nothing that prints has moved. It is the
  * one thing on this screen that could be mistaken for a compliance verdict, so the third
  * answer — we could not check — is said in those words rather than defaulting to either.
@@ -718,9 +719,9 @@ function VersionCurrency({
   return (
     <p className="mt-3 max-w-prose text-2xs leading-relaxed text-ink-tertiary">
       {currency === 'current' &&
-      'This version still matches the composition, the pack and the business details stored today.'}
+      'This version still matches the composition, the pack, the classification of every material it names and the business details stored today.'}
       {currency === 'superseded' &&
-      'Something that prints has changed since this version was recorded — the composition, the pack, a pinned material or your business details.'}
+      'Something that prints has changed since this version was recorded — the composition, the pack, the classification of a material it names, or your business details.'}
       {currency === 'unknown' &&
       'We could not check whether this version still matches what is stored today, so this is not a statement either way.'}
     </p>);
