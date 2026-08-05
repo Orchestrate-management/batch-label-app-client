@@ -676,13 +676,18 @@ const NOT_TRACKED: ReadonlySet<string> = new Set([
  *
  * `ingredientById` returns undefined for two completely different facts — the register holds
  * this oil and the maker has entered no hazard rows against it, or the register has no such
- * material at all because it was archived — and `false` collapsed them onto ONE state and
- * therefore onto ONE sentence: "The fragrance oil on this composition carries no hazard
- * classification, so nothing has been derived from it." Said of an oil that is not there, that
- * is a fact asserted about a material this software could not find. `derive` (see
- * `UnresolvedMaterial`) and `pipeline` both already tell the two apart and say "the register
- * has no live material with that id — it may have been archived", so the panel on the
- * specification screen said that while the checklist row beside it said the other thing.
+ * material at all — and `false` collapsed them onto ONE state and therefore onto ONE sentence:
+ * "The fragrance oil on this composition carries no hazard classification, so nothing has been
+ * derived from it." Said of an oil that is not there, that is a fact asserted about a material
+ * this software could not find. `derive` (see `UnresolvedMaterial`) and `pipeline` both already
+ * tell the two apart, so the panel on the specification screen said that while the checklist
+ * row beside it said the other thing.
+ *
+ * ARCHIVING IS NOT ONE OF THE CAUSES, and this note is here because it used to be. The register
+ * reads archived rows and `materialById` answers for them, precisely so that a product built on
+ * a material the maker later archived keeps its classification. So a miss here cannot be
+ * explained by archiving, and the sentence below must not offer it — that would teach the maker
+ * that archiving loses things, which is the opposite of what archiving now does.
  *
  * The empty slot was a third collapse in the same expression: `if (!fragranceId) return false`
  * printed the same sentence about an oil the maker has not picked yet.
@@ -727,9 +732,11 @@ function classificationOutcome(product: Product): {state: ObligationState;text?:
     return {
       state: 'outstanding',
       text:
-      `The composition names "${fragranceId}" and your materials register has no live ` +
-      'ingredient with that id — it may have been archived. Nothing has been classified from ' +
-      'it. This is a gap in the register rather than a statement that the oil is unclassified.'
+      `The composition names "${fragranceId}" and your materials register has no ingredient ` +
+      'with that id. It has not been archived — an archived material is still read, and still ' +
+      'classifies the products built on it. The link may be out of date, or the material may ' +
+      'belong to another account. Nothing has been classified from it. This is a gap in the ' +
+      'register rather than a statement that the oil is unclassified.'
     };
   }
 

@@ -1,7 +1,7 @@
 import { materialById, materialsSettled, materialsStatus } from './material-index';
 import { Derivation } from './derive';
 import { Market, Product } from './model';
-import { outstandingObligations } from './regimes';
+import { obligationOutcome, outstandingObligations } from './regimes';
 import { buildSds } from './sds';
 
 /**
@@ -227,8 +227,10 @@ market: Market)
   ...derivation.unresolved.map((entry) => ({
     label: `${entry.slot} is not in your materials register`,
     detail:
-    `The composition names "${entry.id}" and the register has no live material with that id — ` +
-    'it may have been archived. Nothing has been classified from it, so the label and the ' +
+    `The composition names "${entry.id}" and your materials register has no material with ` +
+    'that id. It has not been archived — an archived material is still read, and still ' +
+    'classifies the products built on it. The link may be out of date, or the material may ' +
+    'belong to another account. Nothing has been classified from it, so the label and the ' +
     'sheet are missing whatever it contributes. Pick a material that is in the register.',
     to: `/products/${product.id}`
   })),
@@ -305,9 +307,23 @@ market: Market)
   }] :
 
   []),
+  /*
+   * THE SENTENCE COMES FROM `obligationOutcome`, NOT FROM `missingText`.
+   *
+   * `missingText` is the wording for a state that has exactly one cause. `clp-classification`
+   * has three, and this line used to print the one-cause sentence for all of them: a product
+   * naming a fragrance oil the register cannot produce got "The fragrance oil on this
+   * composition carries no hazard classification, so nothing has been derived from it" — a
+   * property asserted about a material this software could not find, in the work queue, right
+   * beside the classification stage correctly reporting that it could not find it.
+   *
+   * `obligationOutcome` is the one place that decides state and wording together. Reading it
+   * here is what makes the queue and the product's checklist physically unable to describe the
+   * same obligation differently, which is the only version of this fix that stays fixed.
+   */
   ...outstanding.map((obligation) => ({
     label: obligation.label,
-    detail: obligation.missingText,
+    detail: obligationOutcome(product, obligation).text,
     to: obligation.to.replace(':id', product.id)
   }))];
 

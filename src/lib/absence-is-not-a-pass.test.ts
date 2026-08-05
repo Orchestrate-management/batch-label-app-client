@@ -252,11 +252,48 @@ describe('the classification obligation, and the four reasons it can be unmet', 
 
   it('says the material could not be found, rather than that it is unclassified', () => {
     publishMaterials('acct-1', FIXTURE_MATERIALS);
-    const answer = outcome(settledProduct({ fragranceId: 'ing-archived-ghost' } as never));
+    const answer = outcome(settledProduct({ fragranceId: 'ing-not-in-register' } as never));
     expect(answer.state).toBe('outstanding');
-    expect(answer.text).toMatch(/no live ingredient with that id/i);
-    expect(answer.text).toMatch(/archived/i);
+    expect(answer.text).toMatch(/no ingredient with that id/i);
     expect(answer.text).not.toMatch(/carries no hazard classification/i);
+  });
+
+  /**
+   * AND IT DOES NOT BLAME ARCHIVING, which is the one explanation that stopped being true when
+   * this branch was merged with the material/product-link work.
+   *
+   * Both sentences were correct on their own branch. There, archiving dropped a material out of
+   * `materialById`, so "it may have been archived" was a real cause of a lookup miss. The other
+   * branch made the register read archived rows and answer for them — that is what makes "a
+   * product built on it keeps working" true — and the moment the two met, the explanation named
+   * a mechanism that can no longer produce this state. Offering it would teach the maker that
+   * archiving loses things, which is the reverse of what archiving does.
+   */
+  it('does not offer archiving as the reason, because archiving cannot cause this', () => {
+    publishMaterials('acct-1', FIXTURE_MATERIALS);
+    const answer = outcome(settledProduct({ fragranceId: 'ing-not-in-register' } as never));
+    expect(answer.text).not.toMatch(/may have been archived/i);
+    // It says so outright, rather than staying silent and leaving the maker to guess.
+    expect(answer.text).toMatch(/has not been archived/i);
+  });
+
+  /**
+   * THE MECHANISM UNDER THAT SENTENCE, asserted directly so the wording cannot drift away from
+   * it. An archived material still resolves, so it is never `unresolved` and never reaches any
+   * of the copy above.
+   */
+  it('an archived material resolves and keeps classifying the product built on it', () => {
+    const oil = FIXTURE_MATERIALS.find((material) => material.id === 'ing-black-fig');
+    if (!oil) throw new Error('ing-black-fig is no longer in the fixtures');
+    publishMaterials(
+      'acct-1',
+      FIXTURE_MATERIALS.map((material) =>
+      material.id === 'ing-black-fig' ? { ...material, archived: true } : material
+      )
+    );
+    const product = settledProduct();
+    expect(derive(product.spec, product, 'GB').unresolved).toEqual([]);
+    expect(outcome(product).state).toBe('met');
   });
 
   /**
@@ -267,10 +304,21 @@ describe('the classification obligation, and the four reasons it can be unmet', 
    */
   it('agrees with the pipeline stage rendered beside it', () => {
     publishMaterials('acct-1', FIXTURE_MATERIALS);
-    const ghost = settledProduct({ fragranceId: 'ing-archived-ghost' } as never);
-    const stage = queue(ghost).issues.map((issue) => issue.detail).join(' ');
-    expect(stage).toMatch(/no live material with that id/i);
-    expect(outcome(ghost).text).toMatch(/no live ingredient with that id/i);
+    const ghost = settledProduct({ fragranceId: 'ing-not-in-register' } as never);
+    const details = queue(ghost).issues.map((issue) => issue.detail);
+    const stage = details.join(' ');
+    expect(stage).toMatch(/no material with that id/i);
+    expect(outcome(ghost).text).toMatch(/no ingredient with that id/i);
+
+    /*
+     * AND THE QUEUE DOES NOT ALSO SAY THE OTHER THING. Asserting that the true sentence is
+     * present was not enough: the queue printed BOTH, because the outstanding-obligations
+     * mapping in `pipeline.ts` took `obligation.missingText` directly instead of asking
+     * `obligationOutcome`. So one work queue carried "the register has no material with that
+     * id" and "the fragrance oil on this composition carries no hazard classification" about
+     * the same absent oil, one after the other.
+     */
+    expect(stage).not.toMatch(/carries no hazard classification/i);
   });
 
   it('still reports a real gap in the register as a real gap', () => {

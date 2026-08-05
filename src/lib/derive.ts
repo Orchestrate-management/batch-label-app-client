@@ -79,10 +79,15 @@ export type DeviceResult = {
  * WHY THIS IS A FIELD RATHER THAN A SILENT SKIP, and it is the single most important line in
  * this file. Materials used to be a constant compiled into the bundle, so every id on every
  * composition resolved by construction and the "not found" branch was unreachable. They are
- * rows now — the maker's own, archived when they choose — and an id that resolves to nothing
- * contributes nothing, so a mixture whose fragrance oil has been archived derives NO HAZARD
- * STATEMENTS and the group underneath it reads "No hazard statements are required at this
- * fragrance load".
+ * rows now, and an id that resolves to nothing contributes nothing — so a mixture whose
+ * fragrance oil the register cannot produce derives NO HAZARD STATEMENTS and the group
+ * underneath it reads "No hazard statements are required at this fragrance load".
+ *
+ * ARCHIVING NO LONGER CAUSES THAT, and it is worth saying because it did. `fetchMaterials`
+ * reads archived rows and `materialById` answers for them; only the pickers and the register
+ * lists filter. So the ids that land here are genuinely absent — a stale link, or a material
+ * belonging to another account — and nothing that renders this field may offer archiving as
+ * the explanation.
  *
  * That sentence would be a compliance claim about a real candle, produced by a lookup miss.
  * It is the exact defect this round of work exists to remove, and it is worse than the ones
