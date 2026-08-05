@@ -52,10 +52,19 @@ body {
   font-family: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
+/* The app's one focus treatment: 2px of brand teal, held 2px off the control. On
+   warm paper that is 7.8:1, comfortably past the 3:1 WCAG asks of a non-text
+   indicator, and 2px thick is the perimeter SC 2.4.11 asks for.
+
+   IT NO LONGER SETS border-radius. It used to force 4px, which does not round an
+   outline — it rounds the ELEMENT, and it beat the utility class because it is
+   declared after Tailwind's utilities at equal specificity. So every rounded
+   control in the app snapped from its 14px `rounded-control` corner to a 4px one
+   the instant it took focus, then sprang back. An outline already follows the
+   element's own corner, so there was nothing to fix and something to break. */
 :focus-visible {
   outline: 2px solid #14514F;
   outline-offset: 2px;
-  border-radius: 4px;
 }
 .tabular {
   font-variant-numeric: tabular-nums;
