@@ -7,7 +7,6 @@ import {
   LogOutIcon,
   PackageIcon,
   SettingsIcon,
-  UserIcon,
   type LucideIcon } from
 'lucide-react';
 import { Logo } from './Logo';
@@ -20,6 +19,12 @@ type NavItem = {
   label: string;
   icon: LucideIcon;
   end?: boolean;
+  /**
+   * Where this item counts as selected, when that is wider than where it links.
+   * Settings links to its first tab and has to stay lit on all of them; without
+   * this, a maker on Preferences sees nothing selected.
+   */
+  match?: string;
   children?: Array<{to: string;label: string;match: string;}>;
 };
 
@@ -39,13 +44,33 @@ const NAV: NavItem[] = [
   { to: '/materials/ingredient', label: 'Materials', match: '/materials' },
   { to: '/records', label: 'Records', match: '/records' }]
 
-}];
+},
+/**
+ * Settings belongs here rather than behind the account menu, and `match` is why
+ * it takes a bit of care: the link goes to the first tab, but the item has to
+ * stay lit on all of them. Without it, a maker on Preferences sees nothing
+ * selected and no indication of where they are.
+ *
+ * Deliberately NOT matching `/billing`. Billing is its own page, not a tab, and
+ * lighting Settings while somebody is buying a plan would say otherwise.
+ */
+{ to: '/settings/identity', label: 'Settings', icon: SettingsIcon, match: '/settings' }];
 
 
 /**
  * The account menu is desktop only, so on a phone this strip is the whole of the
- * navigation. Account is on it because otherwise a maker on a phone had no route
- * to their password, their marketing preferences or even sign out.
+ * navigation — which is why Billing is on it. Billing is the one destination that
+ * is not a Settings tab, so without an entry here a maker on a phone could not
+ * reach their plan at all.
+ *
+ * There is no longer a separate Account entry. It was here because the password
+ * lives on a tab called Account and a maker had no reason to know that; the
+ * answer is the Settings entry beside it, not a second link to one of its tabs.
+ *
+ * SIGN OUT IS STILL REACHABLE ON A PHONE, one tap further in: Settings, then the
+ * Account tab, which carries its own sign-out button for exactly this reason —
+ * see the note above it in components/settings/AccountTab.tsx. This menu is
+ * desktop-only, so it was never the mobile answer.
  */
 const MOBILE_NAV = [
 { to: '/', label: 'Studio', end: true },
@@ -53,7 +78,7 @@ const MOBILE_NAV = [
 { to: '/materials/ingredient', label: 'Materials', indent: true },
 { to: '/records', label: 'Records', indent: true },
 { to: '/settings/identity', label: 'Settings' },
-{ to: '/settings/account', label: 'Account' }];
+{ to: '/billing', label: 'Billing' }];
 
 
 export function AppShell({ children }: {children: React.ReactNode;}) {
@@ -85,7 +110,9 @@ export function AppShell({ children }: {children: React.ReactNode;}) {
           {NAV.map((item) => {
             const Icon = item.icon;
             const branchActive = isBranchActive(item);
-            const selfActive = item.end ? path === '/' : path === item.to || path.startsWith(`${item.to}/`);
+            const selfActive = item.match ?
+            path.startsWith(item.match) :
+            item.end ? path === '/' : path === item.to || path.startsWith(`${item.to}/`);
             return (
               <li key={item.to}>
                 <NavLink to={item.to} end={item.end} className={rowClass(selfActive)}>
@@ -159,9 +186,15 @@ export function AppShell({ children }: {children: React.ReactNode;}) {
 }
 
 /**
- * The conventional home for configuration: under your own name, bottom left.
- * Settings is set once during onboarding and rarely revisited, and the pipeline
- * links into it directly whenever a field it needs is missing.
+ * Who you are signed in as, and the two things that are not configuration:
+ * billing, and signing out.
+ *
+ * It used to hold Settings and Account as well, which made it a second route to
+ * screens the Settings tab strip already owned — two paths to one place, and no
+ * rule about which was real. Settings is on the main navigation now and its tabs
+ * are its own business. What is left here is what does not belong on that strip:
+ * a purchase, which has its own page because Stripe returns a customer to it,
+ * and a sign-out, which is not a setting.
  */
 function AccountMenu() {
   const navigate = useNavigate();
@@ -216,33 +249,25 @@ function AccountMenu() {
         role="menu"
         aria-label="Account">
         
-          <button
-          type="button"
-          role="menuitem"
-          className={itemClass}
-          onClick={() => navigate('/settings/identity')}>
-
-            <SettingsIcon className="h-4 w-4" strokeWidth={1.25} aria-hidden="true" />
-            Settings
-          </button>
           {/*
-            Directly under the maker's own name, which is where people look for a
-            password. Without this entry the only route to it is Settings, then a
-            tab called Account, and someone who signed up on www would have no
-            reason to believe this app held any of it.
-           */}
-          <button
-          type="button"
-          role="menuitem"
-          className={itemClass}
-          onClick={() => navigate('/settings/account')}>
+            SETTINGS IS NOT IN HERE ANY MORE, AND NEITHER IS ACCOUNT AND PASSWORD.
+            Both were entries in this menu AND destinations on the Settings page's
+            own tab strip, so the app had two routes to one screen and no rule
+            about which was the real one. Settings is now on the main navigation
+            beside Studio and Products — a page reached from the nav, whose tabs
+            are its own business.
 
-            <UserIcon className="h-4 w-4" strokeWidth={1.25} aria-hidden="true" />
-            Account and password
-          </button>
-          {/* Straight to /billing. `/settings/billing` still resolves — App.tsx keeps it as a
-              redirect so older links survive — but there is no reason to send somebody
-              through a hop to reach a page that has its own route. */}
+            The password argument that put "Account and password" here was sound
+            and is now answered differently: this menu is the wrong place to solve
+            it, because it is desktop-only, so it never solved it on a phone at
+            all. What actually makes a password findable is Settings being visible
+            without opening anything.
+
+            BILLING STAYS. It is the one thing here that is not a Settings tab: it
+            has its own route because it is where a purchase happens and where
+            Stripe returns a customer afterwards, and a checkout landing inside a
+            settings tab would be a strange place to be told a payment worked.
+           */}
           <button
           type="button"
           role="menuitem"

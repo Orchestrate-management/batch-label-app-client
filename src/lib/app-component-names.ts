@@ -334,7 +334,6 @@ const OURS = [
 'TeamTab',
 'Toaster',
 'TriangleAlertIcon',
-'UserIcon',
 'Why',
 ];
 
