@@ -42,7 +42,8 @@ import {
   materialOrigin,
   packagingById } from
 '../lib/material-index';
-import { useMaterials } from '../lib/materials-store';
+import { useMaterials, useOptionalMaterials } from '../lib/materials-store';
+import { useOptionalSettings } from '../lib/settings-store';
 import { categoryById } from '../lib/categories';
 import { addressForMarket } from '../lib/identity';
 import { useEntitlement } from '../lib/entitlement';
@@ -163,8 +164,51 @@ function SpecificationView({ product }: {product: Product;}) {
   const [partialSave, setPartialSave] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  /**
+   * THIS SCREEN HAS TO SUBSCRIBE TO THE MATERIALS REGISTER, AND THE MEMOS BELOW HAVE TO KEY ON
+   * IT. Neither is decoration, and the bug it prevents was created by putting two independently
+   * built branches in one tree.
+   *
+   * `derive`, `stagesFor`, `buildSds` and `obligationState` all read the synchronous material
+   * index (see lib/material-index.ts), and all four now distinguish "the register says no" from
+   * "the register has not answered" — that distinction is the whole point of the `pending` and
+   * `unresolved` fields. But the register is filled by MaterialsProvider, which lives above the
+   * router in App.tsx and publishes ASYNCHRONOUSLY, some time after this screen first paints.
+   *
+   * A component that does not consume MaterialsContext is not re-rendered when that read lands:
+   * the provider's `children` is the same element object, so React bails out of the subtree and
+   * only context consumers re-render. So without this hook the classification, the pipeline
+   * stages and every safety data sheet section on this page would be computed once, against a
+   * register that had not loaded, and would stay that way for the whole session — while the
+   * pickers below (which DO consume the context) filled themselves with the maker's materials.
+   * The screen would show a populated composition next to "Not worked out", and disagree with
+   * itself in a way that reads as a fault in the derivation rather than a fault in the wiring.
+   *
+   * The whole context value is the key rather than just its status, because a reload after the
+   * maker archives a material changes the answer without changing the status.
+   */
+  const register = useOptionalMaterials();
+  /**
+   * AND THE PRINTED IDENTITY, for the same structural reason.
+   *
+   * `buildSds` below reads BUSINESS and ADDRESSES out of lib/identity.ts, which stopped being
+   * six frozen constants and became a live holder that SettingsProvider fills after its read
+   * lands. `ArtefactRenderer` in the preview reads them too. Neither consumes SettingsContext,
+   * so without this subscription sections 1 and 15 of a safety data sheet — the supplier name,
+   * address and telephone a regulator reads — keep their bracketed placeholders for as long as
+   * the maker stays on this screen.
+   *
+   * `useOptionalSettings` rather than `useSettings`: several harnesses mount this screen
+   * without the provider, and null is a truthful answer there rather than a crash.
+   */
+  const settings = useOptionalSettings();
+
   const working: Product = { ...product, spec };
-  const derivation = useMemo(() => derive(spec, working, market), [spec, market, product.id]);
+  const derivation = useMemo(
+    () => derive(spec, working, market),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [spec, market, product.id, register, settings]
+  );
   const stale = product.artefacts.filter((artefact) => artefact.currency === 'out-of-date');
 
   /**
@@ -173,14 +217,25 @@ function SpecificationView({ product }: {product: Product;}) {
    * This used to be the string 'BFC-2607-014' — a batch code from a fixture production run,
    * printed at actual size onto the label of whatever product was on screen. A batch code is
    * a traceability claim: it is the number a recall is run against. Printing somebody else's
-   * onto a maker's proof is the single worst thing on this page to get wrong, and production
-   * records have no table yet, so there is no real one to print.
+   * onto a maker's proof is the single worst thing on this page to get wrong.
+   *
+   * IT STAYS A PLACEHOLDER NOW THAT PRODUCTION RECORDS EXIST, and the reason is not that there
+   * is nothing to read. `batchlabel.record_events` holds real batch records, and the records
+   * screen searches them. The reason is that a specification is not a batch: this screen shows
+   * ONE composition, a maker pours many batches from it, and there is no such thing as "the"
+   * batch code for a product. Printing the most recent one would be a traceability claim about
+   * whichever jars are in front of them, which we have no way to know. The batch code goes on
+   * at fill time and belongs to the maker; the proof shows where it goes.
    */
   const identityCode = category.recordIdentity === 'batch' ? '[Batch code]' : '[Serial number]';
 
   const stages = useMemo(
     () => stagesFor(working, derivation, market),
-    [derivation, market, product.id]
+    // `register` as well as `derivation`: stagesFor reads `materialsSettled()` itself to
+    // decide whether the classification stage may be marked `checked`, so it can change answer
+    // on a render where the derivation object happens not to have.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [derivation, market, product.id, register, settings]
   );
   const sds = product.artefacts.some((artefact) => artefact.type === 'sds') ?
   buildSds(working, derivation, market) :

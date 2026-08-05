@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { NOT_CONFIGURED_MESSAGE, domainClient } from './domain';
 import {
   Allergen,
   CategoryId,
@@ -73,20 +73,12 @@ export type MaterialsReadResult =
 {ok: true;materials: Material[];} |
 {ok: false;message: string;};
 
-/**
- * The Postgres schema holding the Batchlabel domain, and the client scoped to it.
- *
- * Same rule as products.ts, quoted from its header so the two cannot drift: identity, consent
- * and billing stay in `public`; every domain table lives in `batchlabel`. PostgREST serves
- * only the schemas listed in `[api] schemas` in supabase/config.toml, so a 404 from any read
- * below is that list before it is anything else.
+/*
+ * The domain-scoped client and the not-connected sentence both come from lib/domain.ts.
+ * Identity, consent and billing stay in `public`; every domain table lives in `batchlabel`.
+ * PostgREST serves only the schemas listed in `[api] schemas` in supabase/config.toml, so a
+ * 404 from any read below is that list before it is anything else.
  */
-const DOMAIN_SCHEMA = 'batchlabel';
-
-const domainClient = () => (supabase ? supabase.schema(DOMAIN_SCHEMA) : null);
-
-const NOT_CONFIGURED_MESSAGE =
-'This app is not connected to its database, so nothing can be saved. This is us, not you.';
 
 const READ_FAILED_MESSAGE =
 'We could not read your materials just now. This is us, not you — nothing has been lost, and ' +

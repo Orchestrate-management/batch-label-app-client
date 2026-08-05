@@ -606,11 +606,22 @@ function TeamTab() {
         </p>
         <Card className="px-5 py-5">
           <p className="text-sm font-medium text-ink-tertiary">{COMPETENT_PERSON.name}</p>
+          {/* THE SECOND SENTENCE USED TO READ "so no sheet has been reviewed or signed", AND
+              THAT IS NOW FALSE ON THE NEXT SCREEN ALONG. A maker can record a section of a
+              safety data sheet as reviewed from the specification screen — it writes a
+              `compliance.sds_section_reviewed` line to their log — so this tab would have been
+              denying, in the app's own voice, something the app itself had recorded. Two
+              screens contradicting each other about a compliance fact is the exact failure this
+              work exists to remove, and it arrived from two branches being written in
+              parallel. What is still true, and all this card may now claim, is that no reviewer
+              is NAMED (there is no `competent_persons` table) and that Batchlabel signs
+              nothing. */}
           <p className="mt-3 max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
-            Naming a reviewer is not built yet — there is no table for it — so no sheet has been
-            reviewed or signed. The app assembles the document and shows its working; it never
-            signs on anybody's behalf, and it will not tell you a sheet has been reviewed when
-            it has not.
+            Naming a reviewer is not built yet — there is no table for it — so nothing here
+            attaches a person to a sheet. You can record a section as reviewed against a product,
+            and that entry goes to your records log under your own account. Batchlabel assembles
+            the document and shows its working; it never checks the wording, never signs on
+            anybody's behalf, and will not tell you a sheet has been reviewed when it has not.
           </p>
         </Card>
       </section>

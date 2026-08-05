@@ -427,6 +427,141 @@ describe('a reference material', () => {
     // No row id: nothing can remove a published reference figure, so no control is offered.
     expect(material.hazards[0].rowId).toBeUndefined();
   });
+
+  /**
+   * THE REFERENCE PATH IS THE LEAST EXERCISED CODE IN THIS FILE AND THE HARDEST TO NOTICE
+   * BREAKING, because the catalogue ships EMPTY on purpose — no customer runs any of it today.
+   * The day Batchlabel publishes its first reference material, every one of these branches
+   * executes for the first time, in production, on somebody's classification.
+   *
+   * Each of the four below is a place where a missing or malformed payload key could turn into
+   * a confident claim rather than an absence.
+   */
+  it('does not invent an IFRA limit, an allergen or a hazard from a payload without them', async () => {
+    seedReference({});
+    const result = await fetchMaterials('acct-1');
+    if (!result.ok) throw new Error('expected a read');
+    const material = result.materials[0] as IngredientMaterial;
+    // Empty, and empty from a payload key that was absent rather than from one that said none.
+    // Both are rendered by derive() as "not worked out" rather than as "none required".
+    expect(material.hazards).toEqual([]);
+    expect(material.allergens).toEqual([]);
+    expect(material.ifra).toEqual([]);
+  });
+
+  it('drops an allergen with no percentage and an IFRA limit with no maximum', async () => {
+    // A named allergen at 0% and an IFRA category with no figure are both incomplete records,
+    // and both would render as decided: "linalool, 0.0%" reads as measured and found absent,
+    // and an IFRA maximum of 0 reads as a ban. Neither is what an empty field means.
+    seedReference({
+      allergens: [{ name: 'linalool', pct: 3.1 }, { name: 'limonene' }, { name: '', pct: 2 }],
+      ifra: [{ category: '12', max: 4.5 }, { category: '4' }, { max: 9 }]
+    });
+    const result = await fetchMaterials('acct-1');
+    if (!result.ok) throw new Error('expected a read');
+    const material = result.materials[0] as IngredientMaterial;
+    expect(material.allergens.map((a) => a.name)).toEqual(['linalool']);
+    expect(material.ifra.map((limit) => limit.category)).toEqual(['12']);
+  });
+
+  it('reads an IFRA maximum written as max_pct as well as max', async () => {
+    // The two spellings exist because the payload is written by hand today. A limit silently
+    // dropped for being spelled the other way is a restriction that stops being checked.
+    seedReference({ ifra: [{ category: '12', description: 'Candles', max_pct: 6 }] });
+    const result = await fetchMaterials('acct-1');
+    if (!result.ok) throw new Error('expected a read');
+    expect((result.materials[0] as IngredientMaterial).ifra[0].max).toBe(6);
+  });
+
+  it('shows no document citation at all when the version carries no document kind', async () => {
+    seedReference({ hazards: [] });
+    db.state.reads.reference_material_versions = {
+      data: [{ id: 'ver-1', reference_material_id: 'ref-1', version: 2, payload: {} }],
+      error: null
+    };
+    const result = await fetchMaterials('acct-1');
+    if (!result.ok) throw new Error('expected a read');
+    // Undefined, not an object of empty strings. `documentHint` on the specification screen
+    // renders whatever is here, and the defect it was written for was "Reference library · ,
+    // read from document v" — a citation with the citation cut out of it.
+    expect(result.materials[0].document).toBeUndefined();
+  });
+
+  it('assembles a reference PACK, with its geometry off the same payload', async () => {
+    // The other half of the reference branch, and it decides two numbers that are checked
+    // against a label: the capacity that picks a row of CLP Annex I Table 1.3, and the
+    // printable area the artefact is measured against.
+    db.state.reads.resolved_materials = {
+      data: [
+      {
+        account_id: 'acct-1',
+        source: 'reference',
+        material_id: null,
+        reference_material_id: 'ref-2',
+        reference_version_id: 'ver-2',
+        reference_version: 1,
+        provenance: 'supplier-document',
+        slug: 'pkg-tumbler-250',
+        material_class: 'packaging',
+        name: '250 ml amber tumbler',
+        supplier: 'A glassworks',
+        categories: ['home-fragrance'],
+        overrides_reference: false
+      }],
+
+      error: null
+    };
+    db.state.reads.reference_material_versions = {
+      data: [
+      {
+        id: 'ver-2',
+        reference_material_id: 'ref-2',
+        version: 1,
+        payload: { capacityMl: 250, labelAreaMm: { width: 60, height: 40 } }
+      }],
+
+      error: null
+    };
+    const result = await fetchMaterials('acct-1');
+    if (!result.ok) throw new Error('expected a read');
+    const pack = result.materials[0];
+    expect(pack.class).toBe('packaging');
+    expect(pack.source).toBe('reference');
+    expect((pack as {capacityMl?: number;}).capacityMl).toBe(250);
+    expect((pack as {labelAreaMm?: {width: number;};}).labelAreaMm?.width).toBe(60);
+  });
+
+  it('leaves a pack with no recorded geometry undefined rather than at zero', async () => {
+    // "Capacity 0 ml" and "Printable area 0 × 0 mm" are what an absent measurement used to
+    // render as, next to a label the designer then checked against them.
+    db.state.reads.resolved_materials = {
+      data: [
+      {
+        account_id: 'acct-1',
+        source: 'reference',
+        material_id: null,
+        reference_material_id: 'ref-3',
+        reference_version_id: 'ver-3',
+        reference_version: 1,
+        provenance: 'supplier-document',
+        slug: 'pkg-unknown',
+        material_class: 'packaging',
+        name: 'A pack nobody measured',
+        categories: ['home-fragrance'],
+        overrides_reference: false
+      }],
+
+      error: null
+    };
+    db.state.reads.reference_material_versions = {
+      data: [{ id: 'ver-3', reference_material_id: 'ref-3', version: 1, payload: {} }],
+      error: null
+    };
+    const result = await fetchMaterials('acct-1');
+    if (!result.ok) throw new Error('expected a read');
+    expect((result.materials[0] as {capacityMl?: number;}).capacityMl).toBeUndefined();
+    expect((result.materials[0] as {labelAreaMm?: unknown;}).labelAreaMm).toBeUndefined();
+  });
 });
 
 describe('packaging geometry', () => {
@@ -752,5 +887,269 @@ describe('classifying a write failure', () => {
     const { reason, message } = classifyMaterialError({ code: '08006' });
     expect(reason).toBe('failed');
     expect(message).toMatch(/nothing has changed/i);
+  });
+});
+
+/**
+ * THE READS AND WRITES THAT COME BACK WITH NOTHING, WHICH IS THE SHAPE EVERY DANGEROUS BUG IN
+ * THIS FILE ARRIVES IN.
+ *
+ * PostgREST answers a statement excluded by an RLS `using` clause with success and no rows, and
+ * supabase-js reports that as `{error: null}`. So every "did it work" question here has three
+ * answers rather than two, and the third — accepted, reached nothing — is the one that renders
+ * as a save that did not happen or as a register that is empty rather than unreadable.
+ */
+describe('an answer with nothing in it', () => {
+  it('fails the WHOLE read when the reference versions could not be fetched', async () => {
+    // A resolved row says "reference, version ver-1" and the version read fails. Falling back
+    // to the row alone would produce a material with no hazards, no allergens and no IFRA
+    // limit — which renders as one that has been classified and found harmless.
+    db.state.reads.resolved_materials = {
+      data: [
+      {
+        account_id: 'acct-1',
+        source: 'reference',
+        material_id: null,
+        reference_material_id: 'ref-1',
+        reference_version_id: 'ver-1',
+        reference_version: 1,
+        provenance: 'supplier-document',
+        slug: 'ing-x',
+        material_class: 'ingredient',
+        name: 'Something published',
+        categories: ['home-fragrance'],
+        overrides_reference: false
+      }],
+
+      error: null
+    };
+    db.state.reads.reference_material_versions = { data: null, error: { code: '08006' } };
+
+    const result = await fetchMaterials('acct-1');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toMatch(/could not read your materials/i);
+  });
+
+  it('drops an account row the view listed and the table did not return', async () => {
+    // Archived between the two reads. The view row on its own carries no hazards, so keeping
+    // it would put an unclassified copy of a real material into the register — the same false
+    // "no hazards required" by another route. Dropping it is right; the register is simply a
+    // row shorter until the next read.
+    db.state.reads.resolved_materials = {
+      data: [
+      {
+        account_id: 'acct-1',
+        source: 'account',
+        material_id: 'mat-gone',
+        reference_material_id: null,
+        reference_version_id: null,
+        material_class: 'ingredient',
+        name: 'Archived a moment ago',
+        categories: ['home-fragrance'],
+        overrides_reference: false
+      }],
+
+      error: null
+    };
+    db.state.reads.materials = { data: [], error: null };
+
+    const result = await fetchMaterials('acct-1');
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.materials).toEqual([]);
+  });
+
+  it('reports an edit that reached no row as not saved, rather than as saved', async () => {
+    db.state.updateResult = { data: [], error: null };
+    const result = await updateMaterial('mat-1', {
+      materialClass: 'ingredient',
+      name: 'Renamed',
+      categories: ['home-fragrance']
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('reached_nothing');
+      expect(result.message).toMatch(/nothing/i);
+    }
+  });
+
+  it('reports an archive that reached no row the same way', async () => {
+    db.state.updateResult = { data: [], error: null };
+    const result = await archiveMaterial('mat-1');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('reached_nothing');
+  });
+
+  it('never sends an edit that would move which reference row a material replaces', async () => {
+    // Set once, when the maker chooses to replace one of ours. Moving it afterwards silently
+    // changes which reference material disappears from everybody else's picker.
+    db.state.updateResult = { data: [{ id: 'mat-1' }], error: null };
+    await updateMaterial('mat-1', {
+      materialClass: 'ingredient',
+      name: 'Renamed',
+      categories: ['home-fragrance'],
+      overridesReferenceId: 'ref-99'
+    });
+    const [[, payload]] = db.state.updatePayloads.filter(([table]) => table === 'materials');
+    expect(payload).not.toHaveProperty('overrides_reference_id');
+    expect(payload.name).toBe('Renamed');
+  });
+
+  it('refuses geometry on an ingredient rather than letting the database refuse it', async () => {
+    // `materials_packaging_check` would reject it with a 23514, and a constraint violation is
+    // an error message about a form the maker cannot see. Nulled here so the error path stays
+    // free for real mistakes.
+    db.state.insertResult = { data: { id: 'mat-2' }, error: null };
+    await createMaterial(
+      {
+        materialClass: 'ingredient',
+        name: 'A wax',
+        categories: ['home-fragrance'],
+        capacityMl: 250,
+        labelAreaWidthMm: 60
+      },
+      'acct-1'
+    );
+    const [[, payload]] = db.state.inserts.filter(([table]) => table === 'materials');
+    expect(payload.capacity_ml).toBeNull();
+    expect(payload.label_area_width_mm).toBeNull();
+  });
+});
+
+/**
+ * ROWS THAT ARE NOT WHOLE, and the rule that covers all four of them: a partial record is
+ * dropped rather than rendered with the missing half blank.
+ *
+ * Every one of these columns is NOT NULL in the schema, so a row missing one did not come from
+ * this app. What makes dropping right rather than merely tidy is what the alternative LOOKS
+ * like on a label: an H-code with no statement beside it, an allergen with no percentage, an
+ * IFRA category with no maximum. Each reads as a figure that failed to render, and a maker
+ * chasing a rendering fault is not chasing the data problem they actually have.
+ */
+describe('a child row missing a column the schema says it cannot be missing', () => {
+  const seedMaterial = () => {
+    db.state.reads.resolved_materials = {
+      data: [
+      {
+        account_id: 'acct-1',
+        source: 'account',
+        material_id: 'mat-1',
+        material_class: 'ingredient',
+        name: 'Black Fig and Cassis',
+        role: 'Fragrance oil',
+        categories: ['home-fragrance'],
+        overrides_reference: false
+      }],
+
+      error: null
+    };
+    db.state.reads.materials = {
+      data: [
+      {
+        id: 'mat-1',
+        account_id: 'acct-1',
+        material_class: 'ingredient',
+        name: 'Black Fig and Cassis',
+        role: 'Fragrance oil',
+        categories: ['home-fragrance']
+      }],
+
+      error: null
+    };
+  };
+
+  it('drops a hazard with no statement, and keeps the whole one beside it', async () => {
+    seedMaterial();
+    db.state.reads.material_hazards = {
+      data: [
+      { id: 'h-1', material_id: 'mat-1', code: 'H317', statement: null, hazard_class: 'Skin Sens. 1' },
+      { id: 'h-2', material_id: 'mat-1', code: 'H319', statement: 'Causes serious eye irritation.', hazard_class: 'Eye Irrit. 2' }],
+
+      error: null
+    };
+    const result = await fetchMaterials('acct-1');
+    if (!result.ok) throw new Error('expected a read');
+    const material = result.materials[0] as IngredientMaterial;
+    expect(material.hazards.map((h) => h.code)).toEqual(['H319']);
+  });
+
+  it('drops an allergen with no percentage and an IFRA row with no maximum', async () => {
+    seedMaterial();
+    db.state.reads.material_allergens = {
+      data: [
+      { id: 'a-1', material_id: 'mat-1', name: 'linalool', pct: null },
+      { id: 'a-2', material_id: 'mat-1', name: 'limonene', pct: 2.4 }],
+
+      error: null
+    };
+    db.state.reads.material_ifra_limits = {
+      data: [
+      { id: 'i-1', material_id: 'mat-1', category: '12', max_pct: null },
+      { id: 'i-2', material_id: 'mat-1', category: '4', max_pct: 8 }],
+
+      error: null
+    };
+    const result = await fetchMaterials('acct-1');
+    if (!result.ok) throw new Error('expected a read');
+    const material = result.materials[0] as IngredientMaterial;
+    expect(material.allergens.map((a) => a.name)).toEqual(['limonene']);
+    expect(material.ifra.map((limit) => limit.category)).toEqual(['4']);
+  });
+
+  it('records a document with no kind as a file held, and cites nothing', async () => {
+    // The one case where the row still says something true: we know a file exists and we do
+    // not know what it is. A citation is either real or it is not shown.
+    seedMaterial();
+    db.state.reads.material_documents = {
+      data: [
+      {
+        id: 'd-1',
+        material_id: 'mat-1',
+        document_kind: null,
+        storage_path: 'acct-1/mat-1/thing.pdf',
+        recorded_at: '2026-07-01T00:00:00.000Z'
+      }],
+
+      error: null
+    };
+    const result = await fetchMaterials('acct-1');
+    if (!result.ok) throw new Error('expected a read');
+    expect(result.materials[0].document).toBeUndefined();
+    expect(result.materials[0].documentFileHeld).toBe(true);
+  });
+
+  it('keeps only the categories it can actually draw', async () => {
+    // An unknown id is one a later version of this app added or this one removed. Keeping it
+    // would put a material in a surface with no screen behind it.
+    seedMaterial();
+    db.state.reads.resolved_materials.data = [
+    {
+      ...(db.state.reads.resolved_materials.data as Record<string, unknown>[])[0],
+      categories: ['home-fragrance', 'aromatherapy', 'cosmetics']
+    }];
+
+    db.state.reads.materials.data = [
+    {
+      ...(db.state.reads.materials.data as Record<string, unknown>[])[0],
+      categories: ['home-fragrance', 'aromatherapy', 'cosmetics']
+    }];
+
+    const result = await fetchMaterials('acct-1');
+    if (!result.ok) throw new Error('expected a read');
+    expect(result.materials[0].categories).toEqual(['home-fragrance', 'cosmetics']);
+  });
+
+  it('names the thing that is already there for every kind of duplicate', async () => {
+    // One code, five sentences. A maker told "that already exists" without being told what
+    // has to go looking for it.
+    expect(classifyMaterialError({ code: '23505' }, 'hazard').message).toMatch(/hazard code/i);
+    expect(classifyMaterialError({ code: '23505' }, 'allergen').message).toMatch(/allergen/i);
+    expect(classifyMaterialError({ code: '23505' }, 'ifra').message).toMatch(/IFRA category/i);
+    expect(classifyMaterialError({ code: '23505' }, 'override').message).toMatch(/your own version/i);
+  });
+
+  it('says which account is missing before it says anything about the code', async () => {
+    expect(classifyMaterialError({ code: '23505', hint: 'account_missing' }).reason).toBe(
+      'no_account'
+    );
   });
 });

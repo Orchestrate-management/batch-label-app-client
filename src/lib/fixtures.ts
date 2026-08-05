@@ -1,5 +1,4 @@
 import {
-  Attention,
   ConformityDocument,
   DocumentRevision,
   IngredientMaterial,
@@ -8,7 +7,6 @@ import {
   PackagingMaterial,
   Product,
   ProductEvidence,
-  ProductionRecord,
   TeamMember } from
 './model';
 
@@ -532,270 +530,26 @@ export function driftFor(product: Product): Drift | null {
   return { ...entry, sentence: `${entry.changed} ${entry.moved} ${entry.nowSays}` };
 }
 
-/* --------------------------------------------------------------- records */
+/*
+ * TWO FIXTURE LISTS WERE DELETED HERE, AND THEY ARE THE BRIEF'S OWN EXAMPLE.
+ *
+ * `RECORDS` was a list of invented production runs — batch codes, dates, unit counts, "made by
+ * Tom" — and `ATTENTION` was a list of invented compliance findings against them: "Component
+ * without a declaration", "Test report expires in 62 days", "The declaration for WW-100 cannot
+ * be signed until it is". Nothing measured any of it, and two of the three Resolve links
+ * pointed at `/materials/component/…`, a route that no longer exists because components do not.
+ *
+ * They were already orphaned by the time these four branches met: Records reads
+ * `batchlabel.record_events` now, and the recall search counts over the table it searched.
+ * Orphaned is exactly why they had to go rather than be left. A list of plausible findings
+ * sitting in the repo under a real product's name is one import away from a screen, and the
+ * whole defect class this work removed started with data that looked ready to render.
+ *
+ * `ProductionRecord` and `Attention` stay in model.ts. Records writes real production rows and
+ * will want the first; the second is a shape without a producer, and whoever gives it one owns
+ * proving it against something.
+ */
 
-export const RECORDS: ProductionRecord[] = [
-{
-  code: 'BFC-2607-014',
-  productId: 'p-black-fig',
-  date: '2026-07-26',
-  units: 48,
-  identity: { kind: 'batch', code: 'BFC-2607-014' },
-  lots: [
-  { materialId: 'ing-black-fig', lot: 'AUR-24118-B' },
-  { materialId: 'ing-crw45', lot: 'KER-CRW-2609' }],
-
-  specVersion: 'r7',
-  artefactVersions: [
-  { type: 'unit-label', version: 'v4' },
-  { type: 'listing', version: 'v2' }],
-
-  madeBy: 'Nadia',
-  notes: 'Cure 14 days before dispatch.'
-},
-{
-  code: 'BSS-2407-009',
-  productId: 'p-bergamot-sea-salt',
-  date: '2026-07-24',
-  units: 60,
-  identity: { kind: 'batch', code: 'BSS-2407-009' },
-  lots: [
-  { materialId: 'ing-bergamot-sea-salt', lot: 'CWP-8802-17' },
-  { materialId: 'ing-alcohol', lot: 'MER-PA96-114' }],
-
-  specVersion: 'r3',
-  artefactVersions: [
-  { type: 'unit-label', version: 'v3' },
-  { type: 'listing', version: 'v1' }],
-
-  madeBy: 'Nadia'
-},
-{
-  code: 'SMV-2107-021',
-  productId: 'p-smoked-vetiver',
-  date: '2026-07-21',
-  units: 36,
-  identity: { kind: 'batch', code: 'SMV-2107-021' },
-  lots: [
-  { materialId: 'ing-smoked-vetiver', lot: 'HAL-2210-04' },
-  { materialId: 'ing-dpg', lot: 'HAL-DPG-771' }],
-
-  specVersion: 'r2',
-  artefactVersions: [
-  { type: 'unit-label', version: 'v2' },
-  { type: 'listing', version: 'v2' }],
-
-  madeBy: 'Tom'
-},
-{
-  code: 'WW100-2007-002',
-  productId: 'p-warmer',
-  date: '2026-07-20',
-  units: 400,
-  identity: { kind: 'serial-range', code: 'WW100-26', from: 'WW100-26-0001', to: 'WW100-26-0400' },
-  lots: [
-  { materialId: 'cmp-power-board', lot: 'LE-PB52-2622' },
-  { materialId: 'cmp-heater', lot: 'LE-PTC10-2618' },
-  { materialId: 'cmp-cable', lot: 'HC-SC12-2611' },
-  { materialId: 'cmp-housing', lot: 'WM-CH20-2609' }],
-
-  specVersion: 'b2',
-  artefactVersions: [
-  { type: 'rating-plate', version: 'v1' },
-  { type: 'carton', version: 'v1' },
-  { type: 'leaflet', version: 'v1' }],
-
-  madeBy: 'Tom',
-  notes: 'Assembled and flash tested in house, 400 units, no failures.'
-},
-{
-  code: 'RMF-2907-004',
-  productId: 'p-rosehip-face-oil',
-  date: '2026-07-29',
-  units: 90,
-  identity: { kind: 'batch', code: 'RMF-2907-004' },
-  lots: [
-  { materialId: 'ing-rosehip', lot: 'VER-RH01-2607' },
-  { materialId: 'ing-meadowfoam', lot: 'VER-MF02-2605' },
-  { materialId: 'ing-jojoba', lot: 'VER-JJ04-2603' },
-  { materialId: 'ing-black-fig', lot: 'AUR-24118-B' }],
-
-  specVersion: 'f4',
-  artefactVersions: [
-  { type: 'unit-label', version: 'v2' },
-  { type: 'carton', version: 'v1' },
-  { type: 'listing', version: 'v2' }],
-
-  madeBy: 'Priya',
-  notes: 'Filled under nitrogen. Held 48 hours before labelling.'
-},
-{
-  code: 'WDB-1807-006',
-  productId: 'p-wild-damson',
-  date: '2026-07-18',
-  units: 120,
-  identity: { kind: 'batch', code: 'WDB-1807-006' },
-  lots: [
-  { materialId: 'ing-wild-damson', lot: 'NJF-1330-09' },
-  { materialId: 'ing-soy-c3', lot: 'ECO-C3-2604' }],
-
-  specVersion: 'r1',
-  artefactVersions: [
-  { type: 'unit-label', version: 'v1' },
-  { type: 'listing', version: 'v1' }],
-
-  madeBy: 'Tom'
-},
-{
-  code: 'BFC-1407-013',
-  productId: 'p-black-fig',
-  date: '2026-07-14',
-  units: 42,
-  identity: { kind: 'batch', code: 'BFC-1407-013' },
-  lots: [
-  { materialId: 'ing-black-fig', lot: 'AUR-24118-B' },
-  { materialId: 'ing-crw45', lot: 'KER-CRW-2609' }],
-
-  specVersion: 'r6',
-  artefactVersions: [
-  { type: 'unit-label', version: 'v4' },
-  { type: 'listing', version: 'v2' }],
-
-  madeBy: 'Nadia'
-},
-{
-  code: 'BSS-0907-008',
-  productId: 'p-bergamot-sea-salt',
-  date: '2026-07-09',
-  units: 54,
-  identity: { kind: 'batch', code: 'BSS-0907-008' },
-  lots: [
-  { materialId: 'ing-bergamot-sea-salt', lot: 'CWP-8802-16' },
-  { materialId: 'ing-alcohol', lot: 'MER-PA96-112' }],
-
-  specVersion: 'r3',
-  artefactVersions: [
-  { type: 'unit-label', version: 'v3' },
-  { type: 'listing', version: 'v1' }],
-
-  madeBy: 'Nadia'
-},
-{
-  code: 'WW100-0207-001',
-  productId: 'p-warmer',
-  date: '2026-07-02',
-  units: 150,
-  identity: { kind: 'serial-range', code: 'WW100-26', from: 'WW100-26-0401', to: 'WW100-26-0550' },
-  lots: [
-  { materialId: 'cmp-power-board', lot: 'LE-PB52-2618' },
-  { materialId: 'cmp-heater', lot: 'LE-PTC10-2612' },
-  { materialId: 'cmp-cable', lot: 'HC-SC12-2606' },
-  { materialId: 'cmp-housing', lot: 'WM-CH20-2604' }],
-
-  specVersion: 'b1',
-  artefactVersions: [
-  { type: 'rating-plate', version: 'v1' },
-  { type: 'carton', version: 'v1' },
-  { type: 'leaflet', version: 'v1' }],
-
-  madeBy: 'Tom'
-},
-{
-  code: 'SMV-0207-020',
-  productId: 'p-smoked-vetiver',
-  date: '2026-07-02',
-  units: 30,
-  identity: { kind: 'batch', code: 'SMV-0207-020' },
-  lots: [
-  { materialId: 'ing-smoked-vetiver', lot: 'HAL-2210-03' },
-  { materialId: 'ing-dpg', lot: 'HAL-DPG-768' }],
-
-  specVersion: 'r2',
-  artefactVersions: [
-  { type: 'unit-label', version: 'v2' },
-  { type: 'listing', version: 'v2' }],
-
-  madeBy: 'Tom'
-}];
-
-
-export function recordByCode(code: string): ProductionRecord | undefined {
-  return RECORDS.find((r) => r.code === code);
-}
-
-/* ------------------------------------------------------------- attention */
-
-export const ATTENTION: Attention[] = [
-{
-  id: 'att-1',
-  productId: 'p-black-fig',
-  categoryId: 'home-fragrance',
-  regimeId: 'clp',
-  severity: 'blocking',
-  label: 'Classification changed since last print',
-  detail:
-  'Fragrance load raised to 8 percent on 22 July. Label v4 was printed at 7 percent and no longer matches the specification.',
-  to: '/products/p-black-fig'
-},
-{
-  id: 'att-2',
-  productId: 'p-warmer',
-  materialId: 'cmp-cable',
-  categoryId: 'electronics',
-  regimeId: 'rohs',
-  severity: 'blocking',
-  label: 'Component without a declaration',
-  detail:
-  'Silicone USB-C cable, 1.2 m has no declaration of conformity on file. The declaration for WW-100 cannot be signed until it is.',
-  to: '/materials/component/cmp-cable'
-},
-{
-  id: 'att-3',
-  productId: 'p-warmer',
-  materialId: 'cmp-heater',
-  categoryId: 'electronics',
-  regimeId: 'ce',
-  severity: 'review',
-  label: 'Test report expires in 62 days',
-  detail:
-  'The PTC heating element report from Linfield Electronics expires on 30 September 2026. Book a retest or request a current report.',
-  to: '/materials/component/cmp-heater'
-},
-{
-  id: 'att-4',
-  productId: 'p-rosehip-face-oil',
-  categoryId: 'cosmetics',
-  regimeId: 'cpr',
-  severity: 'blocking',
-  label: 'Ingredient order changed since the carton was printed',
-  detail:
-  'Jojoba raised to 18.4 percent on 12 July. The INCI order on carton v1 no longer matches the formula.',
-  to: '/products/p-rosehip-face-oil'
-},
-{
-  id: 'att-5',
-  materialId: 'ing-black-fig',
-  productId: 'p-black-fig',
-  categoryId: 'home-fragrance',
-  regimeId: 'clp',
-  severity: 'review',
-  label: 'Revised safety data sheet',
-  detail:
-  'Aurelia Fragrances published version 4.3 of the Black Fig and Cassis data sheet on 2 June. Version 4.2 is on file.',
-  to: '/materials/ingredient/ing-black-fig'
-},
-{
-  id: 'att-6',
-  materialId: 'ing-jojoba',
-  productId: 'p-rosehip-face-oil',
-  categoryId: 'cosmetics',
-  regimeId: 'cpr',
-  severity: 'review',
-  label: 'Revised INCI certificate',
-  detail:
-  'Verdant Botanicals published version 1.2 of the jojoba certificate on 22 June. Version 1.1 is on file.',
-  to: '/materials/ingredient/ing-jojoba'
-}];
 
 /* ------------------------------------------------------------- workspace */
 

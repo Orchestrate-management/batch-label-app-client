@@ -36,6 +36,8 @@ import {
   geometryRules } from
 '../lib/derive';
 import { packagingById } from '../lib/material-index';
+import { useOptionalMaterials } from '../lib/materials-store';
+import { useOptionalSettings } from '../lib/settings-store';
 import { ARTEFACT_LABELS, STOCK, categoryById } from '../lib/categories';
 import { addressForMarket } from '../lib/identity';
 import { useProduct, useProducts } from '../lib/product-store';
@@ -169,7 +171,34 @@ function ArtefactDesignerView({ product }: {product: Product;}) {
     navigate(`/products/${product.id}/artefacts/${type}`);
   };
 
-  const derivation = useMemo(() => derive(product.spec, product, market), [product, market]);
+  /**
+   * THE SAME TWO SUBSCRIPTIONS THE SPECIFICATION SCREEN NEEDS, AND FOR THE SAME REASON — with
+   * more at stake here, because this screen draws the label at actual size.
+   *
+   * `derive` reads the materials register through a module-level index, and `ArtefactRenderer`
+   * below reads the printed business identity the same way (lib/identity.ts is a live holder
+   * filled by SettingsProvider, not six frozen constants any more). Both are published
+   * ASYNCHRONOUSLY by providers above the router, after this screen has painted; and a
+   * component that consumes neither context is not re-rendered when they land, because the
+   * provider's `children` is the same element object and React bails out of the subtree.
+   *
+   * Without these two hooks a maker who opens a label straight from a link — or reloads on one
+   * — gets a proof with no hazard statements on it and "[Business name]" where their own name
+   * belongs, and it stays that way until they navigate away and back. Both are label elements
+   * a regulator reads.
+   *
+   * `useOptionalSettings` rather than `useSettings`: this screen must still render in harnesses
+   * that mount it without the provider, and a null there means "no identity holder above me",
+   * which is exactly what the placeholder text already says.
+   */
+  const register = useOptionalMaterials();
+  const settings = useOptionalSettings();
+
+  const derivation = useMemo(
+    () => derive(product.spec, product, market),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [product, market, register, settings]
+  );
 
   const stockOptions = STOCK.filter((s) => s.artefactType === artefact.type);
   const stock = stockOptions.find((s) => s.id === stockId) ?? stockOptions[0];
@@ -191,9 +220,11 @@ function ArtefactDesignerView({ product }: {product: Product;}) {
   // at the legibility floor. The same check covers any optional block, not only branding.
   const optionalCrowds = brandingShown && fontPt <= MIN_FONT_PT && area < 4500;
 
-  // A placeholder, and it reads as one on the canvas. It was a fixture batch code — the
-  // number a recall is run against — printed at actual size onto a maker's proof. Production
-  // records have no table yet, so there is no real code to print here.
+  // A placeholder, and it reads as one on the canvas. It was a fixture batch code — the number
+  // a recall is run against — printed at actual size onto a maker's proof. It stays a
+  // placeholder now that `batchlabel.record_events` holds real batch records, for the reason
+  // set out at the same line in Specification.tsx: a label belongs to a composition and a batch
+  // code belongs to a fill, so there is no "the" batch code for a product to print here.
   const identityCode = category.recordIdentity === 'batch' ? '[Batch code]' : '[Serial number]';
 
   return (

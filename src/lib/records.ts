@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { domainClient } from './domain';
 import { ArtefactType } from './model';
 
 /**
@@ -382,18 +382,14 @@ function isDefiniteRefusal(error: Postgrestish | null): boolean {
 
 /* -------------------------------------------------------------- plumbing */
 
-/**
- * The Postgres schema holding the Batchlabel domain.
- *
- * Duplicated from lib/products.ts rather than imported, and it is the same constant for the
- * same reason: the domain tables live in `batchlabel` so a sibling Orchestrate brand can have
- * its own `products` meaning stock. A client that quietly went back to `public` would read a
+/*
+ * The domain-scoped client comes from lib/domain.ts. It used to be a private copy of the
+ * constant here, with a comment saying the duplication was deliberate — see that module for
+ * why four such copies became one. The rule it enforces is the one this file most depends on:
+ * the log lives in `batchlabel`, and a client that quietly went back to `public` would read a
  * table that is not there and report an empty log, which on this screen is a false negative on
  * a recall.
  */
-const DOMAIN_SCHEMA = 'batchlabel';
-
-const domainClient = () => (supabase ? supabase.schema(DOMAIN_SCHEMA) : null);
 
 const EVENT_COLUMNS =
 'id, kind, occurred_at, recorded_at, product_id, specification_id, artefact_id, material_id, ' +
@@ -1111,34 +1107,26 @@ export async function insertEvent(input: EventInput): Promise<RecordWriteResult<
   return { ok: true, value: String((data as unknown as Record<string, unknown>).id) };
 }
 
-/**
- * Evidence that an obligation was discharged, filed against the obligation's own id.
+/*
+ * EVIDENCE THAT AN OBLIGATION WAS DISCHARGED IS WRITTEN BY lib/evidence.ts, NOT FROM HERE.
  *
- * `obligation_id` is a typed, indexed column rather than a key in `detail` because it is what
- * a work queue filters on. The reference is the maker's — a submission number, a certificate
- * id, whatever the regulator gave them — and this app neither validates it nor claims it is
- * valid. Recording that somebody says they notified a poison centre is a true statement;
- * "notified" as a green tick derived from it would not be, and nothing here derives one.
+ * A `recordObligationEvidence` wrapper stood here, and it was one of two functions inserting a
+ * `compliance.*` row with an `obligation_id` — the other being `recordEvidence` in evidence.ts,
+ * which is the one the specification screen's Compliance record section actually calls and the
+ * one that returns the `RecordedEvidence` shape lib/regimes.ts reads back.
+ *
+ * They were not equivalent, which is what made keeping both dangerous rather than merely
+ * untidy. evidence.ts maps four obligations to their own event kinds (`compliance.ufi_assigned`,
+ * `compliance.pcn_submitted`, `compliance.npis_submitted`, `compliance.declaration_signed`); the
+ * wrapper defaulted everything to `compliance.evidence_recorded` unless a caller passed a kind.
+ * Two writers on an APPEND-ONLY table, disagreeing about what to call the same event, is a log
+ * that cannot be read back consistently and cannot be corrected afterwards — the browser holds
+ * no UPDATE and no DELETE on it, by design.
+ *
+ * So there is one writer. `insertEvent` below is still exported and is still what a note goes
+ * through; evidence.ts inserts directly for the same reason it always did — it needs the
+ * inserted row back.
  */
-export async function recordObligationEvidence(input: {
-  accountId: string;
-  productId: string | null;
-  obligationId: string;
-  summary: string;
-  reference?: string;
-  kind?: Extract<RecordEventKind, `compliance.${string}`>;
-  occurredAt?: string;
-}): Promise<RecordWriteResult<string>> {
-  return insertEvent({
-    accountId: input.accountId,
-    kind: input.kind ?? 'compliance.evidence_recorded',
-    summary: input.summary,
-    productId: input.productId,
-    obligationId: input.obligationId,
-    reference: input.reference?.trim() || null,
-    occurredAt: input.occurredAt
-  });
-}
 
 /* ------------------------------------------- the writes other files make */
 

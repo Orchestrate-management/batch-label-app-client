@@ -3,13 +3,18 @@ import { supabase } from './supabase';
 /**
  * The Postgres schema holding the Batchlabel domain, and the client scoped to it.
  *
- * LIFTED OUT OF products.ts RATHER THAN COPIED. It was private there, and the second module
- * that needed it (evidence.ts, which reads and writes the append-only record log) would
- * otherwise have had to either duplicate the string or import from products.ts and create a
- * cycle — products.ts now reads the log on every product read, so the arrow already points the
- * other way. A duplicated schema name is the kind of thing that survives one rename and not
- * two, and reading the wrong schema does not error: it 404s or returns an empty decoy table,
- * and the screen says "you have nothing" in a calm voice.
+ * ONE COPY, AND THE MERGE IS WHY IT IS ONE. This started private in products.ts. Four data
+ * layers were then built in parallel — evidence.ts, materials.ts, records.ts, settings-data.ts
+ * — and every one of them wrote out its own `const DOMAIN_SCHEMA = 'batchlabel'` and its own
+ * one-line `domainClient`, each with a comment explaining that it was deliberately duplicated.
+ * Four deliberate duplications of a string is not four decisions, it is one missing module,
+ * and this is it. Importing from products.ts instead would have made a cycle: products.ts
+ * reads the log on every product read, so the arrow already points the other way.
+ *
+ * The cost of the duplication is not stylistic. A copy that survives one rename and not the
+ * next reads the WRONG SCHEMA, and reading the wrong schema does not error: PostgREST 404s, or
+ * `public` answers with an empty decoy table, and the screen says "you have nothing" in a calm
+ * voice. On the records screen that sentence is a false negative on a recall.
  *
  * The argument for the schema itself is in the header of
  * supabase/migrations/20260804120000_brand_namespacing.sql (in the www repo): `products` and

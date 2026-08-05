@@ -129,6 +129,25 @@ export default defineConfig({
         'src/lib/identity.ts',
         'src/lib/settings-data.ts',
         'src/lib/settings-store.tsx',
+        // The materials register, added when this list was reconciled across four branches —
+        // and added because of the rule above rather than in spite of it. All three clauses
+        // apply. materials.ts is every read and write of the rows a maker's classification is
+        // derived from, account-filtered in the same way products.ts is. material-index.ts is
+        // the synchronous holder those derivations read during render, and it is the one place
+        // that can tell "the register says no" apart from "the register has not answered" — a
+        // mistake there is a screen saying no hazard statements are required by a lookup that
+        // had not landed. materials-store.tsx clears the holder on every account change, so
+        // getting it wrong shows one account's materials under another's product.
+        'src/lib/materials.ts',
+        'src/lib/material-index.ts',
+        'src/lib/materials-store.tsx',
+        // The compliance write. Third clause, squarely: this is the only thing that can move an
+        // obligation off "outstanding", and it does it by writing an append-only row nobody can
+        // afterwards correct. domain.ts is one exported constant and one line, on the list
+        // because every one of the files above reads its schema through it and a wrong schema
+        // does not error — it answers empty.
+        'src/lib/evidence.ts',
+        'src/lib/domain.ts',
       ],
       thresholds: {
         lines: 70,

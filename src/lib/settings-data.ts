@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { NOT_CONFIGURED_MESSAGE, domainClient } from './domain';
 import type { PrintedBusiness, PrintedMarket } from './identity';
 import type { CategoryId } from './model';
 
@@ -33,13 +33,8 @@ import type { CategoryId } from './model';
  * maker as a save. No function here reports a save it did not see the row for.
  */
 
-const DOMAIN_SCHEMA = 'batchlabel';
-
-/** The domain-scoped client, or null when Supabase is not configured at all. */
-const domainClient = () => (supabase ? supabase.schema(DOMAIN_SCHEMA) : null);
-
-export const NOT_CONFIGURED_MESSAGE =
-'This app is not connected to its database, so nothing can be saved. This is us, not you.';
+/* The domain-scoped client and the not-connected sentence both come from lib/domain.ts. */
+export { NOT_CONFIGURED_MESSAGE } from './domain';
 
 /**
  * WHY EVERY FUNCTION HERE TAKES AN ACCOUNT ID AND NONE OF THEM DEFAULTS ONE.

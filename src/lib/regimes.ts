@@ -519,12 +519,25 @@ export const REGIMES: Regime[] = [
     label: 'Traceability records kept',
     doneText: 'Production records identify the product, the maker and the run.',
     missingText: 'Production records do not identify the run.',
-    // Reworded, because the old sentence — "Batchlabel does not hold production records" —
-    // stopped being true the day `batchlabel.record_events` shipped. It is still NOT_TRACKED,
-    // and precisely so: the table exists, but this screen writes no production run into it, so
-    // reading the absence of one as a finding would be the same mistake in a new place.
+    /*
+     * STILL NOT_TRACKED, AND THE SENTENCE HAS BEEN REWRITTEN TWICE.
+     *
+     * It first read "Batchlabel does not hold production records", which stopped being true the
+     * day `batchlabel.record_events` shipped. It was then reworded to say no production run is
+     * written into it — which stopped being true the day the records screen's batch form
+     * shipped. Both were the same mistake: a compliance sentence describing the software's
+     * capabilities, which change under it.
+     *
+     * So this describes THE DUTY and what we can see of it, which does not move. A maker can
+     * record a batch here, and doing so is worth doing. What no record here can establish is
+     * that the code on the jars in a customer's hand matches the run that filled them: the
+     * label is applied at fill time, this app never sees it, and the print records it holds
+     * carry a fingerprint of the composition rather than the artwork. Deriving "met" from the
+     * existence of a batch row would be exactly the invented finding this whole rail removed,
+     * pointed the other way.
+     */
     untrackedText:
-    'Batchlabel can hold production runs, but none has been recorded against this product, so it cannot tell whether a batch code on your jars identifies the run that made them. Keep that link in your own batch records until you record runs here.',
+    'Batchlabel holds the batch records you enter, and the recall search reads them. What it cannot see is the code actually printed on your jars, so it cannot confirm that a batch on a shelf is traceable to the run that filled it. That link is yours to keep.',
     to: '/records'
   },
   {
@@ -627,7 +640,8 @@ const NOT_TRACKED: ReadonlySet<string> = new Set([
   'weee-marking',
   // Needs a UFI, which Batchlabel does not generate and does not yet hold.
   'clp-ufi',
-  // Needs a production run in the log. This app writes none, so an absent one is not a finding.
+  // Needs sight of the code printed on the jar, which no batch record in the log carries. The
+  // log holds runs now; it does not hold what was applied to the pack at fill time.
   'gpsr-traceability',
   // Needs sight of the shop listing, which Batchlabel will never have.
   'gpsr-online-disclosure'

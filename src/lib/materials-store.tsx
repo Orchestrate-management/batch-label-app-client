@@ -155,3 +155,28 @@ export function useMaterials(): MaterialsValue {
   if (!value) throw new Error('useMaterials must be used inside MaterialsProvider');
   return value;
 }
+
+/**
+ * The same subscription, for screens that READ THE REGISTER THROUGH THE MODULE INDEX rather
+ * than out of this value — and therefore need to be woken up rather than supplied.
+ *
+ * THE DISTINCTION IS NOT COSMETIC. `useMaterials` above throws because a picker with no
+ * register behind it has nothing to offer and would render an empty select that looks like an
+ * empty account; that is a wiring mistake and it should be loud. Studio, Specification and the
+ * artefact designer are a different case: they call `derive`, `stagesFor`, `buildSds` and
+ * `obligationState`, all of which read lib/material-index.ts directly and all of which already
+ * have a true answer for "the register has not answered" — so with no provider above them they
+ * do not lie, they simply say `not-tracked` and "Not worked out" forever.
+ *
+ * What they cannot do without a subscription is NOTICE the register arriving. MaterialsProvider
+ * publishes asynchronously from above the router, and React does not re-render a subtree whose
+ * `children` element has not changed — only context consumers. So the hook is the wake-up, and
+ * the returned value goes in their memo keys.
+ *
+ * The provider being absent in the real app is caught by src/App.split.test.ts, which asserts
+ * the tree in App.tsx, rather than by a throw here that would only fire in test harnesses that
+ * are deliberately mounting one screen.
+ */
+export function useOptionalMaterials(): MaterialsValue | null {
+  return useContext(MaterialsContext);
+}

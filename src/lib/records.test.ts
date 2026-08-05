@@ -122,7 +122,6 @@ import {
   recallByLot,
   recordArtefactVersion,
   recordBatchProduced,
-  recordObligationEvidence,
   unitsAcross,
   type ProducedArtefact } from
 './records';
@@ -717,40 +716,13 @@ describe('insertEvent', () => {
   });
 });
 
-describe('recordObligationEvidence', () => {
-  it('files the evidence against the obligation id as a typed column', async () => {
-    respond('insert:record_events', { data: { id: 'event-4' }, error: null });
-
-    await recordObligationEvidence({
-      accountId: ACCOUNT,
-      productId: 'product-1',
-      obligationId: 'clp-ufi',
-      summary: 'UFI submitted to the poison centre',
-      reference: 'PCN-2026-0091',
-      kind: 'compliance.pcn_submitted'
-    });
-
-    const [call] = callsFor('insert:record_events');
-    const payload = call.context.payload as Record<string, unknown>;
-    expect(payload.obligation_id).toBe('clp-ufi');
-    expect(payload.kind).toBe('compliance.pcn_submitted');
-    expect(payload.reference).toBe('PCN-2026-0091');
-  });
-
-  it('defaults to the generic evidence kind', async () => {
-    respond('insert:record_events', { data: { id: 'event-5' }, error: null });
-
-    await recordObligationEvidence({
-      accountId: ACCOUNT,
-      productId: null,
-      obligationId: 'gpsr-contact',
-      summary: 'Contact details published'
-    });
-
-    const [call] = callsFor('insert:record_events');
-    expect((call.context.payload as Record<string, unknown>).kind).toBe('compliance.evidence_recorded');
-  });
-});
+/*
+ * `recordObligationEvidence` had a describe block here and no production caller. It has been
+ * deleted rather than left as dead-but-tested code: lib/evidence.ts owns the compliance write,
+ * and its own suite covers the obligation-to-event-kind mapping this one asserted. See the
+ * comment where the function used to be in records.ts for why two writers on an append-only
+ * table was a correctness problem and not a tidiness one.
+ */
 
 describe('the lines other files write', () => {
   it('writes nothing when there is no account to file it under', async () => {
