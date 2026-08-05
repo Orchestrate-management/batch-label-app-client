@@ -60,10 +60,15 @@ export type ClpResult = {
  * WHY THIS IS A FIELD RATHER THAN A SILENT SKIP, and it is the single most important line in
  * this file. Materials used to be a constant compiled into the bundle, so every id on every
  * composition resolved by construction and the "not found" branch was unreachable. They are
- * rows now — the maker's own, archived when they choose — and an id that resolves to nothing
- * contributes nothing, so a mixture whose fragrance oil has been archived derives NO HAZARD
- * STATEMENTS and the group underneath it reads "No hazard statements are required at this
- * fragrance load".
+ * rows now, and an id that resolves to nothing contributes nothing — so a mixture whose
+ * fragrance oil the register cannot produce derives NO HAZARD STATEMENTS and the group
+ * underneath it reads "No hazard statements are required at this fragrance load".
+ *
+ * ARCHIVING NO LONGER CAUSES THAT, and it is worth saying because it did. `fetchMaterials`
+ * reads archived rows and `materialById` answers for them; only the pickers and the register
+ * lists filter. So the ids that land here are genuinely absent — a stale link, or a material
+ * belonging to another account — and nothing that renders this field may offer archiving as
+ * the explanation.
  *
  * That sentence would be a compliance claim about a real candle, produced by a lookup miss.
  * It is the exact defect this round of work exists to remove, and it is worse than the ones
@@ -444,8 +449,38 @@ export type GeometryRule = {
   label: string;
   value: string;
   source: string;
+  /**
+   * The verdict, or NO VERDICT. Undefined is a rule that was not evaluated — the pack has no
+   * capacity, so CLP Annex I Table 1.3 has no band to check against — and it is deliberately
+   * distinct from `false`, which is a rule that ran and failed.
+   */
   ok?: boolean;
 };
+
+/** Passed every rule, failed one, or was never checked against any. */
+export type GeometryVerdict = 'pass' | 'fail' | 'unchecked';
+
+/**
+ * What the surface as a whole may claim, given the rules above it.
+ *
+ * THE ONE PLACE THIS QUESTION IS ANSWERED, and it exists because the designer answered it
+ * inline with `rules.every((rule) => rule.ok !== false)` — which reads a rule with NO VERDICT
+ * as a rule that passed, and painted the "This surface" pill green over it. That is the
+ * guaranteed state of every new product: `blankSpec` no longer seeds a packaging id, so the
+ * only CLP rule on the card is the one that says the minimum label size cannot be worked out.
+ * A green pill over "Cannot be worked out yet" tells a maker their label clears a check that
+ * was never performed.
+ *
+ * A FAILURE IS ESTABLISHED WHATEVER ELSE DID NOT RUN — a rule that ran and failed is a fact,
+ * and it outranks the rest. A PASS IS NOT: it requires every rule to have returned a verdict,
+ * because "all the checks I managed to do passed" is not what a green tick says to anybody.
+ */
+export function geometryVerdict(rules: GeometryRule[]): GeometryVerdict {
+  if (rules.some((rule) => rule.ok === false)) return 'fail';
+  if (rules.length === 0) return 'unchecked';
+  if (rules.some((rule) => rule.ok === undefined)) return 'unchecked';
+  return 'pass';
+}
 
 /** The size rules the active regimes place on an artefact. Each states its source. */
 export function geometryRules(product: Product, widthMm: number, heightMm: number): GeometryRule[] {

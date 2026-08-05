@@ -221,6 +221,21 @@ type MaterialBase = {
   notes?: string;
   /** True when this material is the maker's own and can therefore be edited or archived. */
   editable: boolean;
+  /**
+   * Archived: withdrawn from the pickers and the register, and STILL RESOLVED for anything
+   * already built on it.
+   *
+   * The register promises "products already built on it keep working and keep naming it",
+   * and that promise used to be false — `resolved_materials` carries `where m.archived_at is
+   * null`, so the row left the register entirely and a composition naming it derived NO
+   * HAZARD STATEMENTS. An archived material is now read back with this flag set instead of
+   * being dropped, so `ingredientById` still answers and the label keeps its classification;
+   * `ingredientsWithRole` and `materialsOfClass` — the pickers and the register list — filter
+   * on it, which is the only thing archiving is meant to do.
+   *
+   * Optional and absent-means-live, because a reference material cannot be archived at all.
+   */
+  archived?: boolean;
 };
 
 export type IngredientMaterial = MaterialBase & {
@@ -299,7 +314,7 @@ export const ARTEFACT_NO_PRINT_DATE = '—';
  *                 returns the hash stored on it. This is the only state that may be called up
  *                 to date, and it is a database answer rather than an assumption.
  *   out-of-date   a produced artefact exists and the fingerprint has moved. The composition,
- *                 the pack, a pinned material or the printed business identity changed after
+ *                 the pack, the classification of a material it names, or the printed business identity changed after
  *                 it was produced.
  *   unknown       an artefact exists and we could not compute the fingerprint — the RPC failed
  *                 or returned null. Must never render as either of the two answers.

@@ -88,8 +88,14 @@ export function SdsDocument({ model }: {model: SdsDocumentModel;}) {
               </div>
             </div>
             <div style={{ textAlign: 'right', fontSize: '2.2mm' }}>
+              {/* A version and a revision date are a regulatory claim, exactly as the revision
+                  line in section 16 is, so an unproduced sheet states neither. It says what it
+                  is instead — which section 16 already says at length, and which is the only
+                  thing true of a document nothing has issued. */}
               <div>
-                {model.version} · {model.revisionDate}
+                {model.version && model.revisionDate ?
+                `${model.version} · ${model.revisionDate}` :
+                'Draft · not issued'}
               </div>
               <div>
                 {model.market === 'GB' ? 'Great Britain' : 'European Union'} · REACH Annex II

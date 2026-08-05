@@ -29,6 +29,78 @@ import {
  * session itself crosses in a cookie on `.batchlabel.xyz` (lib/session-storage.ts).
  */
 
+/**
+ * What a sign-out DID. Never `void`, and that is the fix rather than a detail of it.
+ *
+ * `signOut()` used to return `Promise<void>`, and both call sites dropped it with `void`. That
+ * was survivable only for as long as the function could not fail — and it could. supabase-js
+ * rethrows anything it does not recognise as an AuthError, so a rejected `auth.signOut()` took
+ * the two lines under it with it: the browser never left for www, `signingOut` stayed true
+ * forever, and because `signingOut` is folded into `loading`, RequireAuth replaced THE WHOLE APP
+ * with "Checking your session…" and left it there. The maker was still signed in, on a shared
+ * computer as easily as their own, looking at a splash screen that named nothing.
+ *
+ * A caller cannot now drop that without deleting a value it was handed, and the provider holds
+ * it as `signOutFailure` so the two screens with a Sign out button can say it without inventing
+ * a mechanism of their own.
+ */
+export type SignOutResult =
+/** The session is gone from this browser, and the browser is leaving for www. */
+{state: 'signed-out';} |
+/** Nothing was established. They are still signed in here AND on www, and are told so. */
+{state: 'still-signed-in';message: string;};
+
+/**
+ * Said when the sign-out did not take.
+ *
+ * It states the fact, states that nothing changed, and gives the one action that is certain to
+ * work on the machine they are actually sitting at — because "try again" is not good enough
+ * advice for somebody who clicked Sign out on a library computer and is about to walk away.
+ */
+const STILL_SIGNED_IN =
+'We could not sign you out, so you are still signed in here and on batchlabel.xyz. Nothing has ' +
+'changed. Try again — and if this is a shared computer, close the browser to be certain.';
+
+/**
+ * Is there still a session in this browser?
+ *
+ * THE ONLY QUESTION WORTH ASKING AFTER THE ATTEMPT, and the reason this exists rather than a
+ * check of what `signOut()` returned. supabase-js answers a failed sign-out in three ways and
+ * they do not agree about what happened locally:
+ *
+ *  - `{ error }` because the POST to /logout was refused or never arrived. auth-js calls
+ *    `_removeSession()` BEFORE returning that error, so the shared cookie is already gone and
+ *    the maker is signed out here and on www. Only the refresh token on the server survives,
+ *    which is not what this button ever claimed to end.
+ *  - `{ error }` because the session itself could not be read or refreshed. Nothing was removed
+ *    and the maker is still signed in — the opposite answer, from the same shape.
+ *  - A REJECTED PROMISE, which is where this started. auth-js returns `{ error }` for anything
+ *    it recognises as an AuthError — a network failure at /logout becomes AuthRetryableFetchError,
+ *    a 5xx becomes the same, a 4xx becomes AuthApiError — and rethrows everything else. For this
+ *    app the reachable case is our own storage adapter: `sharedCookieStorage` touches
+ *    `document.cookie` and calls `decodeURIComponent` on what it finds, and a partitioned
+ *    document throws SecurityError while a malformed cookie value throws URIError. Neither is
+ *    caught anywhere between there and our `await`. How far the sign-out got is then unknown.
+ *
+ * So we ask, rather than infer. `getSession()` reads the same storage the sign-out was supposed
+ * to clear, which is the same storage www reads, so its answer is the answer to the question the
+ * maker is really asking.
+ *
+ * AN ERROR COUNTS AS STILL SIGNED IN. Not knowing is not the same as being out, and a session
+ * kept in a cookie on `.batchlabel.xyz` outlives this tab. The false confirmation is the
+ * expensive one here, exactly as it is for "sign out on every device".
+ */
+async function sessionRemains(): Promise<boolean> {
+  if (!supabase) return false;
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) return true;
+    return data.session !== null;
+  } catch {
+    return true;
+  }
+}
+
 interface AuthContextValue {
   session: Session | null;
   user: User | null;
@@ -36,7 +108,17 @@ interface AuthContextValue {
   loading: boolean;
   /** False when the Supabase env vars are absent. The app refuses to render. */
   configured: boolean;
-  signOut: () => Promise<void>;
+  signOut: () => Promise<SignOutResult>;
+  /**
+   * Set when a sign-out left the maker signed in, cleared when the next one starts.
+   *
+   * It lives here and not on either button because neither button survives the attempt:
+   * `signingOut` is folded into `loading`, so RequireAuth unmounts the entire tree — shell,
+   * Settings page and both Sign out buttons — for as long as the sign-out is in flight. Local
+   * state in those components is destroyed on the way past, which is precisely the window this
+   * message has to cross.
+   */
+  signOutFailure: string | null;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -49,6 +131,7 @@ export function AuthProvider({ children }: {children: React.ReactNode;}) {
   // bounce to the login page, which is both a wasted navigation and a confusing
   // flash of the login screen for someone who asked to sign out.
   const [signingOut, setSigningOut] = useState(false);
+  const [signOutFailure, setSignOutFailure] = useState<string | null>(null);
 
   useEffect(() => {
     if (!supabase) {
@@ -71,14 +154,47 @@ export function AuthProvider({ children }: {children: React.ReactNode;}) {
     };
   }, []);
 
-  const signOut = useCallback(async () => {
+  /**
+   * Ask for the session to end, THEN CHECK WHETHER IT DID, and leave only if it has.
+   *
+   * The order is the whole of it. This function used to call `auth.signOut()`, assume, and
+   * navigate; the assumption held right up until the call rejected, and then the app sat on
+   * "Checking your session…" for as long as the tab was open (see SignOutResult above).
+   *
+   * NEITHER THE ERROR NOR THE REJECTION IS THE ANSWER, so neither decides anything here. Both
+   * are swallowed on purpose and the question is put to `sessionRemains()` instead, which reads
+   * the same cookie www reads. A sign-out that came back with an error may well have removed
+   * the session, and one that came back clean has; what must never happen is this app claiming
+   * a session ended when it is still sitting on `.batchlabel.xyz` waiting for the next tab.
+   *
+   * `signingOut` is set BEFORE the call and cleared only on the path that stays. It exists to
+   * cover the render between SIGNED_OUT arriving and the browser leaving, so it cannot be moved
+   * after the await — and leaving it set on the failing path is the bug being fixed, because it
+   * is what turned a failed sign-out into a permanent splash screen.
+   */
+  const signOut = useCallback(async (): Promise<SignOutResult> => {
     setSigningOut(true);
-    // signOut() goes through the same storage adapter, so it clears the shared
-    // cookie (and every numbered chunk of it) on `.batchlabel.xyz`. The user is
-    // signed out of www as well, which is the correct reading of "sign out".
-    if (supabase) await supabase.auth.signOut();
+    setSignOutFailure(null);
+
+    try {
+      // signOut() goes through the same storage adapter, so it clears the shared
+      // cookie (and every numbered chunk of it) on `.batchlabel.xyz`. The user is
+      // signed out of www as well, which is the correct reading of "sign out".
+      if (supabase) await supabase.auth.signOut();
+    } catch {
+      // Deliberately empty. A rejection says the call did not finish, not that the session
+      // survived it, and `sessionRemains()` is about to establish which.
+    }
+
+    if (await sessionRemains()) {
+      setSigningOut(false);
+      setSignOutFailure(STILL_SIGNED_IN);
+      return { state: 'still-signed-in', message: STILL_SIGNED_IN };
+    }
+
     clearBounceRecord();
     navigateTo(HOME_URL);
+    return { state: 'signed-out' };
   }, []);
 
   const value = useMemo<AuthContextValue>(
@@ -87,9 +203,10 @@ export function AuthProvider({ children }: {children: React.ReactNode;}) {
       user: session?.user ?? null,
       loading: loading || signingOut,
       configured: isSupabaseConfigured,
-      signOut
+      signOut,
+      signOutFailure
     }),
-    [session, loading, signingOut, signOut]
+    [session, loading, signingOut, signOut, signOutFailure]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

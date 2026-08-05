@@ -122,9 +122,28 @@ export function allMaterials(): Material[] {
   return current.materials;
 }
 
+/**
+ * THE OTHER RULE THAT MATTERS: A LOOKUP ANSWERS FOR AN ARCHIVED MATERIAL; A LIST DOES NOT.
+ *
+ * `materialById` and its two typed wrappers are what the DERIVATION calls, off ids a
+ * specification stored — and a product built on a material the maker has since archived is
+ * still a product with that material in it. Dropping archived rows from the lookup is exactly
+ * how a live candle lost its H317: the id missed, the derivation contributed nothing, and the
+ * hazard group read "no hazard statements are required at this fragrance load".
+ *
+ * `materialsOfClass` and `ingredientsWithRole` are what the PICKERS and the register call, and
+ * those filter, because the one thing archiving is for is not being offered the material
+ * again. Both halves are needed for "archiving keeps every product that used it working" to
+ * be a true sentence rather than a hopeful one.
+ */
 export function materialById(id: string): Material | undefined {
   if (!id) return undefined;
   return byId.get(id);
+}
+
+/** Whether a material is still offered. False for an archived own-material. */
+export function isOfferable(material: Material): boolean {
+  return material.archived !== true;
 }
 
 export function ingredientById(id: string): IngredientMaterial | undefined {
@@ -138,13 +157,15 @@ export function packagingById(id: string): PackagingMaterial | undefined {
 }
 
 export function materialsOfClass(materialClass: MaterialClass): Material[] {
-  return current.materials.filter((material) => material.class === materialClass);
+  return current.materials.filter(
+    (material) => material.class === materialClass && isOfferable(material)
+  );
 }
 
 export function ingredientsWithRole(role: string): IngredientMaterial[] {
   return current.materials.filter(
     (material): material is IngredientMaterial =>
-    material.class === 'ingredient' && material.role === role
+    material.class === 'ingredient' && material.role === role && isOfferable(material)
   );
 }
 

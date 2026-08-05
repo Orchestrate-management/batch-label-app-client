@@ -18,6 +18,8 @@ const sendSetPasswordLink = vi.fn();
 const fetchConsentPreferences = vi.fn();
 const updateConsentPreference = vi.fn();
 const signOut = vi.fn();
+/** What the provider is holding about the last sign-out. Null unless a test says otherwise. */
+let signOutFailure: string | null = null;
 const changeEmail = vi.fn();
 
 let currentUser: unknown = {
@@ -60,7 +62,8 @@ async function renderTab() {
       session: {},
       loading: false,
       configured: true,
-      signOut
+      signOut,
+      signOutFailure
     })
   }));
   vi.doMock('../../lib/entitlement', () => ({ useEntitlement: () => entitlement }));
@@ -112,6 +115,7 @@ beforeEach(() => {
   mockResolvedValue({ marketingEmail: false, advertising: true });
   updateConsentPreference.mockReset().mockResolvedValue({ error: null });
   signOut.mockReset();
+  signOutFailure = null;
 });
 
 describe('password', () => {
@@ -393,6 +397,20 @@ describe('the rest of the account', () => {
     await user.click(screen.getByRole('button', { name: /^sign out$/i }));
 
     expect(signOut).toHaveBeenCalled();
+  });
+
+  it('says so when the sign-out did not take', async () => {
+    // Read off the provider rather than held here, because this row does not survive its own
+    // click: `signingOut` is folded into `loading`, so RequireAuth unmounts the whole tree for
+    // as long as the sign-out is in flight and any local state goes with it. The behaviour on
+    // the other side of that unmount is tested in lib/sign-out-refused.test.tsx; what this
+    // asserts is that the sentence reaches the screen the button is actually on — the only one
+    // a maker on a phone can reach, since the sidebar menu is desktop only.
+    signOutFailure = 'We could not sign you out, so you are still signed in here and on ' +
+    'batchlabel.xyz.';
+    await renderTab();
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/still signed in/i);
   });
 });
 

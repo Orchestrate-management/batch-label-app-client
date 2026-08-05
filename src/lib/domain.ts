@@ -1,3 +1,4 @@
+import { DOMAIN_SCHEMA } from './domain-schema';
 import { supabase } from './supabase';
 
 /**
@@ -22,11 +23,15 @@ import { supabase } from './supabase';
  * table called `products` meaning stock. Identity, consent, billing and the entitlements view
  * stay in `public` and are read through the plain client.
  *
- * PostgREST serves only the schemas listed in `[api] schemas` in supabase/config.toml. If
- * these reads start 404ing, check that list first: the table exists and the client is asking
- * the right question, but the API has not been told the schema is servable.
+ * PostgREST serves only the schemas the PROJECT exposes, and this comment used to name the
+ * wrong file. `[api] schemas` in supabase/config.toml is read by `supabase config push` and by
+ * local dev; it is NOT applied to a linked project by `supabase db push`, so on production the
+ * list is the "Exposed schemas" setting in the Supabase project and nothing in either repo
+ * writes it. Checking config.toml "first" would show a correct-looking line over a dead
+ * deployment. What the reads actually 406 with, what notices, what says so and how to verify
+ * it in one line is all in lib/domain-schema.ts and docs/SCHEMA_EXPOSURE.md.
  */
-export const DOMAIN_SCHEMA = 'batchlabel';
+export { DOMAIN_SCHEMA } from './domain-schema';
 
 /** The domain-scoped client, or null when Supabase is not configured at all. */
 export const domainClient = () => (supabase ? supabase.schema(DOMAIN_SCHEMA) : null);

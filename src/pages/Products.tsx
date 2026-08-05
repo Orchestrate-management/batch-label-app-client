@@ -10,9 +10,10 @@ import { SkuLimitNotice } from '../components/SkuLimitNotice';
 import { CATEGORIES } from '../lib/categories';
 import { useEntitlement } from '../lib/entitlement';
 import { createIsCertainToFail } from '../lib/membership';
-import { outstandingObligations } from '../lib/regimes';
-import { specSummary } from '../lib/derive';
+import { derive, specSummary } from '../lib/derive';
+import { useOptionalMaterials } from '../lib/materials-store';
 import { formatDate } from '../lib/model';
+import { queueFor } from '../lib/pipeline';
 import { useProducts } from '../lib/product-store';
 
 /**
@@ -31,6 +32,15 @@ export function Products() {
   const navigate = useNavigate();
   const { status, products, error, refresh } = useProducts();
   const entitlement = useEntitlement();
+  /**
+   * SUBSCRIBED TO FOR THE SAME REASON STUDIO IS, and it became load-bearing here the moment the
+   * Status column started reading the pipeline. `queueFor` and `derive` reach the materials
+   * register through the module-level index in lib/material-index.ts, which MaterialsProvider
+   * fills asynchronously from above the router; a component that consumes no context is not
+   * re-rendered when that read lands. Without this hook the pill would state its answer against
+   * a register that had not loaded and keep it for the rest of the session.
+   */
+  useOptionalMaterials();
   const [creating, setCreating] = useState(false);
 
   // See product-store.tsx. Published only for a suspended membership, which the entitlement
@@ -153,7 +163,28 @@ export function Products() {
                     </thead>
                     <tbody>
                       {inCategory.map((product) => {
-                        const outstanding = outstandingObligations(product).length;
+                        /**
+                         * THE SAME QUEUE STUDIO SHOWS, NOT A SECOND OPINION ABOUT IT.
+                         *
+                         * This read `outstandingObligations(product).length`, which is the
+                         * regime checklist and only the regime checklist: it never looked at
+                         * the pipeline stages, so a product with no base wax, no packaging and
+                         * no net quantity — three CLP Article 17 label elements, three rows in
+                         * Studio's queue in the same session — counted zero here and got a
+                         * green "Complete". Two screens, opposite answers, about a product that
+                         * cannot legally be labelled.
+                         *
+                         * `queueFor` is the union: the composition, classification and output
+                         * stages AND the outstanding obligations, which the outputs stage
+                         * already folds in. One function answers "what is left on this
+                         * product", so the two screens cannot disagree by construction.
+                         */
+                        const queue = queueFor(
+                          product,
+                          derive(product.spec, product, product.markets[0]),
+                          product.markets[0]
+                        );
+                        const outstanding = queue.issues.length;
                         // `out-of-date` only. This read `!a.current`, and `current` was true
                         // for every surface nobody had produced — so the count was structurally
                         // zero on a real account and would have counted unproduced and
@@ -209,10 +240,23 @@ export function Products() {
                                 formatDate(printed[printed.length - 1]) :
                                 <span className="text-ink-tertiary">No print recorded</span>}
                               </td>
+                              {/* THREE STATES, BECAUSE THERE ARE THREE. Work we found, work we
+                                  found none of, and a check that could not run — the last of
+                                  which used to be painted with the second. "Complete" is also
+                                  gone as a word: what an empty queue establishes is that
+                                  nothing Batchlabel checks is outstanding, which is not the
+                                  same claim as a finished product. */}
                               <td className="px-5 py-3.5">
-                                <Pill tone={outstanding ? 'warn' : 'good'}>
-                                  {outstanding ? `${outstanding} outstanding` : 'Complete'}
-                                </Pill>
+                                {outstanding ?
+                                <Pill tone="warn">{outstanding} outstanding</Pill> :
+                                queue.blocked.length ?
+                                <Pill tone="quiet">Not fully checked</Pill> :
+                                <Pill tone="good">Nothing outstanding</Pill>}
+                                {queue.blocked.length > 0 &&
+                                <p className="mt-1 max-w-[22ch] text-2xs leading-relaxed text-ink-tertiary">
+                                    {queue.blocked.join(', and ')}.
+                                  </p>
+                                }
                               </td>
                             </tr>
                           </React.Fragment>);

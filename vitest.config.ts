@@ -148,6 +148,21 @@ export default defineConfig({
         // does not error — it answers empty.
         'src/lib/evidence.ts',
         'src/lib/domain.ts',
+        // Third clause, and it is the widest instance of it in the repo: this is the only
+        // thing that can tell "PostgREST has stopped serving our schema" apart from "your
+        // account is having a quiet moment". Wrong here and every screen in the app goes on
+        // offering a Try again button against a fault no maker can affect, and the one person
+        // who can fix it is never told.
+        'src/lib/domain-schema.ts',
+        // The gate itself, added the day its sign-out was found to be able to fail silently.
+        // Third clause, and the sentence in question is the shortest one in the app: "you are
+        // signed out". `signOut()` dropped a rejection, so it could leave a maker signed in on
+        // whatever computer they were sitting at — a shared laptop, a library machine, a phone
+        // handed back — while the app showed them a splash screen and said nothing. The other
+        // half of this file decides whether anything renders at all without a session, which is
+        // the property the whole auth change exists for; both halves were carried by tests
+        // this list did not look at.
+        'src/lib/auth.tsx',
       ],
       thresholds: {
         lines: 70,

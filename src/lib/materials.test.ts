@@ -26,6 +26,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const db = vi.hoisted(() => {
   const state = {
     reads: {} as Record<string, {data: unknown;error: unknown;}>,
+    /** What each rpc was called with, and what it answers. */
+    rpcCalls: [] as Array<[string, Record<string, unknown>]>,
+    rpcResult: { data: [] as unknown, error: null as unknown },
     /** What each insert actually sent, by table. Some of these columns print on a label. */
     inserts: [] as Array<[string, Record<string, unknown>]>,
     insertResult: { data: null as unknown, error: null as unknown },
@@ -44,6 +47,10 @@ const db = vi.hoisted(() => {
     schema(name: string) {
       state.schemas.push(name);
       return supabase;
+    },
+    async rpc(name: string, args: Record<string, unknown>) {
+      state.rpcCalls.push([name, args]);
+      return state.rpcResult;
     },
     from(table: string) {
       return {
@@ -112,6 +119,7 @@ import {
   createMaterial,
   fetchMaterials,
   overrideReferenceMaterial,
+  productsUsingMaterial,
   removeChildRow,
   updateMaterial } from
 './materials';
@@ -127,6 +135,8 @@ beforeEach(() => {
   db.state.deleted = [];
   db.state.schemas = [];
   db.state.filters = [];
+  db.state.rpcCalls = [];
+  db.state.rpcResult = { data: [], error: null };
 });
 
 /** One account material, resolved, with one hazard and one allergen against it. */
@@ -1153,5 +1163,106 @@ describe('a child row missing a column the schema says it cannot be missing', ()
     expect(classifyMaterialError({ code: '23505', hint: 'account_missing' }).reason).toBe(
       'no_account'
     );
+  });
+});
+
+/**
+ * ARCHIVING MUST NOT DECLASSIFY A LIVE PRODUCT.
+ *
+ * The register tells a maker, at the moment they archive, "products already built on it keep
+ * working and keep naming it". That sentence was false: this read filtered `archived_at is
+ * null` and `resolved_materials` carries the same predicate, so the row left the register
+ * entirely — `ingredientById` missed, and a live candle's hazard statements went from [H317]
+ * to []. These are the tests that fail the moment the filter comes back.
+ */
+describe('an archived material is still what a live product is classified from', () => {
+  function seedArchived() {
+    seedOneOwnMaterial();
+    // The view does NOT return it — that is the point, and it is what the database does.
+    db.state.reads.resolved_materials = { data: [], error: null };
+    const rows = (db.state.reads.materials.data as Array<Record<string, unknown>>);
+    rows[0].archived_at = '2026-07-01T00:00:00.000Z';
+  }
+
+  it('is returned by the read, carrying its hazard rows', async () => {
+    seedArchived();
+    const result = await fetchMaterials('acct-1');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const material = result.materials.find((entry) => entry.id === 'mat-1');
+    expect(material, 'the archived material vanished from the register').toBeDefined();
+    expect(material?.archived).toBe(true);
+    expect((material as IngredientMaterial).hazards.map((h) => h.code)).toEqual(['H317']);
+  });
+
+  it('does not ask the database to exclude archived rows', async () => {
+    seedArchived();
+    await fetchMaterials('acct-1');
+    // `.is('archived_at', null)` on the materials read is the whole of the defect. The mock
+    // records every filter, and a re-added one would show up here.
+    const excluded = db.state.filters.some(
+      ([table, column]) => table === 'materials' && column === 'archived_at'
+    );
+    expect(excluded, 'the materials read filters archived rows out again').toBe(false);
+  });
+
+  it('is not marked archived when it is not', async () => {
+    seedOneOwnMaterial();
+    const result = await fetchMaterials('acct-1');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.materials.find((entry) => entry.id === 'mat-1')?.archived).toBe(false);
+  });
+
+  it('is not returned twice when the view also has it', async () => {
+    seedOneOwnMaterial();
+    const result = await fetchMaterials('acct-1');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.materials.filter((entry) => entry.id === 'mat-1')).toHaveLength(1);
+  });
+});
+
+/**
+ * WHO IS USING IT. Read before archiving, and a failed read is not an empty list — "no
+ * products use this material" said over a failed query is how a live label gets archived out
+ * from under somebody.
+ */
+describe('the products a material is used by', () => {
+  it('asks the one function that resolves all three composition shapes', async () => {
+    db.state.rpcResult = {
+      data: [
+      { product_id: 'prod-1', product_name: 'Black Fig 200ml', sku: 'BF-200', specification_name: 'Black Fig' }],
+
+      error: null
+    };
+    const result = await productsUsingMaterial('mat-1');
+    expect(db.state.rpcCalls[0][0]).toBe('products_using_material');
+    expect(db.state.rpcCalls[0][1]).toEqual({ p_material_ref: 'mat-1' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toEqual([
+    {
+      productId: 'prod-1',
+      productName: 'Black Fig 200ml',
+      sku: 'BF-200',
+      specificationName: 'Black Fig'
+    }]
+    );
+  });
+
+  it('reports a failure as a failure, never as nobody', async () => {
+    db.state.rpcResult = { data: null, error: { code: '42501', message: 'refused' } };
+    const result = await productsUsingMaterial('mat-1');
+    expect(result.ok).toBe(false);
+  });
+
+  it('returns an empty list only when the database returned one', async () => {
+    db.state.rpcResult = { data: [], error: null };
+    const result = await productsUsingMaterial('mat-1');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toEqual([]);
   });
 });
