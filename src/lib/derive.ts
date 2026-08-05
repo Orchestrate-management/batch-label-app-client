@@ -815,8 +815,38 @@ export type GeometryRule = {
   label: string;
   value: string;
   source: string;
+  /**
+   * The verdict, or NO VERDICT. Undefined is a rule that was not evaluated — the pack has no
+   * capacity, so CLP Annex I Table 1.3 has no band to check against — and it is deliberately
+   * distinct from `false`, which is a rule that ran and failed.
+   */
   ok?: boolean;
 };
+
+/** Passed every rule, failed one, or was never checked against any. */
+export type GeometryVerdict = 'pass' | 'fail' | 'unchecked';
+
+/**
+ * What the surface as a whole may claim, given the rules above it.
+ *
+ * THE ONE PLACE THIS QUESTION IS ANSWERED, and it exists because the designer answered it
+ * inline with `rules.every((rule) => rule.ok !== false)` — which reads a rule with NO VERDICT
+ * as a rule that passed, and painted the "This surface" pill green over it. That is the
+ * guaranteed state of every new product: `blankSpec` no longer seeds a packaging id, so the
+ * only CLP rule on the card is the one that says the minimum label size cannot be worked out.
+ * A green pill over "Cannot be worked out yet" tells a maker their label clears a check that
+ * was never performed.
+ *
+ * A FAILURE IS ESTABLISHED WHATEVER ELSE DID NOT RUN — a rule that ran and failed is a fact,
+ * and it outranks the rest. A PASS IS NOT: it requires every rule to have returned a verdict,
+ * because "all the checks I managed to do passed" is not what a green tick says to anybody.
+ */
+export function geometryVerdict(rules: GeometryRule[]): GeometryVerdict {
+  if (rules.some((rule) => rule.ok === false)) return 'fail';
+  if (rules.length === 0) return 'unchecked';
+  if (rules.some((rule) => rule.ok === undefined)) return 'unchecked';
+  return 'pass';
+}
 
 /** The size rules the active regimes place on an artefact. Each states its source. */
 export function geometryRules(product: Product, widthMm: number, heightMm: number): GeometryRule[] {

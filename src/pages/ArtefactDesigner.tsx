@@ -33,7 +33,8 @@ import {
   MIN_LINE_SPACING,
   clpMinimumDimensions,
   derive,
-  geometryRules } from
+  geometryRules,
+  geometryVerdict } from
 '../lib/derive';
 import { packagingById } from '../lib/material-index';
 import { useOptionalMaterials } from '../lib/materials-store';
@@ -214,6 +215,14 @@ function ArtefactDesignerView({ product }: {product: Product;}) {
   8;
 
   const rules = geometryRules(product, widthMm, heightMm);
+  /**
+   * PASS, FAIL OR NEVER CHECKED — and it is a function call rather than an expression here
+   * because the expression was wrong. The pill below read
+   * `rules.every((rule) => rule.ok !== false)`, and a rule with no verdict is not `false`, so
+   * a card whose only rule says "Minimum label size — Cannot be worked out yet" painted the
+   * surface green. See `geometryVerdict`.
+   */
+  const verdict = geometryVerdict(rules);
   const brandingShown = hidden.branding !== true && blocks.some((b) => b.key === 'branding');
   const area = widthMm * heightMm;
   // An optional block crowds when the surface is tight and the type is already
@@ -505,13 +514,30 @@ function ArtefactDesignerView({ product }: {product: Product;}) {
                     <p className="mt-1 text-2xs text-ink-tertiary">{rule.source}</p>
                   </li>
                 )}
-                <li className="flex items-start justify-between gap-3">
-                  <span className="text-ink-secondary">This surface</span>
-                  <span className="tabular text-right">
-                    <Pill tone={rules.every((r) => r.ok !== false) ? 'good' : 'warn'}>
-                      {widthMm} × {heightMm} mm
-                    </Pill>
-                  </span>
+                <li>
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="text-ink-secondary">This surface</span>
+                    <span className="tabular text-right">
+                      <Pill
+                        tone={
+                        verdict === 'pass' ? 'good' : verdict === 'fail' ? 'warn' : 'quiet'
+                        }>
+
+                        {widthMm} × {heightMm} mm
+                      </Pill>
+                    </span>
+                  </div>
+                  {/* The dimensions are a fact either way; the COLOUR is the claim, and it may
+                      not be green over a rule that was never evaluated. A new product is
+                      exactly that state — `blankSpec` stopped seeding a packaging id, so there
+                      is no capacity, so CLP Annex I Table 1.3 has no band to check against. */}
+                  {verdict !== 'pass' &&
+                  <p className="mt-1 text-2xs leading-relaxed text-ink-tertiary">
+                      {verdict === 'fail' ?
+                    'This surface fails a rule above.' :
+                    'Nothing above has returned a verdict, so this surface has not been checked against anything.'}
+                    </p>
+                  }
                 </li>
               </ul>
             </Card>
