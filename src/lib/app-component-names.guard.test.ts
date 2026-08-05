@@ -60,6 +60,19 @@ function scanForComponentNames(): Set<string> {
       }
       for (const m of text.matchAll(/(?:^|\b)const\s+([A-Z][A-Za-z0-9_]*)\s*[:=]/g)) found.add(m[1]);
       for (const m of text.matchAll(/<([A-Z][A-Za-z0-9_]*)[\s/>]/g)) found.add(m[1]);
+      // NAMED IMPORTS COUNT TOO. A component can be referenced as a value rather
+      // than written as a tag — `{ icon: SettingsIcon }` on a nav item, rendered
+      // later as `<Icon />` — and React still infers the trail entry from the
+      // function's own name. The three patterns above see declarations and tags
+      // and miss that entirely, which showed up the moment an icon moved from a
+      // menu into a data table.
+      //
+      // It does not widen what the list may contain: an imported name is a
+      // literal somebody typed into our source, which is the whole property this
+      // guard is defending. A batch code never appears in an import statement.
+      for (const block of text.matchAll(/import\s*\{([^}]*)\}\s*from/g)) {
+        for (const m of block[1].matchAll(/\b([A-Z][A-Za-z0-9_]*)\b/g)) found.add(m[1]);
+      }
     }
     for (const m of text.matchAll(/displayName\s*[:=]\s*['"]([A-Za-z0-9_$]+)['"]/g)) found.add(m[1]);
   }
