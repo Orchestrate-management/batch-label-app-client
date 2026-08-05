@@ -208,8 +208,6 @@ export type MaterialRow = {
   supplier_code: string | null;
   role: string | null;
   categories: string[] | null;
-  inci: string | null;
-  inci_function: string | null;
   cas: string | null;
   format: string | null;
   capacity_ml: number | string | null;
@@ -283,8 +281,17 @@ export type ReferenceVersionRow = {
 const RESOLVED_COLUMNS =
 'account_id, source, material_id, reference_material_id, reference_version_id, reference_version, provenance, slug, material_class, name, supplier, supplier_code, role, categories, overrides_reference';
 
+/**
+ * Deliberately not every column on the table. `batchlabel.materials` still has `inci` and
+ * `inci_function` — the cosmetic ingredient nomenclature — and this app neither selects nor
+ * writes them. They went with the cosmetics regime; the columns stayed because a nullable
+ * column nobody writes costs nothing, and dropping one costs a migration against live data.
+ *
+ * So they are UNWRITTEN, not deprecated-but-maintained. Every row this build creates leaves
+ * both null. A future schema pass can drop them without reading anything back first.
+ */
 const MATERIAL_COLUMNS =
-'id, account_id, slug, material_class, name, supplier, supplier_code, role, categories, inci, inci_function, cas, format, capacity_ml, label_area_width_mm, label_area_height_mm, food_contact, child_resistant, overrides_reference_id, notes, archived_at, created_at, updated_at';
+'id, account_id, slug, material_class, name, supplier, supplier_code, role, categories, cas, format, capacity_ml, label_area_width_mm, label_area_height_mm, food_contact, child_resistant, overrides_reference_id, notes, archived_at, created_at, updated_at';
 
 const HAZARD_COLUMNS =
 'id, material_id, code, statement, hazard_class, gcl, scl, pictogram, signal, derivation';
@@ -753,8 +760,6 @@ export type NewMaterialInput = {
   supplierCode?: string;
   slug?: string;
   categories: CategoryId[];
-  inci?: string;
-  inciFunction?: string;
   cas?: string;
   format?: string;
   capacityMl?: number;
@@ -783,8 +788,6 @@ function materialColumns(input: NewMaterialInput) {
     supplier_code: textOrNull(input.supplierCode),
     slug: textOrNull(input.slug),
     categories: input.categories,
-    inci: packaging ? null : textOrNull(input.inci),
-    inci_function: packaging ? null : textOrNull(input.inciFunction),
     cas: packaging ? null : textOrNull(input.cas),
     // materials_packaging_check refuses geometry on an ingredient outright. Nulling it here
     // rather than sending it and catching the 23514 keeps the error path for real mistakes.
