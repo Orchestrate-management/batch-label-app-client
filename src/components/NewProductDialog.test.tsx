@@ -3,7 +3,6 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { NewProductDialog } from './NewProductDialog';
-import { WorkspaceProvider } from '../lib/workspace';
 import { mapEntitlement, type EntitlementRow } from '../lib/membership';
 import type { EntitlementValue } from '../lib/entitlement';
 import type { WriteFailure } from '../lib/products';
@@ -92,9 +91,7 @@ vi.mock('../lib/entitlement', () => ({
 function draw() {
   return render(
     <MemoryRouter>
-      <WorkspaceProvider>
-        <NewProductDialog onClose={() => {}} />
-      </WorkspaceProvider>
+      <NewProductDialog onClose={() => {}} />
     </MemoryRouter>
   );
 }

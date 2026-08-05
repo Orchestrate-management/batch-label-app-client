@@ -5,7 +5,6 @@ import { Studio } from './Studio';
 import { Products } from './Products';
 import { Specification } from './Specification';
 import { ArtefactDesigner } from './ArtefactDesigner';
-import { WorkspaceProvider } from '../lib/workspace';
 import { mapEntitlement, type Entitlement, type EntitlementRow } from '../lib/membership';
 import type { EntitlementValue } from '../lib/entitlement';
 import type { ProductsStatus } from '../lib/product-store';
@@ -133,9 +132,7 @@ const SCREENS: Array<{name: string;draw: () => void;}> = [
 function drawAt(path: string, route: React.ReactNode) {
   render(
     <MemoryRouter initialEntries={[path]}>
-      <WorkspaceProvider>
-        <Routes>{route}</Routes>
-      </WorkspaceProvider>
+      <Routes>{route}</Routes>
     </MemoryRouter>
   );
 }

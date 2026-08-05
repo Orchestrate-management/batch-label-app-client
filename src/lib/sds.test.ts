@@ -23,7 +23,7 @@ import { artefactsFor, blankSpec } from './products';
 
 function freshMixture(): Product {
   const category = categoryById('home-fragrance');
-  const spec = blankSpec(category, 'Container candle', 'ing-bfc');
+  const spec = blankSpec('Container candle', 'ing-bfc');
   return {
     id: 'prod-1',
     specificationId: 'spec-1',
@@ -33,7 +33,7 @@ function freshMixture(): Product {
     markets: ['GB'],
     regimes: category.regimes,
     spec: { ...spec, kind: 'mixture', load: 8 } as Product['spec'],
-    artefacts: artefactsFor(category, 'mixture'),
+    artefacts: artefactsFor(category),
     identifiers: {},
     evidence: { obligations: {}, sdsSections: {} }
   };

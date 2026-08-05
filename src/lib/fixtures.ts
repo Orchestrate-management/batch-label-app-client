@@ -1,5 +1,4 @@
 import {
-  ConformityDocument,
   DocumentRevision,
   IngredientMaterial,
   InboxDocument,
@@ -17,9 +16,9 @@ import {
  * This is the six-product workspace of Hearth and Hollow Ltd, a business that does not
  * exist. It used to live in src/lib/products.ts, where a module-level `let runtime: Product[]
  * = PRODUCTS` seeded it into the running app. Every signed-in customer — every one, on their
- * very first visit — opened Batchlabel and found four candles, a face oil and a wax warmer
- * already in it, along with ten production runs they had never made and two "your label is
- * out of date" warnings about a fragrance load somebody else had changed in July.
+ * very first visit — opened Batchlabel and found four candles already in it, along with ten
+ * production runs they had never made and two "your label is out of date" warnings about a
+ * fragrance load somebody else had changed in July.
  *
  * The founder's sentence is the whole reason this file exists as a separate module: "when a
  * user signs in for the first time, they are in a virgin account with no products". A new
@@ -33,11 +32,11 @@ import {
  * here is customer data, and it belongs in Supabase.
  *
  * WHY IT IS KEPT AT ALL. These products are the only non-trivial specifications in the
- * repository — a phased cosmetic formula, a bill of materials with an undeclared component,
- * a mixture that crosses a supplier specific concentration limit — and the derivation,
- * regime and safety data sheet tests need something with real shape to derive from. Deleting
- * them would cost real coverage; keeping them anywhere reachable would cost a customer's
- * trust on their first screen.
+ * repository — a mixture that crosses a supplier specific concentration limit, a diffuser at a
+ * 22 percent load, a room spray on an alcohol base — and the derivation, regime and safety data
+ * sheet tests need something with real shape to derive from. Deleting them would cost real
+ * coverage; keeping them anywhere reachable would cost a customer's trust on their first
+ * screen.
  * =============================================================================
  */
 
@@ -289,181 +288,15 @@ const BASE_PRODUCTS: Product[] = [
     'gpsr-traceability': true,
     'gpsr-online-disclosure': true
   })
-},
-{
-  id: 'p-rosehip-face-oil',
-  name: 'Rosehip and Meadowfoam Face Oil',
-  sku: 'CO-RMF-030',
-  categoryId: 'cosmetics',
-  markets: ['GB', 'EU'],
-  regimes: ['cpr', 'gpsr'],
-  identifiers: {},
-  spec: {
-    kind: 'phased',
-    productType: 'Face oil',
-    application: 'Leave-on',
-    paoMonths: 12,
-    netQuantity: 30,
-    netUnit: 'ml',
-    packagingId: 'pkg-dropper-30',
-    phases: [
-    {
-      name: 'Oil phase',
-      items: [
-      { materialId: 'ing-rosehip', pct: 45 },
-      { materialId: 'ing-meadowfoam', pct: 34.6 },
-      { materialId: 'ing-jojoba', pct: 18.4 }]
-
-    },
-    {
-      name: 'Cool down',
-      items: [
-      { materialId: 'ing-tocopherol', pct: 1.2 },
-      { materialId: 'ing-black-fig', pct: 0.8 }]
-
-    }]
-
-  },
-  artefacts: [
-  {
-    type: 'unit-label',
-    label: 'Unit label',
-    widthMm: 44,
-    heightMm: 62,
-    version: 'v2',
-    printedOn: '2026-07-06',
-    currency: 'current',
-    isPlaceholder: false
-  },
-  {
-    type: 'carton',
-    label: 'Carton',
-    widthMm: 88,
-    heightMm: 58,
-    version: 'v1',
-    printedOn: '2026-06-14',
-    currency: 'out-of-date',
-    isPlaceholder: false,
-    driftNote:
-    'Jojoba raised from 17.9 percent to 18.4 percent on 12 July, which changed the ingredient order. Carton v1 was printed before that change.'
-  },
-  {
-    type: 'listing',
-    label: 'Online listing',
-    widthMm: 96,
-    heightMm: 60,
-    version: 'v2',
-    printedOn: '2026-07-06',
-    currency: 'current',
-    isPlaceholder: false
-  }],
-
-  evidence: evidenceFrom({
-    'cpr-pif': true,
-    'cpr-safety-assessment': true,
-    'cpr-cpnp': false,
-    'cpr-responsible-person': true,
-    'cpr-pao': true,
-    'cpr-claims': false,
-    'cpr-gmp': true,
-    'gpsr-traceability': true,
-    'gpsr-eu-responsible-person': true,
-    'gpsr-online-disclosure': true
-  })
-},
-{
-  id: 'p-warmer',
-  name: 'Aurelia Warmer WW-100',
-  sku: 'EL-WW-100',
-  categoryId: 'electronics',
-  markets: ['GB', 'EU'],
-  regimes: ['ce', 'rohs', 'weee', 'gpsr'],
-  identifiers: {
-    model: 'WW-100',
-    modelYear: '2026',
-    weeeRegistration: 'WEE/AB1234CD'
-  },
-  spec: {
-    kind: 'bom',
-    productType: 'Wax warmer',
-    model: 'WW-100',
-    ratings: { voltage: '5 V DC', current: '2 A', power: '10 W' },
-    netQuantity: 420,
-    netUnit: 'g',
-    packagingId: 'pkg-device-box',
-    items: [
-    { materialId: 'cmp-power-board', quantity: 1, position: 'Base assembly' },
-    { materialId: 'cmp-heater', quantity: 1, position: 'Heat plate' },
-    { materialId: 'cmp-cable', quantity: 1, position: 'Supply lead' },
-    { materialId: 'cmp-housing', quantity: 1, position: 'Enclosure' },
-    { materialId: 'cmp-led', quantity: 1, position: 'Indicator' }]
-
-  },
-  artefacts: [
-  {
-    type: 'rating-plate',
-    label: 'Rating plate',
-    widthMm: 40,
-    heightMm: 25,
-    version: 'v1',
-    printedOn: '2026-06-08',
-    currency: 'current',
-    isPlaceholder: false
-  },
-  {
-    type: 'carton',
-    label: 'Carton',
-    widthMm: 100,
-    heightMm: 70,
-    version: 'v1',
-    printedOn: '2026-06-08',
-    currency: 'current',
-    isPlaceholder: false
-  },
-  {
-    type: 'leaflet',
-    label: 'Leaflet',
-    widthMm: 105,
-    heightMm: 148,
-    version: 'v1',
-    printedOn: '2026-06-08',
-    currency: 'current',
-    isPlaceholder: false
-  },
-  {
-    type: 'listing',
-    label: 'Online listing',
-    widthMm: 96,
-    heightMm: 60,
-    version: 'v1',
-    printedOn: '2026-06-08',
-    currency: 'current',
-    isPlaceholder: false
-  }],
-
-  evidence: evidenceFrom({
-    'ce-doc-signed': false,
-    'ce-standards': true,
-    'ce-test-reports': false,
-    'rohs-component-declarations': false,
-    'rohs-en63000': true,
-    'weee-registration': true,
-    'weee-marking': true,
-    'gpsr-traceability': true,
-    'gpsr-eu-responsible-person': true,
-    'gpsr-online-disclosure': false
-  })
 }];
 
 
 
 /**
- * The safety data sheet is the second output of the same derivation, so every
- * product that is a mixture carries one alongside its label surfaces. A device
- * is an article rather than a mixture and has no sheet to issue.
+ * The safety data sheet is the second output of the same derivation, so every product carries
+ * one alongside its label surfaces.
  */
 function withSafetyDataSheet(product: Product): Product {
-  if (product.spec.kind === 'bom') return product;
   if (product.artefacts.some((artefact) => artefact.type === 'sds')) return product;
   const staleLabel = product.artefacts.find((artefact) => artefact.currency === 'out-of-date');
   return {
@@ -559,68 +392,6 @@ export const TEAM: TeamMember[] = [
 { name: 'Priya Shah', email: 'priya@kelder-compliance.eu', role: 'Read only', lastActive: '12 July' }];
 
 
-export const CONFORMITY_DOCUMENTS: ConformityDocument[] = [
-{
-  id: 'doc-1',
-  title: 'Declaration of conformity, WW-100',
-  reference: 'HH-DOC-WW100-01',
-  issued: '2026-06-08',
-  owner: 'Draft, unsigned',
-  productId: 'p-warmer'
-},
-{
-  id: 'doc-2',
-  title: 'EN IEC 63000 technical compilation, WW-100',
-  reference: 'HH-TF-WW100-RoHS',
-  issued: '2026-06-08',
-  owner: 'Nadia Osei',
-  productId: 'p-warmer'
-},
-{
-  id: 'doc-3',
-  title: 'Cosmetic product safety report, Rosehip and Meadowfoam Face Oil',
-  reference: 'CPSR-RMF-2026',
-  issued: '2026-05-30',
-  owner: 'Dr Elin Marsh, chartered chemist',
-  productId: 'p-rosehip-face-oil'
-},
-{
-  id: 'doc-4',
-  title: 'Product information file, Rosehip and Meadowfoam Face Oil',
-  reference: 'PIF-RMF-2026',
-  issued: '2026-06-02',
-  owner: 'Kelder Compliance BV',
-  productId: 'p-rosehip-face-oil'
-},
-{
-  id: 'doc-5',
-  title: 'WEEE producer registration',
-  reference: 'WEE/AB1234CD',
-  issued: '2026-01-05',
-  expires: '2027-01-04',
-  owner: 'Hearth and Hollow Ltd'
-}];
-
-
-/* ------------------------------------------------------------------ documents
- *
- * A supplier inbox and a document revision history, both invented.
- *
- * These lived in catalog.ts, which ships, and the guard below did not cover them because it
- * only watches imports of THIS file. That is how they survived a clean-account pass:
- * Materials opened on "3 documents received, none read yet", naming real suppliers and real
- * dates, for an account that had received nothing.
- *
- * The worse half was pipeline.ts, which matched an inbox entry against the maker's OWN
- * specification and then told them, under their own product name, that a newer sheet was
- * waiting and their allergen table had changed. An invented statement that a live
- * classification may be wrong is the most damaging sentence this product can produce, and it
- * was coming from a constant.
- *
- * Kept because the pipeline and materials tests need documents with real shape. Reachable
- * only from a test file, which the guard enforces.
- */
-
 /**
  * Documents dropped in but not yet reconciled against a material. This is the
  * front door of the product: nothing can be classified until a sheet is read.
@@ -644,16 +415,6 @@ export const INBOX: InboxDocument[] = [
   supplier: 'Unidentified',
   matchConfidence: 'none',
   note: 'A photograph of a printed sheet. The supplier name and product identifier could not be read.'
-},
-{
-  id: 'inb-3',
-  fileName: 'Kestrel-silicone-cable-RoHS.pdf',
-  receivedOn: '2026-07-24',
-  appearsToBe: 'Declaration of conformity',
-  supplier: 'Kestrel Components',
-  matchedMaterialId: 'cmp-cable',
-  matchConfidence: 'low',
-  note: 'Part number on the document does not match the one on file. Confirm before it is accepted.'
 }];
 
 /**
@@ -761,9 +522,7 @@ export const FIXTURE_INGREDIENTS: IngredientMaterial[] =
   name: 'Black Fig and Cassis',
   supplier: 'Aurelia Fragrances',
   supplierCode: 'FO-4471',
-  categories: ['home-fragrance', 'cosmetics'],
-  inci: 'Parfum',
-  inciFunction: 'Perfuming',
+  categories: ['home-fragrance'],
   document: {
     kind: 'Safety data sheet',
     reference: 'aurelia-fo-4471-sds',
@@ -828,8 +587,6 @@ export const FIXTURE_INGREDIENTS: IngredientMaterial[] =
   supplier: 'Halden Aromatics',
   supplierCode: 'FO-2210',
   categories: ['home-fragrance'],
-  inci: 'Parfum',
-  inciFunction: 'Perfuming',
   document: {
     kind: 'Safety data sheet',
     reference: 'halden-fo-2210-sds',
@@ -882,8 +639,6 @@ export const FIXTURE_INGREDIENTS: IngredientMaterial[] =
   supplier: 'Coastwise Perfumery',
   supplierCode: 'FO-8802',
   categories: ['home-fragrance'],
-  inci: 'Parfum',
-  inciFunction: 'Perfuming',
   document: {
     kind: 'Safety data sheet',
     reference: 'coastwise-fo-8802-sds',
@@ -937,8 +692,6 @@ export const FIXTURE_INGREDIENTS: IngredientMaterial[] =
   supplier: 'Nightjar Fragrance Co.',
   supplierCode: 'FO-1330',
   categories: ['home-fragrance'],
-  inci: 'Parfum',
-  inciFunction: 'Perfuming',
   document: {
     kind: 'Safety data sheet',
     reference: 'nightjar-fo-1330-sds',
@@ -1111,102 +864,6 @@ export const FIXTURE_INGREDIENTS: IngredientMaterial[] =
   allergens: [],
   ifra: [],
   notes: 'Not classified below 1 percent in wax.'
-},
-{
-  id: 'ing-rosehip',
-  source: 'reference',
-  provenance: 'illustrative-example',
-  editable: false,
-  class: 'ingredient',
-  role: 'Plant oil',
-  name: 'Rosehip seed oil, cold pressed',
-  supplier: 'Verdant Botanicals',
-  supplierCode: 'BOT-RH01',
-  categories: ['cosmetics'],
-  inci: 'Rosa Canina Fruit Oil',
-  inciFunction: 'Skin conditioning',
-  cas: '84696-47-9',
-  document: {
-    kind: 'INCI and allergen certificate',
-    reference: 'verdant-rh01-inci',
-    version: '2.0',
-    date: '2026-02-04'
-  },
-  hazards: [],
-  allergens: [],
-  ifra: []
-},
-{
-  id: 'ing-meadowfoam',
-  source: 'reference',
-  provenance: 'illustrative-example',
-  editable: false,
-  class: 'ingredient',
-  role: 'Plant oil',
-  name: 'Meadowfoam seed oil',
-  supplier: 'Verdant Botanicals',
-  supplierCode: 'BOT-MF02',
-  categories: ['cosmetics'],
-  inci: 'Limnanthes Alba Seed Oil',
-  inciFunction: 'Skin conditioning',
-  cas: '153065-40-8',
-  document: {
-    kind: 'INCI and allergen certificate',
-    reference: 'verdant-mf02-inci',
-    version: '1.3',
-    date: '2025-12-12'
-  },
-  hazards: [],
-  allergens: [],
-  ifra: []
-},
-{
-  id: 'ing-jojoba',
-  source: 'reference',
-  provenance: 'illustrative-example',
-  editable: false,
-  class: 'ingredient',
-  role: 'Plant oil',
-  name: 'Jojoba oil, golden',
-  supplier: 'Verdant Botanicals',
-  supplierCode: 'BOT-JJ04',
-  categories: ['cosmetics'],
-  inci: 'Simmondsia Chinensis Seed Oil',
-  inciFunction: 'Skin conditioning',
-  cas: '90045-98-0',
-  document: {
-    kind: 'INCI and allergen certificate',
-    reference: 'verdant-jj04-inci',
-    version: '1.1',
-    date: '2025-07-08'
-  },
-  hazards: [],
-  allergens: [],
-  ifra: []
-},
-{
-  id: 'ing-tocopherol',
-  source: 'reference',
-  provenance: 'illustrative-example',
-  editable: false,
-  class: 'ingredient',
-  role: 'Antioxidant',
-  name: 'Natural vitamin E, mixed tocopherols',
-  supplier: 'Mercia Solvents',
-  supplierCode: 'TOC-70',
-  categories: ['cosmetics'],
-  inci: 'Tocopherol',
-  inciFunction: 'Antioxidant',
-  cas: '1406-18-4',
-  document: {
-    kind: 'INCI and allergen certificate',
-    reference: 'mercia-toc70-inci',
-    version: '3.1',
-    date: '2026-01-27'
-  },
-  hazards: [],
-  allergens: [],
-  ifra: []
 }];
 
 export const FIXTURE_PACKAGING: PackagingMaterial[] =
@@ -1297,72 +954,6 @@ export const FIXTURE_PACKAGING: PackagingMaterial[] =
     reference: 'corbel-cs6-drawing',
     version: '1',
     date: '2024-11-21'
-  }
-},
-{
-  id: 'pkg-dropper-30',
-  source: 'reference',
-  provenance: 'illustrative-example',
-  editable: false,
-  class: 'packaging',
-  name: 'Amber dropper bottle, 30 ml',
-  supplier: 'Corbel Packaging',
-  supplierCode: 'DR-30A',
-  categories: ['cosmetics'],
-  format: 'Bottle with pipette',
-  capacityMl: 30,
-  labelAreaMm: { width: 44, height: 62 },
-  foodContact: false,
-  childResistant: false,
-  document: {
-    kind: 'Technical drawing',
-    reference: 'corbel-dr30a-drawing',
-    version: '2',
-    date: '2026-04-02'
-  }
-},
-{
-  id: 'pkg-carton-30',
-  source: 'reference',
-  provenance: 'illustrative-example',
-  editable: false,
-  class: 'packaging',
-  name: 'Folding carton, 35 × 35 × 95 mm',
-  supplier: 'Marsh Print',
-  supplierCode: 'FC-3595',
-  categories: ['cosmetics', 'electronics'],
-  format: 'Folding carton',
-  capacityMl: 116,
-  labelAreaMm: { width: 90, height: 60 },
-  foodContact: false,
-  childResistant: false,
-  document: {
-    kind: 'Technical drawing',
-    reference: 'marsh-fc3595-drawing',
-    version: '1',
-    date: '2026-03-30'
-  }
-},
-{
-  id: 'pkg-device-box',
-  source: 'reference',
-  provenance: 'illustrative-example',
-  editable: false,
-  class: 'packaging',
-  name: 'Device carton, 120 × 90 × 70 mm',
-  supplier: 'Marsh Print',
-  supplierCode: 'DC-1209',
-  categories: ['electronics'],
-  format: 'Corrugated carton with insert',
-  capacityMl: 756,
-  labelAreaMm: { width: 110, height: 80 },
-  foodContact: false,
-  childResistant: false,
-  document: {
-    kind: 'Technical drawing',
-    reference: 'marsh-dc1209-drawing',
-    version: '2',
-    date: '2026-05-11'
   }
 }];
 

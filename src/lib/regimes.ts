@@ -73,8 +73,8 @@ export type Obligation = {
   /**
    * Whether a maker can discharge this by recording evidence in the log.
    *
-   * False for the ones that are derived from the composition (`clp-classification`,
-   * `cpr-pao`) — those have an answer without being told — and for everything NOT_TRACKED.
+   * False for the ones that are derived from the composition (`clp-classification`) — those
+   * have an answer without being told — and for everything NOT_TRACKED.
    * A screen offers the "Record this" control exactly when this is true, which is what stops
    * a Resolve link pointing at a screen with nothing on it that can help.
    */
@@ -104,17 +104,17 @@ export const REGIMES: Regime[] = [
   summary:
   'Classifies a mixture from the concentration of its hazardous components and fixes the label elements that follow.',
   blocks: [
-  { key: 'identifier', label: 'Product identifier', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'carton'] },
-  { key: 'supplier', label: 'Supplier name and address', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'carton'] },
-  { key: 'telephone', label: 'Telephone number', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'carton'], note: 'An email address does not satisfy this' },
-  { key: 'quantity', label: 'Nominal quantity', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'carton'] },
-  { key: 'pictograms', label: 'Hazard pictograms', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'carton', 'listing'] },
-  { key: 'signalWord', label: 'Signal word', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'carton', 'listing'] },
-  { key: 'hazard', label: 'Hazard statements', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'carton', 'listing'] },
-  { key: 'precautionary', label: 'Precautionary statements', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'carton', 'listing'] },
-  { key: 'allergen', label: 'Allergen line, EUH208', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'carton'] },
-  { key: 'ufi', label: 'UFI', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'carton'], note: 'Batchlabel does not generate one. Get it from the ECHA UFI generator' },
-  { key: 'batch', label: 'Batch number', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'carton'] }],
+  { key: 'identifier', label: 'Product identifier', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label'] },
+  { key: 'supplier', label: 'Supplier name and address', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label'] },
+  { key: 'telephone', label: 'Telephone number', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label'], note: 'An email address does not satisfy this' },
+  { key: 'quantity', label: 'Nominal quantity', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label'] },
+  { key: 'pictograms', label: 'Hazard pictograms', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'listing'] },
+  { key: 'signalWord', label: 'Signal word', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'listing'] },
+  { key: 'hazard', label: 'Hazard statements', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'listing'] },
+  { key: 'precautionary', label: 'Precautionary statements', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label', 'listing'] },
+  { key: 'allergen', label: 'Allergen line, EUH208', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label'] },
+  { key: 'ufi', label: 'UFI', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label'], note: 'Batchlabel does not generate one. Get it from the ECHA UFI generator' },
+  { key: 'batch', label: 'Batch number', regimeId: 'clp', mandatory: true, artefactTypes: ['unit-label'] }],
 
   obligations: [
   {
@@ -200,7 +200,7 @@ export const REGIMES: Regime[] = [
     label: 'Candle safety symbols and text',
     regimeId: 'en15494',
     mandatory: true,
-    artefactTypes: ['unit-label', 'carton']
+    artefactTypes: ['unit-label']
   }],
 
   obligations: [
@@ -213,280 +213,6 @@ export const REGIMES: Regime[] = [
     untrackedText:
     'Batchlabel renders the candle safety block on every label it produces, but it does not store what you actually printed, so it cannot confirm the wording on your product. Check the printed label carries it.',
     to: '/products/:id/artefacts/unit-label'
-  }]
-
-},
-{
-  id: 'cpr',
-  name: 'Cosmetic products regulation',
-  short: 'Cosmetics',
-  reference: 'Regulation (EC) No 1223/2009, as retained in GB law',
-  summary:
-  'Governs the ingredient list, the declarable allergens, durability and the product information file.',
-  blocks: [
-  { key: 'identifier', label: 'Product identifier and function', regimeId: 'cpr', mandatory: true, artefactTypes: ['unit-label', 'carton'] },
-  { key: 'nominalContent', label: 'Nominal content', regimeId: 'cpr', mandatory: true, artefactTypes: ['unit-label', 'carton'] },
-  { key: 'inci', label: 'Ingredient list, INCI', regimeId: 'cpr', mandatory: true, artefactTypes: ['unit-label', 'carton'] },
-  { key: 'pao', label: 'Period after opening', regimeId: 'cpr', mandatory: true, artefactTypes: ['unit-label', 'carton'] },
-  { key: 'responsiblePerson', label: 'Responsible person address', regimeId: 'cpr', mandatory: true, artefactTypes: ['unit-label', 'carton'] },
-  { key: 'cosmeticWarnings', label: 'Precautions for use', regimeId: 'cpr', mandatory: true, artefactTypes: ['unit-label', 'carton'] },
-  { key: 'batch', label: 'Batch number', regimeId: 'cpr', mandatory: true, artefactTypes: ['unit-label', 'carton'] }],
-
-  obligations: [
-  {
-    id: 'cpr-pif',
-    regimeId: 'cpr',
-    label: 'Product information file assembled',
-    doneText: 'You recorded assembling the product information file.',
-    missingText:
-    'Batchlabel has no record that you have assembled a product information file. It does not hold the file — that lives at your responsible person address for ten years — so record here when it is done and what it references.',
-    recordable: true,
-    to: '/products/:id'
-  },
-  {
-    id: 'cpr-safety-assessment',
-    regimeId: 'cpr',
-    label: 'Safety assessment signed',
-    doneText: 'You recorded a signed cosmetic product safety report.',
-    missingText:
-    'Batchlabel has no record of a signed cosmetic product safety report. It cannot write one and does not hold yours — record the assessor and the date once it is signed.',
-    recordable: true,
-    to: '/products/:id'
-  },
-  {
-    id: 'cpr-cpnp',
-    regimeId: 'cpr',
-    label: 'CPNP notification submitted',
-    doneText: 'You recorded notifying through the Cosmetic Products Notification Portal.',
-    missingText:
-    'Batchlabel has no record that you have notified through the CPNP. It does not submit for you and never sees the portal — notify before the product is placed on the EU market, then record the reference here.',
-    recordable: true,
-    to: '/products/:id',
-    market: 'EU'
-  },
-  {
-    id: 'cpr-responsible-person',
-    regimeId: 'cpr',
-    label: 'Responsible person named',
-    doneText: 'You recorded the responsible person for this product.',
-    missingText:
-    'Batchlabel has no record of the responsible person for this product. Record who it is and where they are established, and keep the same name on the label and in the product information file.',
-    recordable: true,
-    to: '/products/:id'
-  },
-  {
-    /**
-     * DERIVED, AND IT WAS THE CLEAREST SELF-CONTRADICTION ON THE SCREEN.
-     *
-     * `missingText` used to read "Neither a period after opening nor a date of minimum
-     * durability is shown" while `derivePhased` unconditionally emitted a Period after opening
-     * group and the label preview beside it rendered "12M" at actual size — from
-     * `spec.paoMonths`, which `blankSpec` set to 12 and nothing had ever measured. One screen,
-     * two answers, both about a legal marking on a cosmetic.
-     *
-     * Both halves are fixed and they now read the same field: blankSpec seeds 0, `derive`
-     * renders 0 as unset rather than as a figure, and this reads `paoMonths > 0`. There is no
-     * evidence entry that can satisfy it, because the label either carries the figure or it
-     * does not and that is a property of the composition.
-     */
-    id: 'cpr-pao',
-    regimeId: 'cpr',
-    label: 'Period after opening or minimum durability shown',
-    doneText: 'A period after opening is set on this composition and prints on the label.',
-    missingText:
-    'No period after opening is set on this composition, so the label has nothing to print. Set it on the composition — nothing here has measured it, so it is yours to set and to justify from your stability data.',
-    to: '/products/:id'
-  },
-  {
-    id: 'cpr-claims',
-    regimeId: 'cpr',
-    label: 'Claims substantiated',
-    doneText: 'You recorded holding evidence for the claims on this product.',
-    missingText:
-    'Batchlabel has no record of evidence for the claims on this packaging. It never sees your packaging or your claims — record what you hold and where it is kept.',
-    recordable: true,
-    to: '/products/:id'
-  },
-  {
-    id: 'cpr-gmp',
-    regimeId: 'cpr',
-    label: 'Good manufacturing practice reference',
-    doneText: 'You recorded a good manufacturing practice reference.',
-    missingText:
-    'Batchlabel has no record of a good manufacturing practice reference for this product. Record the standard you follow — ISO 22716 for most makers — and where your procedures are held.',
-    recordable: true,
-    to: '/products/:id'
-  }]
-
-},
-{
-  id: 'ce',
-  name: 'CE marking',
-  short: 'CE',
-  reference: 'Low Voltage Directive 2014/35/EU and EMC Directive 2014/30/EU',
-  summary:
-  'Requires a signed declaration of conformity, the standards applied, and the mark itself at a minimum height.',
-  blocks: [
-  { key: 'ceMark', label: 'CE mark', regimeId: 'ce', mandatory: true, artefactTypes: ['rating-plate', 'carton'], note: 'Minimum 5 mm high' },
-  { key: 'model', label: 'Model and type reference', regimeId: 'ce', mandatory: true, artefactTypes: ['rating-plate', 'carton'] },
-  { key: 'ratings', label: 'Electrical ratings', regimeId: 'ce', mandatory: true, artefactTypes: ['rating-plate'] },
-  { key: 'importer', label: 'Manufacturer and importer block', regimeId: 'ce', mandatory: true, artefactTypes: ['rating-plate', 'carton', 'leaflet'] },
-  { key: 'safetyInstructions', label: 'Safety instructions', regimeId: 'ce', mandatory: true, artefactTypes: ['leaflet'] }],
-
-  obligations: [
-  {
-    id: 'ce-doc-signed',
-    regimeId: 'ce',
-    label: 'Declaration of conformity signed',
-    doneText: 'You recorded signing the declaration of conformity.',
-    missingText:
-    'Batchlabel has no record that you have signed a declaration of conformity. It does not draft or hold the declaration — record the date you signed it and its reference number.',
-    recordable: true,
-    to: '/products/:id'
-  },
-  {
-    /**
-     * NO LONGER READ OFF THE COMPONENT CATALOGUE, for two reasons and either would do.
-     *
-     * `missingText` said the standards had not been listed while `deriveBom` listed them
-     * one panel below, from `componentById(...).standards` — constants in Batchlabel's shipped
-     * catalogue, identical for every account that picks the same part. So the screen
-     * contradicted itself, and the thing it was "checking" was our own bundle rather than the
-     * maker's declaration. The declaration is a document we have never seen.
-     *
-     * The components catalogue is also being removed outright, so a check resting on it would
-     * have gone from wrong to broken.
-     */
-    id: 'ce-standards',
-    regimeId: 'ce',
-    label: 'Harmonised standards listed',
-    doneText: 'You recorded the harmonised standards listed on your declaration.',
-    missingText:
-    'Batchlabel has no record of the standards listed on your declaration. It never sees the declaration — record which standards you applied in full, and keep that list the same on the document.',
-    recordable: true,
-    to: '/products/:id'
-  },
-  {
-    /**
-     * NO TEST REPORT IS HELD, UPLOADED OR INSPECTED ANYWHERE IN THIS REPOSITORY, and this row
-     * used to say "A test report is missing or has passed its validity date" — a finding about
-     * the contents of a maker's technical file, under their product name, produced by nothing.
-     * It is the exact defect class this codebase keeps finding, and it is fixed the same way:
-     * say what we know, which is what is in our log.
-     */
-    id: 'ce-test-reports',
-    regimeId: 'ce',
-    label: 'Test reports on file and in date',
-    doneText: 'You recorded holding test reports for this product.',
-    missingText:
-    'Batchlabel has no record of test reports for this product. It does not hold documents and cannot check a validity date — record what you hold, its reference and when it expires.',
-    recordable: true,
-    to: '/products/:id'
-  }]
-
-},
-{
-  id: 'rohs',
-  name: 'Restriction of hazardous substances',
-  short: 'RoHS',
-  reference: 'Directive 2011/65/EU, assessed through EN IEC 63000',
-  summary: 'Requires a material declaration for every component in the bill of materials.',
-  blocks: [
-  {
-    key: 'rohsStatement',
-    label: 'RoHS statement',
-    regimeId: 'rohs',
-    mandatory: false,
-    artefactTypes: ['leaflet', 'carton']
-  }],
-
-  obligations: [
-  {
-    /**
-     * `to` MOVED OFF `/materials/component`. That route rendered the shipped components
-     * catalogue, whose `rohsStatus` was a constant a maker could not change — the register
-     * toasted "Saving a material is not built yet" — so the Resolve link led to a screen that
-     * displayed the finding and offered no way to alter it. The catalogue is being deleted
-     * outright, so the route goes with it.
-     */
-    id: 'rohs-component-declarations',
-    regimeId: 'rohs',
-    label: 'Material declaration for every component',
-    /*
-     * RECORDABLE RATHER THAN NOT_TRACKED, and the wording had to change twice over.
-     *
-     * It used to read the RoHS status off five shipped COMPONENTS constants and report "one or
-     * more components have no material declaration" as an outstanding finding about the
-     * maker's own technical file — the survey's own example of a finding nothing checked. The
-     * catalogue is deleted (`materials_class_check` refuses the class), so there is nothing
-     * left to read it from.
-     *
-     * What remains is real: the bill of materials is what the MAKER typed, the duty is theirs,
-     * and the one thing Batchlabel can honestly hold is their own record of having the
-     * declarations. So this takes an evidence entry like its RoHS siblings, and both texts are
-     * facts about our log rather than about their filing cabinet. Nothing here inspects a
-     * declaration; the copy does not pretend otherwise.
-     */
-    doneText: 'You recorded holding a material declaration for every part on this product.',
-    missingText:
-    'Batchlabel holds no record of material declarations for this product, and it does not hold supplier declarations themselves. Record which ones you have and where they are kept.',
-    recordable: true,
-    to: '/products/:id'
-  },
-  {
-    id: 'rohs-en63000',
-    regimeId: 'rohs',
-    label: 'Technical documentation to EN IEC 63000',
-    doneText: 'You recorded assembling the EN IEC 63000 compilation.',
-    missingText:
-    'Batchlabel has no record of an EN IEC 63000 compilation for this product. It does not assemble or hold the technical file — record when the compilation was made and where it is held.',
-    recordable: true,
-    to: '/products/:id'
-  }]
-
-},
-{
-  id: 'weee',
-  name: 'Waste electrical and electronic equipment',
-  short: 'WEEE',
-  reference: 'Directive 2012/19/EU and the UK WEEE Regulations 2013',
-  summary: 'Requires producer registration and the crossed-out wheelie bin mark.',
-  blocks: [
-  {
-    key: 'weeeBin',
-    label: 'Crossed-out wheelie bin',
-    regimeId: 'weee',
-    mandatory: true,
-    artefactTypes: ['rating-plate', 'carton', 'leaflet']
-  }],
-
-  obligations: [
-  {
-    id: 'weee-registration',
-    regimeId: 'weee',
-    label: 'Producer registration',
-    doneText: 'You recorded a producer compliance scheme registration.',
-    missingText:
-    'Batchlabel has no record of your producer registration. Record the scheme and the registration number — it has to appear on the rating plate as well.',
-    recordable: true,
-    to: '/products/:id'
-  },
-  {
-    /**
-     * NOT_TRACKED, and it was asserting. "The mark or the producer identifier is missing from
-     * the rating plate" is a claim about a plate this app has never seen: Batchlabel renders
-     * the block into its own preview, but it does not store what was actually printed, and the
-     * print records it now holds carry a version and a fingerprint rather than the artwork.
-     * Same class as `en15494-safety-text`, and it gets the same treatment.
-     */
-    id: 'weee-marking',
-    regimeId: 'weee',
-    label: 'Wheelie bin mark and producer identifier',
-    doneText: 'Both appear on the rating plate.',
-    missingText: 'The mark or the producer identifier is missing from the rating plate.',
-    untrackedText:
-    'Batchlabel draws the crossed-out wheelie bin and your producer identifier into every rating plate it previews, but it does not store what you actually printed, so it cannot confirm they are on the plate. Check the printed plate carries both.',
-    to: '/products/:id/artefacts/rating-plate'
   }]
 
 },
@@ -510,7 +236,7 @@ export const REGIMES: Regime[] = [
     label: 'Traceability block',
     regimeId: 'gpsr',
     mandatory: true,
-    artefactTypes: ['listing', 'leaflet']
+    artefactTypes: ['listing']
   }],
 
   obligations: [
@@ -638,7 +364,6 @@ const NOT_TRACKED: ReadonlySet<string> = new Set([
   // artefact rows carry a version, a date and a fingerprint of the composition; they do not
   // carry the artwork, so nothing here can confirm a symbol or a mark is on the label.
   'en15494-safety-text',
-  'weee-marking',
   // Needs a UFI, which Batchlabel does not generate and does not yet hold.
   'clp-ufi',
   // Needs sight of the code printed on the jar, which no batch record in the log carries. The
@@ -757,20 +482,8 @@ function classificationOutcome(product: Product): {state: ObligationState;text?:
  */
 export const DERIVED_OBLIGATIONS: ReadonlySet<string> = new Set([
   'clp-classification',
-  'cpr-pao',
   'clp-artefact-current'
 ]);
-
-/**
- * Whether a period after opening is actually set on the composition.
- *
- * The other half of the `cpr-pao` fix. `derivePhased` renders the same field, so the label
- * preview and this row cannot disagree about whether the figure exists — which they did, at
- * length, over a 12 that `blankSpec` invented.
- */
-function paoShown(product: Product): boolean {
-  return product.spec.kind === 'phased' && product.spec.paoMonths > 0;
-}
 
 /**
  * Where the recorded label prints stand against the composition.
@@ -784,13 +497,11 @@ function paoShown(product: Product): boolean {
  * never recorded printing one is a false statement about their compliance.
  */
 function artefactCurrency(product: Product): 'current' | 'out-of-date' | 'unknown' | 'not-produced' {
-  const labels = product.artefacts.filter(
-    (artefact) => artefact.type === 'unit-label' || artefact.type === 'carton'
-  );
+  const labels = product.artefacts.filter((artefact) => artefact.type === 'unit-label');
   const produced = labels.filter((artefact) => artefact.currency !== 'not-produced');
   if (produced.length === 0) return 'not-produced';
-  // One stale surface is enough: if the carton still matches and the unit label does not, the
-  // product is carrying a label that no longer describes it.
+  // One stale surface is enough: a product carrying a label that no longer describes it is out
+  // of date however many other surfaces still match.
   if (produced.some((artefact) => artefact.currency === 'out-of-date')) return 'out-of-date';
   if (produced.some((artefact) => artefact.currency === 'unknown')) return 'unknown';
   return 'current';
@@ -811,10 +522,6 @@ export function obligationState(product: Product, obligationId: string): Obligat
   // State and sentence come from the same call, so a row can never be green under a sentence
   // that says nothing was found. See `classificationOutcome`.
   if (obligationId === 'clp-classification') return classificationOutcome(product).state;
-
-  if (obligationId === 'cpr-pao') {
-    return paoShown(product) ? 'met' : 'outstanding';
-  }
 
   if (obligationId === 'clp-artefact-current') {
     const currency = artefactCurrency(product);
@@ -877,7 +584,7 @@ export function obligationOutcome(product: Product, obligation: Obligation): Obl
 
   const evidence = product.evidence.obligations[obligation.id];
   if (!evidence) {
-    // Derived rather than recorded — clp-classification, cpr-pao, clp-artefact-current. The
+    // Derived rather than recorded — clp-classification, clp-artefact-current. The
     // doneText stands on its own for those, because the thing that satisfied them is on screen.
     return { state, text: obligation.doneText };
   }

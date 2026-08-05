@@ -5,11 +5,9 @@ import {
   packagingById } from
 './material-index';
 import {
-  BomSpec,
   IngredientMaterial,
   Market,
   MixtureSpec,
-  PhasedSpec,
   Product,
   RegimeId,
   Spec,
@@ -56,23 +54,6 @@ export type ClpResult = {
   supplementary: Array<{code: string;text: string;}>;
 };
 
-export type CosmeticResult = {
-  functionLine: string;
-  inciNames: string[];
-  inciLine: string;
-  allergenNames: string[];
-  pao: string;
-  warnings: string[];
-};
-
-export type DeviceResult = {
-  model: string;
-  ratings: string;
-  standards: string[];
-  weeeRegistration: string;
-  declarationSigned: boolean;
-};
-
 /**
  * A material the composition names and the register could not produce.
  *
@@ -113,15 +94,13 @@ export type Derivation = {
   /** Materials the composition names that the register did not produce. */
   unresolved: UnresolvedMaterial[];
   clp?: ClpResult;
-  cosmetic?: CosmeticResult;
-  device?: DeviceResult;
 };
 
 /**
  * Whether the hazard group may say "nothing is required", or has to say "we could not tell".
  *
- * One helper, used by both mixture and phased derivations, so the two cannot come to
- * different conclusions about the same silence.
+ * One helper, so every group reasoning about an empty hazard list comes to the same
+ * conclusion about the same silence.
  */
 function emptyHazardText(pending: boolean, unresolved: UnresolvedMaterial[], settled: string): string {
   if (pending) {
@@ -434,364 +413,15 @@ export function deriveMixture(spec: MixtureSpec): Derivation {
   };
 }
 
-/* ------------------------------------------- phased formula, CPR regime */
-
-/** Declarable at 0.001 percent in a leave-on product, 0.01 percent in a rinse-off. */
-export function cosmeticAllergenThreshold(application: PhasedSpec['application']): number {
-  return application === 'Leave-on' ? 0.001 : 0.01;
-}
-
-export function derivePhased(spec: PhasedSpec): Derivation {
-  const pending = !materialsSettled();
-  const unresolved: UnresolvedMaterial[] = [];
-  const flat: Array<{ingredient: IngredientMaterial;pct: number;phase: string;}> = [];
-  for (const phase of spec.phases) {
-    for (const item of phase.items) {
-      const ingredient = ingredientById(item.materialId);
-      if (ingredient) {
-        flat.push({ ingredient, pct: item.pct, phase: phase.name });
-        continue;
-      }
-      // A phase item naming a material the register cannot produce. It is left OUT of the
-      // ingredient list rather than guessed at — an INCI list is a legal declaration and a
-      // placeholder in it is worse than a gap — and named here so the screen can say which.
-      if (item.materialId) unresolved.push({ slot: `Phase item, ${phase.name}`, id: item.materialId });
-    }
-  }
-
-  const total = round(
-    flat.reduce((sum, item) => sum + item.pct, 0),
-    2
-  );
-
-  const ordered = flat.filter((i) => i.pct >= 1).sort((a, b) => b.pct - a.pct);
-  const unordered = flat.filter((i) => i.pct < 1);
-  const proximity: ProximityNote[] = [];
-
-  const inciItems: DerivedItem[] = [];
-  ordered.forEach((item, index) => {
-    const next = ordered[index + 1];
-    inciItems.push({
-      text: item.ingredient.inci ?? item.ingredient.name,
-      why: [
-      {
-        lead: `${item.ingredient.name} is present at ${item.pct} percent, in the ${item.phase.toLowerCase()}.`,
-        meta: next ?
-        `At or above 1 percent, so it is listed in descending order. It precedes ${next.ingredient.inci ?? next.ingredient.name} at ${next.pct} percent.` :
-        'At or above 1 percent, so it is listed in descending order. It is the last ingredient above 1 percent.',
-        source: materialCitation(item.ingredient)
-      }]
-
-    });
-    if (next && Math.abs(item.pct - next.pct) < 0.5) {
-      proximity.push({
-        code: 'INCI order',
-        message: `${item.ingredient.inci ?? item.ingredient.name} at ${item.pct} percent and ${next.ingredient.inci ?? next.ingredient.name} at ${next.pct} percent are within 0.5 points. Taking the first below ${next.pct} percent swaps their order on the label.`
-      });
-    }
-  });
-  unordered.forEach((item) => {
-    inciItems.push({
-      text: item.ingredient.inci ?? item.ingredient.name,
-      why: [
-      {
-        lead: `${item.ingredient.name} is present at ${item.pct} percent, in the ${item.phase.toLowerCase()}.`,
-        meta: `Below 1 percent, so it may appear in any order after ${ordered[ordered.length - 1]?.ingredient.inci ?? 'the last ordered ingredient'}.`,
-        source: materialCitation(item.ingredient)
-      }]
-
-    });
-  });
-
-  const threshold = cosmeticAllergenThreshold(spec.application);
-  const allergenItems: DerivedItem[] = [];
-  for (const item of flat) {
-    for (const allergen of item.ingredient.allergens) {
-      const conc = round(allergen.pct * item.pct / 100, 5);
-      const inciName = allergen.name.charAt(0).toUpperCase() + allergen.name.slice(1);
-      if (conc >= threshold) {
-        allergenItems.push({
-          text: inciName,
-          why: [
-          {
-            lead: `${allergen.name} is present at ${conc} percent of the finished product, from ${item.ingredient.name} at ${item.pct} percent.`,
-            meta: `Declared because it is at or above ${threshold} percent in a ${spec.application.toLowerCase()} product.`,
-            source: materialCitation(item.ingredient)
-          }]
-
-        });
-      } else if (conc >= threshold * 0.75) {
-        proximity.push({
-          code: 'Allergen',
-          message: `${allergen.name} sits at ${conc} percent, just below the ${threshold} percent declaration threshold for a ${spec.application.toLowerCase()} product. Raising ${item.ingredient.name} to ${round(threshold * 100 / allergen.pct, 3)} percent adds ${inciName} to the ingredient list.`
-        });
-      }
-    }
-  }
-  allergenItems.sort((a, b) => a.text.localeCompare(b.text));
-
-  const inciNames = [...inciItems.map((i) => i.text), ...allergenItems.map((a) => a.text)];
-  /**
-   * EMPTY WHEN NOTHING IS SET, and the empty string is what the label renderer checks.
-   *
-   * This was `${spec.paoMonths}M` unconditionally, over a `paoMonths` that `blankSpec` seeded
-   * to 12 — so a brand new cosmetic printed "12M" beside an open-jar symbol on the preview, at
-   * actual size, while the obligations list on the same screen read "Neither a period after
-   * opening nor a date of minimum durability is shown". A period after opening is a legal
-   * marking and nothing here has measured one. Zero is now unset, at the seed, on the label, in
-   * the derivation and in `cpr-pao`, all reading this one field.
-   */
-  const pao = spec.paoMonths > 0 ? `${spec.paoMonths}M` : '';
-  const warnings = [
-  'Avoid contact with the eyes. If contact occurs, rinse with water.',
-  'Discontinue use if irritation occurs.',
-  'Keep out of reach of children.'];
-
-
-  const groups: DerivedGroup[] = [
-  {
-    id: 'inci',
-    title: 'Ingredient list, INCI',
-    regimeId: 'cpr',
-    items: inciItems,
-    emptyText: emptyHazardText(
-      pending,
-      unresolved,
-      'Nothing has been added to the phases yet, so there is no ingredient list to declare.'
-    )
-  },
-  {
-    id: 'allergens',
-    title: 'Declarable allergens',
-    regimeId: 'cpr',
-    items: allergenItems,
-    emptyText: emptyHazardText(
-      pending,
-      unresolved,
-      'No declarable allergen reaches the threshold for this application.'
-    )
-  },
-  /*
-   * NO CPSR AND NO PIF CITATION IN EITHER GROUP BELOW, and that is the correction rather than
-   * an omission. Both used to name a Cosmetic Product Safety Report and a Product Information
-   * File as their source — "12 months, set by the stability data in the product information
-   * file", "Source: Cosmetic product safety report, section on warnings" — while the
-   * obligations list on the same screen read "No product information file has been assembled
-   * for this product" and "No signed cosmetic product safety report is on file". Nothing holds
-   * a CPSR, nothing has measured a durability, and the 12 is a constant in blankSpec. It is
-   * the same citation-of-a-document-nobody-holds that was removed from the declaration of
-   * conformity one function below, and `WhyLine.source` is optional precisely so that a line
-   * with no honest source can carry none.
-   */
-  {
-    id: 'durability',
-    title: 'Period after opening',
-    regimeId: 'cpr',
-    // The group is EMPTY rather than absent when nothing is set, so the panel says the duty
-    // exists and that this composition does not answer it — which is a different sentence from
-    // the regime not applying.
-    emptyText:
-    'No period after opening is set on this composition, so the label prints no open jar figure. Nothing here has measured one; it is yours to set and to justify from your own stability data.',
-    items: pao ?
-    [
-    {
-      code: pao,
-      text: `Use within ${spec.paoMonths} months of opening.`,
-      why: [
-      {
-        lead: 'A period after opening is carried on the label, shown with the open jar symbol.',
-        meta: `${spec.paoMonths} months, which is the value set on this composition. Nothing has measured it: there is no stability or challenge testing behind this number and no safety report holding one, so it is yours to set and to justify.`
-      }]
-
-    }] :
-
-    []
-  },
-  {
-    id: 'precautions',
-    title: 'Precautions for use',
-    regimeId: 'cpr',
-    items: warnings.map((text) => ({
-      text,
-      why: [
-      {
-        // The application and the product type are read off the composition rather than
-        // asserted. This said "a leave-on facial product" for every cosmetics product,
-        // including rinse-off ones and ones that never go near a face.
-        lead: `Standard precaution carried on the label for a ${spec.application.toLowerCase()} ${spec.productType.toLowerCase()}.`,
-        meta: 'Batchlabel\'s standard wording for this kind of product. It is not drawn from a safety assessment of yours — none is held — and a competent person has to confirm it is the right set for this formula.'
-      }]
-
-    }))
-  }];
-
-
-  return {
-    summary: [
-    { label: 'Formula total', value: `${total} %` },
-    { label: 'Ingredients declared', value: String(inciNames.length) },
-    { label: 'Period after opening', value: pao || 'Not set' }],
-
-    groups,
-    proximity,
-    pending,
-    unresolved,
-    cosmetic: {
-      functionLine: spec.productType,
-      inciNames,
-      inciLine: inciNames.join(', '),
-      allergenNames: allergenItems.map((a) => a.text),
-      pao,
-      warnings
-    }
-  };
-}
-
-export function phasedTotal(spec: PhasedSpec): number {
-  return round(
-    spec.phases.reduce(
-      (sum, phase) => sum + phase.items.reduce((phaseSum, item) => phaseSum + item.pct, 0),
-      0
-    ),
-    2
-  );
-}
-
-/* --------------------------------- bill of materials, CE, RoHS and WEEE */
-
 /**
- * A device's conformity file — WITH THE COMPONENT CATALOGUE REMOVED.
+ * ONE COMPOSITION SHAPE, so this is a rename rather than a dispatch.
  *
- * WHAT WENT AND WHY. This function used to read `componentById(item.materialId)` off a
- * shipped COMPONENTS array and produce, under the maker's own model name: a RoHS status per
- * part ("compliant with exemption 6(c), lead in copper alloy"), a list of harmonised
- * standards said to be carried by their bill of materials, a count of "3 of 5 declarations",
- * and a countdown to a certificate expiry. Not one of those was a fact about the account.
- * They were five constants in the bundle, identical for every customer who picked the part,
- * and Rhys's ruling deleted the array they came from: components are "not going to be a
- * priority for a long time, better to just get rid of it". The database refuses the class
- * outright — `materials_class_check` lists 'ingredient' and 'packaging'.
- *
- * WHAT IS LEFT IS TRUE. A bill of materials still has lines on it, because a maker can still
- * type them; what no longer exists is anything that knows what those lines ARE. So the
- * component group states that, once, instead of classifying them — and the declaration row
- * keeps saying it is unsigned, which is the one thing about it that was always established.
- *
- * The electronics category is otherwise untouched: this is a materials change, not a decision
- * about whether Batchlabel serves device makers.
+ * It used to pick between a mixture, a phased cosmetic formula and a bill of materials. Kept
+ * as the name every screen calls, because what a screen wants is "derive this composition" and
+ * not "derive this mixture".
  */
-export function deriveBom(spec: BomSpec, product?: Product): Derivation {
-  const proximity: ProximityNote[] = [];
-  // From the append-only log, not from a jsonb column nothing wrote. `ce-doc-signed` is the
-  // maker's own recorded statement that they signed it — which is why the wording below says
-  // signed and dated rather than claiming Batchlabel saw the document.
-  const declarationSigned = Boolean(product?.evidence.obligations['ce-doc-signed']);
-
-  const declarationItems: DerivedItem[] = [
-  {
-    code: 'DoC',
-    text: declarationSigned ?
-    'Declaration of conformity signed and dated.' :
-    'Declaration of conformity drafted but not signed.',
-    tone: declarationSigned ? 'default' : 'warn',
-    why: [
-    {
-      lead: `Covers the Low Voltage Directive 2014/35/EU and the EMC Directive 2014/30/EU for model ${spec.model}.`,
-      meta: declarationSigned ?
-      'Signed by the manufacturer and held with the technical file.' :
-      'Batchlabel holds no declaration of conformity for you and cannot sign one. This row ' +
-      'is here because the duty is real, not because anything has been checked.'
-      // NO `source`, AND THERE CANNOT BE ONE. This used to read "HH-DOC-WW100-01, issued 8
-      // June 2026" — a reference number and an issue date for a declaration held on the
-      // maker's own device, hardcoded, therefore identical for every account. A declaration
-      // reference is the number a market surveillance officer asks for. WhyLine.source is
-      // optional and DerivationPanel renders the "Source:" line only when it is set, so the
-      // honest thing is to cite nothing.
-    }]
-
-  }];
-
-
-  /**
-   * The bill of materials, listed and NOT assessed.
-   *
-   * Each line renders as what the maker typed. There is no material behind it — component
-   * materials are gone — so there is no RoHS status, no standards list and no certificate
-   * date, and this says so once rather than leaving four columns of silence that read as
-   * "nothing wrong here".
-   */
-  const componentItems: DerivedItem[] = spec.items.map((item) => ({
-    text: item.materialId || 'Unnamed line',
-    why: [
-    {
-      lead: `${item.quantity} at position ${item.position}, as entered on the bill of materials.`,
-      meta:
-      'Batchlabel holds no record of this part: component materials are not built, so nothing ' +
-      'here has been checked for RoHS, for a declaration, or for a standard it carries.'
-    }]
-
-  }));
-
-  const groups: DerivedGroup[] = [
-  { id: 'declaration', title: 'Declaration and standards', regimeId: 'ce', items: declarationItems },
-  {
-    id: 'components',
-    title: 'Bill of materials, as entered',
-    regimeId: 'rohs',
-    items: componentItems,
-    emptyText: 'Nothing has been added to the bill of materials yet.'
-  },
-  {
-    id: 'weee',
-    title: 'Producer registration',
-    regimeId: 'weee',
-    items: [
-    {
-      code: 'WEEE',
-      text: `Producer registration ${product?.identifiers.weeeRegistration ?? 'not recorded'}.`,
-      tone: product?.identifiers.weeeRegistration ? 'default' : 'warn',
-      why: [
-      {
-        lead: 'A registered producer identifier must appear with the crossed-out wheelie bin on the rating plate.',
-        meta: 'Registered through a producer compliance scheme, renewed annually.',
-        source: 'Directive 2012/19/EU and the UK WEEE Regulations 2013'
-      }]
-
-    }]
-
-  }];
-
-
-  return {
-    summary: [
-    { label: 'Model', value: spec.model },
-    { label: 'Ratings', value: `${spec.ratings.voltage}, ${spec.ratings.current}` },
-    // NOT "N of M declarations". That number came from reading a rohsStatus constant off the
-    // shipped component catalogue; with the catalogue gone there is no numerator, and
-    // inventing one — "0 of 5" — would be a finding about the maker's technical file that
-    // nothing examined.
-    { label: 'Bill of materials', value: `${spec.items.length} lines, none assessed` }],
-
-    groups,
-    proximity,
-    // A device's conformity file does not read the materials register at all, so it is never
-    // waiting on it and never missing anything from it.
-    pending: false,
-    unresolved: [],
-    device: {
-      model: spec.model,
-      ratings: `${spec.ratings.voltage} ⎓ ${spec.ratings.current}, ${spec.ratings.power}`,
-      standards: [],
-      weeeRegistration: product?.identifiers.weeeRegistration ?? '',
-      declarationSigned
-    }
-  };
-}
-
-export function derive(spec: Spec, product?: Product, _market: Market = 'GB'): Derivation {
-  if (spec.kind === 'mixture') return deriveMixture(spec);
-  if (spec.kind === 'phased') return derivePhased(spec);
-  return deriveBom(spec, product);
+export function derive(spec: Spec, _product?: Product, _market: Market = 'GB'): Derivation {
+  return deriveMixture(spec);
 }
 
 /* ------------------------------------------------------------- geometry */
@@ -812,7 +442,6 @@ export function clpMinimumDimensions(capacityMl: number): {
   return { labelW: 148, labelH: 210, pictogram: 46, band: 'Over 500 litres' };
 }
 
-export const CE_MARK_MIN_MM = 5;
 export const MIN_FONT_PT = 6;
 export const MIN_LINE_SPACING = 1.15;
 
@@ -900,47 +529,6 @@ export function geometryRules(product: Product, widthMm: number, heightMm: numbe
     }
   }
 
-  if (product.regimes.includes('cpr')) {
-    rules.push({
-      label: 'Minimum legible type',
-      value: `${MIN_FONT_PT} pt`,
-      source: 'Cosmetic Products Regulation, indelible, easily legible and visible marking',
-      ok: true
-    });
-    // Both dimensions or neither: half a printable area cannot be checked against an
-    // artefact, and `ok: false` on a check that did not run reads as a failure the maker has
-    // to fix rather than a figure they have not entered.
-    const area = packaging?.labelAreaMm;
-    rules.push({
-      label: 'Printable area on pack',
-      value: area ? `${area.width} × ${area.height} mm` : 'Not recorded',
-      source: !packaging ?
-      'No packaging chosen for this product' :
-      area ?
-      `${packaging.supplier ?? 'Your record'}, as recorded on the material` :
-      `No printable area recorded for ${packaging.name}`,
-      ok: area ? widthMm <= area.width : undefined
-    });
-  }
-
-  if (product.regimes.includes('ce')) {
-    rules.push({
-      label: 'Minimum CE mark height',
-      value: `${CE_MARK_MIN_MM} mm`,
-      source: 'Regulation (EC) No 765/2008, proportions preserved when scaled',
-      ok: true
-    });
-  }
-
-  if (product.regimes.includes('weee')) {
-    rules.push({
-      label: 'Wheelie bin mark',
-      value: 'Visible, legible and indelible',
-      source: 'EN 50419',
-      ok: true
-    });
-  }
-
   return rules;
 }
 
@@ -949,7 +537,5 @@ export function getPackagingId(spec: Spec): string {
 }
 
 export function specSummary(spec: Spec): string {
-  if (spec.kind === 'mixture') return `${spec.productType}, load ${spec.load} percent`;
-  if (spec.kind === 'phased') return `${spec.productType}, ${spec.phases.length} phases`;
-  return `${spec.productType}, ${spec.items.length} components`;
+  return `${spec.productType}, load ${spec.load} percent`;
 }

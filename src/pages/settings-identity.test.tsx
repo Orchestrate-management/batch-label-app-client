@@ -3,7 +3,6 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { Settings } from './Settings';
-import { WorkspaceProvider } from '../lib/workspace';
 import { SettingsContext, type SettingsValue } from '../lib/settings-store';
 
 /**
@@ -89,11 +88,9 @@ function drawIdentityTab(settings: SettingsValue) {
   render(
     <MemoryRouter initialEntries={['/settings/identity']}>
       <SettingsContext.Provider value={settings}>
-        <WorkspaceProvider>
-          <Routes>
-            <Route path="/settings/:tab" element={<Settings />} />
-          </Routes>
-        </WorkspaceProvider>
+        <Routes>
+          <Route path="/settings/:tab" element={<Settings />} />
+        </Routes>
       </SettingsContext.Provider>
     </MemoryRouter>
   );

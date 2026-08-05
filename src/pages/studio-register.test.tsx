@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Studio } from './Studio';
-import { WorkspaceProvider } from '../lib/workspace';
 import { FIXTURE_MATERIALS, PRODUCTS } from '../lib/fixtures';
 import type { Product } from '../lib/model';
 import { publishMaterialStatus, publishMaterials, resetMaterials } from '../lib/material-index';
@@ -175,9 +174,7 @@ describe('the outstanding queue on route /', () => {
   it('recounts once the materials register answers, rather than keeping its first answer', () => {
     render(
       <MemoryRouter>
-        <WorkspaceProvider>
-          <Studio />
-        </WorkspaceProvider>
+        <Studio />
       </MemoryRouter>
     );
 

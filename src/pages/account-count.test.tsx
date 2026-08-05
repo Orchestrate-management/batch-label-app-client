@@ -3,7 +3,6 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { Studio } from './Studio';
 import { Settings } from './Settings';
-import { WorkspaceProvider } from '../lib/workspace';
 import { SettingsProvider } from '../lib/settings-store';
 import { PRODUCTS } from '../lib/fixtures';
 import { mapEntitlement, type EntitlementRow } from '../lib/membership';
@@ -100,9 +99,7 @@ function withCount(skuCount: number | null, skuCountStale = false): EntitlementV
 function drawStudio() {
   render(
     <MemoryRouter>
-      <WorkspaceProvider>
-        <Studio />
-      </WorkspaceProvider>
+      <Studio />
     </MemoryRouter>
   );
 }
@@ -120,11 +117,9 @@ function drawIdentityTab() {
   render(
     <MemoryRouter initialEntries={['/settings/identity']}>
       <SettingsProvider>
-        <WorkspaceProvider>
-          <Routes>
-            <Route path="/settings/:tab" element={<Settings />} />
-          </Routes>
-        </WorkspaceProvider>
+        <Routes>
+          <Route path="/settings/:tab" element={<Settings />} />
+        </Routes>
       </SettingsProvider>
     </MemoryRouter>
   );

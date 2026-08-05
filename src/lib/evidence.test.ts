@@ -113,8 +113,8 @@ const storedEvent = (over: Record<string, unknown> = {}) => ({
     kind: 'compliance.evidence_recorded',
     product_id: 'prod-1',
     occurred_at: '2026-07-01T12:00:00.000Z',
-    obligation_id: 'cpr-pif',
-    reference: 'PIF-1',
+    obligation_id: 'clp-pcn-gb',
+    reference: 'REF-1',
     summary: 'Assembled the product information file.',
     ...over
   },
@@ -137,9 +137,9 @@ describe('recording evidence against an obligation', () => {
     const result = await recordEvidence({
       accountId: 'acct-1',
       product,
-      obligationId: 'cpr-pif',
+      obligationId: 'clp-pcn-gb',
       summary: 'Assembled the product information file.',
-      reference: 'PIF-1',
+      reference: 'REF-1',
       occurredAt: '2026-07-01T12:00:00.000Z'
     });
 
@@ -148,7 +148,7 @@ describe('recording evidence against an obligation', () => {
 
     const [[table, payload]] = db.state.inserts;
     expect(table).toBe('record_events');
-    expect(payload.obligation_id).toBe('cpr-pif');
+    expect(payload.obligation_id).toBe('clp-pcn-gb');
     expect(payload.product_id).toBe('prod-1');
     // The composition in force, so the log can still say which recipe this was recorded
     // against after the specification has moved on.
@@ -162,7 +162,7 @@ describe('recording evidence against an obligation', () => {
     await recordEvidence({
       accountId: 'acct-1',
       product,
-      obligationId: 'cpr-pif',
+      obligationId: 'clp-pcn-gb',
       summary: 'Done.',
       occurredAt: '2026-03-04T12:00:00.000Z'
     });
@@ -178,7 +178,12 @@ describe('recording evidence against an obligation', () => {
     // "Poison centre notification submitted" is a better line of history than "Evidence
     // recorded".
     await recordEvidence({ accountId: 'a', product, obligationId: 'clp-pcn-eu', summary: 'Sent.' });
-    await recordEvidence({ accountId: 'a', product, obligationId: 'cpr-gmp', summary: 'Done.' });
+    await recordEvidence({
+      accountId: 'a',
+      product,
+      obligationId: 'gpsr-eu-responsible-person',
+      summary: 'Done.'
+    });
 
     expect(db.state.inserts[0][1].kind).toBe('compliance.pcn_submitted');
     expect(db.state.inserts[1][1].kind).toBe('compliance.evidence_recorded');
@@ -191,7 +196,7 @@ describe('recording evidence against an obligation', () => {
     const result = await recordEvidence({
       accountId: 'acct-1',
       product,
-      obligationId: 'cpr-pif',
+      obligationId: 'clp-pcn-gb',
       summary: '   '
     });
 
@@ -208,7 +213,7 @@ describe('recording evidence against an obligation', () => {
     const result = await recordEvidence({
       accountId: 'acct-1',
       product,
-      obligationId: 'cpr-pif',
+      obligationId: 'clp-pcn-gb',
       summary: 'Done.'
     });
 
@@ -221,7 +226,7 @@ describe('recording evidence against an obligation', () => {
     const result = await recordEvidence({
       accountId: 'acct-1',
       product,
-      obligationId: 'cpr-pif',
+      obligationId: 'clp-pcn-gb',
       summary: 'Done.'
     });
 
@@ -235,12 +240,12 @@ describe('recording evidence against an obligation', () => {
   it('omits the account id when the entitlement has not resolved one', async () => {
     // Supplied, the INSERT policy checks it; omitted, current_account_id() decides. Sending a
     // null would be neither.
-    await recordEvidence({ accountId: null, product, obligationId: 'cpr-pif', summary: 'Done.' });
+    await recordEvidence({ accountId: null, product, obligationId: 'clp-pcn-gb', summary: 'Done.' });
     expect(db.state.inserts[0][1]).not.toHaveProperty('account_id');
   });
 
   it('goes through the batchlabel schema, never public', async () => {
-    await recordEvidence({ accountId: 'a', product, obligationId: 'cpr-pif', summary: 'Done.' });
+    await recordEvidence({ accountId: 'a', product, obligationId: 'clp-pcn-gb', summary: 'Done.' });
     expect([...new Set(db.state.schemas)]).toEqual(['batchlabel']);
   });
 });

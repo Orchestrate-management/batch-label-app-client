@@ -29,9 +29,9 @@ import { obligationsFor } from './regimes';
  * exactly the case that matters.
  */
 
-function freshProduct(categoryId: 'home-fragrance' | 'electronics'): Product {
+function freshProduct(categoryId: 'home-fragrance'): Product {
   const category = categoryById(categoryId);
-  const spec = blankSpec(category, category.productTypes[0]);
+  const spec = blankSpec(category.productTypes[0]);
   return {
     id: 'prod-1',
     specificationId: 'spec-1',
@@ -41,7 +41,7 @@ function freshProduct(categoryId: 'home-fragrance' | 'electronics'): Product {
     markets: ['GB'],
     regimes: category.regimes,
     spec,
-    artefacts: artefactsFor(category, spec.kind),
+    artefacts: artefactsFor(category),
     identifiers: {},
     evidence: { obligations: {}, sdsSections: {} }
   };
@@ -78,10 +78,10 @@ describe('the Documents stage, which checks nothing', () => {
 
 describe('the Outputs stage, whose outputs have never been produced', () => {
   it('never says the outputs are current', () => {
-    // Electronics with every obligation ticked is the only route to a settled Outputs stage,
-    // because a mixture always carries four safety-data-sheet sections needing a competent
-    // person. That is the exact state that used to render "4 outputs, all current".
-    const product = freshProduct('electronics');
+    // Every obligation ticked is the closest a product gets to a settled Outputs stage, and
+    // that is the exact state that used to render "4 outputs, all current". Ticking obligations
+    // records no PRINT, so the summary may not start counting produced artefacts from it.
+    const product = freshProduct('home-fragrance');
     const ticked: Product = {
       ...product,
       evidence: {

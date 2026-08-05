@@ -14,16 +14,14 @@ import {
   SectionTitle,
   Skeleton } from
 '../components/ui/Primitives';
-import { ARTEFACT_LABELS, CATEGORIES, STOCK } from '../lib/categories';
+import { ARTEFACT_LABELS, STOCK } from '../lib/categories';
 import { ADDRESS_BLOCKS, COMPETENT_PERSON, type PrintedMarket } from '../lib/identity';
 import { useAuth } from '../lib/auth';
 import { useEntitlement } from '../lib/entitlement';
 import { readSkuCount, skuCountBeside } from '../lib/membership';
-import { regimeById } from '../lib/regimes';
 import { useProducts } from '../lib/product-store';
 import { useSettings, type SettingsValue } from '../lib/settings-store';
 import { readAddressLines, type BusinessIdentityInput } from '../lib/settings-data';
-import { useWorkspace } from '../lib/workspace';
 
 /**
  * BILLING IS NOT A TAB HERE ANY MORE. It is a page of its own at /billing, because it is now
@@ -59,7 +57,7 @@ const TABS = [
   label: 'Preferences',
   title: 'Preferences',
   description:
-  'Small, reversible choices. Which categories are switched on when you create a product.'
+  'The label stock the artefact designer offers. Shipped with the app, and the same for everybody.'
 }] as
 const;
 
@@ -531,7 +529,7 @@ function AddressBlock({
 
         <p className="text-2xs leading-relaxed text-ink-tertiary">
           {market === 'EU' ?
-          'Used for products sold into the EU or Northern Ireland. It is the responsible person for cosmetics, the economic operator under GPSR, and the importer block on device labels.' :
+          'Used for products sold into the EU or Northern Ireland. It is the economic operator under GPSR.' :
           'Used for products sold in Great Britain, as supplier and manufacturer.'}
         </p>
 
@@ -677,113 +675,8 @@ function TeamTab() {
  * column asserts nothing; a select does.
  */
 function PreferencesTab() {
-  const { enabledCategories, toggleCategory, categoryWrite } = useWorkspace();
-  const settings = useSettings();
-  const persisting = settings.status === 'ready';
-  // Mid-read is its own state and not a failure. The boxes are shown disabled rather than
-  // enabled-and-session-only, because a choice made here would be overwritten by the row that
-  // is on its way — which is a control that accepts a choice and quietly discards it.
-  const reading = settings.status === 'loading';
-
   return (
     <>
-      <section aria-labelledby="categories-heading">
-        <SectionTitle className="mb-1">
-          <span id="categories-heading">Categories</span>
-        </SectionTitle>
-        <p className="mb-3 max-w-prose text-2xs leading-relaxed text-ink-tertiary">
-          Switching a category off hides it when creating a product. Existing products are
-          untouched.
-        </p>
-
-        {reading &&
-        <Callout className="mb-3" title="Reading your preferences">
-            <p className="max-w-prose leading-relaxed">
-              These will be usable in a moment. Changing one now would be overwritten by what we
-              are reading, so they are held until it lands.
-            </p>
-          </Callout>
-        }
-
-        {!persisting && !reading &&
-        <Callout tone="warn" className="mb-3" title="These are not being saved right now">
-            <p className="max-w-prose leading-relaxed">
-              {settings.status === 'unconfigured' ?
-            'This copy of the app has no database connection.' :
-            settings.status === 'no-account' ?
-            'We have not resolved which workspace this is.' :
-            settings.error ?? 'We could not read your preferences.'}{' '}
-              The boxes below still apply for this visit, and will stop applying when you close
-              the tab.
-            </p>
-          </Callout>
-        }
-
-        {/*
-            THE ROW SAYS WHAT THE CLICK DID, and before this it said nothing at all.
-            `savePreferences` is refused (42501, or a request that never lands): the box stays
-            ticked, because the stored row is what draws it, and until now that was the ONLY
-            thing that happened. No alert, no movement, not even a pending state — so the maker
-            reads the control as broken and clicks again, firing another failed write each time.
-            The mechanism is in lib/workspace.tsx; this is the mouth on it.
-
-            aria-busy rather than a disabled box, matching the consent checkbox in
-            settings/AccountTab.tsx and for its reason: disabling the control somebody has just
-            activated blurs it, and focus lands on the body, so a keyboard user is thrown to the
-            top of the document as their reward for ticking a box.
-         */}
-        <div aria-busy={categoryWrite.state === 'saving' || undefined}>
-          <Card className="divide-y divide-paper-line">
-            {CATEGORIES.map((category) =>
-            <label
-              key={category.id}
-              className="flex cursor-pointer flex-wrap items-center gap-4 px-5 py-4">
-
-                <input
-                type="checkbox"
-                checked={enabledCategories.includes(category.id)}
-                disabled={reading}
-                onChange={() => void toggleCategory(category.id)}
-                className="h-4 w-4 flex-none accent-teal disabled:opacity-50" />
-
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-ink">{category.name}</p>
-                  <p className="mt-0.5 text-2xs text-ink-tertiary">{category.blurb}</p>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {category.regimes.map((regime) =>
-                <Pill key={regime} tone="neutral">
-                      {regimeById(regime).short}
-                    </Pill>
-                )}
-                </div>
-              </label>
-            )}
-          </Card>
-
-          {categoryWrite.state === 'saving' &&
-          <p className="mt-2 text-2xs text-ink-tertiary">Saving…</p>
-          }
-          {/* A refusal is an alert; being told the last one has to stay on is not a failure and
-              is announced politely. Collapsing the two would put "something went wrong" over a
-              rule working exactly as written. */}
-          {categoryWrite.state === 'refused' &&
-          <div className="mt-2">
-              <FormError>{categoryWrite.message}</FormError>
-            </div>
-          }
-          {categoryWrite.state === 'declined' &&
-          <div className="mt-2">
-              <FormStatus>{categoryWrite.message}</FormStatus>
-            </div>
-          }
-        </div>
-        <p className="mt-3 max-w-prose text-2xs leading-relaxed text-ink-tertiary">
-          The last category cannot be switched off — you would have nothing to create a product
-          from.
-        </p>
-      </section>
-
       <section aria-labelledby="stock-heading">
         <SectionTitle className="mb-1">
           <span id="stock-heading">Stock presets</span>

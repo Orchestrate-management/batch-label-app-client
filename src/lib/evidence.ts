@@ -38,7 +38,11 @@ import { SDS_REVIEW_KIND, WriteFailure, WriteResult, classifyWriteError } from '
 const EVIDENCE_KIND = 'compliance.evidence_recorded';
 
 /**
- * Kinds for the four duties whose event has a name of its own in the schema's `kind` enum.
+ * Kinds for the duties whose event has a name of its own in the schema's `kind` enum.
+ *
+ * `ce-doc-signed` was a fourth and went with the CE regime. The `kind` enum in the schema is
+ * NOT being narrowed to match — it is shared with live data, and a value nothing can produce
+ * costs nothing where a migration over a live enum does not.
  *
  * The obligation id is written either way — that is the indexed column the work queue filters
  * on — so nothing depends on this mapping being complete. It exists because the Records screen
@@ -49,8 +53,7 @@ const EVIDENCE_KIND = 'compliance.evidence_recorded';
 const KIND_BY_OBLIGATION: Record<string, string> = {
   'clp-ufi': 'compliance.ufi_assigned',
   'clp-pcn-eu': 'compliance.pcn_submitted',
-  'clp-pcn-gb': 'compliance.npis_submitted',
-  'ce-doc-signed': 'compliance.declaration_signed'
+  'clp-pcn-gb': 'compliance.npis_submitted'
 };
 
 export function eventKindFor(obligationId: string): string {

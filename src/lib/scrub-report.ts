@@ -476,7 +476,6 @@ const SCREEN_NAMES = [
  */
 const PROVIDER_HOOK_MESSAGES = [
 'useAuth must be used inside AuthProvider',
-'useWorkspace must be used inside WorkspaceProvider',
 'useProducts must be used inside ProductsProvider',
 'useEntitlement must be used inside EntitlementProvider'];
 

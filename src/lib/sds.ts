@@ -6,7 +6,6 @@ import {
   IngredientMaterial,
   Market,
   MixtureSpec,
-  PhasedSpec,
   Product,
   formatDate,
   round } from
@@ -157,16 +156,6 @@ function portions(product: Product): Portion[] {
     if (fragrance) result.push({ ingredient: fragrance, pct: mixture.load });
     if (base) result.push({ ingredient: base, pct: round(100 - mixture.load, 2) });
     if (dye) result.push({ ingredient: dye, pct: 0.4 });
-  }
-
-  if (spec.kind === 'phased') {
-    const phased = spec as PhasedSpec;
-    for (const phase of phased.phases) {
-      for (const item of phase.items) {
-        const ingredient = ingredientById(item.materialId);
-        if (ingredient) result.push({ ingredient, pct: item.pct });
-      }
-    }
   }
 
   return result.sort((a, b) => b.pct - a.pct);

@@ -32,7 +32,6 @@ import {
 import type { MaterialUsage } from '../lib/materials';
 import { useMaterials } from '../lib/materials-store';
 import {
-  CategoryId,
   DocumentKind,
   INGREDIENT_ROLES,
   IngredientMaterial,
@@ -701,17 +700,10 @@ function IngredientDetail({
       </Card>
 
       <Card className="px-5 py-5">
-        <SectionTitle className="mb-3">Cosmetic identity</SectionTitle>
+        <SectionTitle className="mb-3">Chemical identity</SectionTitle>
         <dl className="space-y-2 text-sm">
-          <Row term="INCI name" value={material.inci ?? 'Not recorded'} />
-          <Row term="Function" value={material.inciFunction ?? 'Not recorded'} />
           <Row term="CAS" value={material.cas ?? 'Not recorded'} />
         </dl>
-        <p className="mt-4 text-2xs leading-relaxed text-ink-tertiary">
-          The INCI name is used when this material appears in a cosmetic formula, and a material
-          without one cannot be declared in an ingredient list. A fragrance oil appears as
-          Parfum, with its declarable allergens listed after it.
-        </p>
       </Card>
 
       <Card className="px-5 py-5">
@@ -1353,12 +1345,6 @@ function AddDocumentForm({
 
 /* ------------------------------------------------------- new material */
 
-const CATEGORY_OPTIONS: Array<{id: CategoryId;label: string;}> = [
-{ id: 'home-fragrance', label: 'Home fragrance' },
-{ id: 'cosmetics', label: 'Cosmetics' },
-{ id: 'electronics', label: 'Electronics' }];
-
-
 /**
  * Adds one material. The only control on this screen that creates something.
  *
@@ -1501,8 +1487,6 @@ function NewMaterialDialog({
   const [role, setRole] = useState<string>(materialClass === 'ingredient' ? 'Fragrance oil' : '');
   const [supplier, setSupplier] = useState('');
   const [supplierCode, setSupplierCode] = useState('');
-  const [categories, setCategories] = useState<CategoryId[]>(['home-fragrance']);
-  const [inci, setInci] = useState('');
   const [cas, setCas] = useState('');
   const [format, setFormat] = useState('');
   const [capacity, setCapacity] = useState('');
@@ -1511,7 +1495,7 @@ function NewMaterialDialog({
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
-  const ready = name.trim() !== '' && categories.length > 0;
+  const ready = name.trim() !== '';
 
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -1525,8 +1509,7 @@ function NewMaterialDialog({
         role: materialClass === 'ingredient' ? role : undefined,
         supplier,
         supplierCode,
-        categories,
-        inci,
+        categories: ['home-fragrance'],
         cas,
         format,
         capacityMl: capacity.trim() === '' ? undefined : Number(capacity),
@@ -1543,11 +1526,6 @@ function NewMaterialDialog({
     await reload();
     onCreated(result.value);
   };
-
-  const toggleCategory = (id: CategoryId) =>
-  setCategories((current) =>
-  current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]
-  );
 
   return (
     <div className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-ink/20 p-4 sm:p-8">
@@ -1606,9 +1584,6 @@ function NewMaterialDialog({
 
           {materialClass === 'ingredient' &&
           <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="INCI name" hint="Optional, needed to declare it in a cosmetic">
-                <Input value={inci} onChange={(event) => setInci(event.target.value)} />
-              </Field>
               <Field label="CAS number" hint="Optional">
                 <Input value={cas} onChange={(event) => setCas(event.target.value)} />
               </Field>
@@ -1646,32 +1621,6 @@ function NewMaterialDialog({
               </Field>
             </div>
           }
-
-          <fieldset>
-            <legend className="mb-1.5 text-[0.8125rem] font-medium text-ink-secondary">
-              Where it is used
-            </legend>
-            <div className="flex flex-wrap gap-2">
-              {CATEGORY_OPTIONS.map((option) =>
-              <button
-                key={option.id}
-                type="button"
-                aria-pressed={categories.includes(option.id)}
-                onClick={() => toggleCategory(option.id)}
-                className={`rounded-full border px-3 py-1 text-2xs transition-colors ${
-                categories.includes(option.id) ?
-                'border-teal bg-teal-tint text-teal-hover' :
-                'border-paper-line text-ink-secondary hover:bg-paper-panel'}`
-                }>
-
-                  {option.label}
-                </button>
-              )}
-            </div>
-            <p className="mt-1.5 text-2xs text-ink-tertiary">
-              This decides which product types offer it in a picker. Nothing else.
-            </p>
-          </fieldset>
 
           <FormFailure message={failure} />
 

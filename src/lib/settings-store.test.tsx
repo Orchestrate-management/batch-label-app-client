@@ -57,7 +57,7 @@ vi.mock('./settings-data', () => ({
 vi.mock('./supabase', () => ({ supabase: {}, isSupabaseConfigured: true }));
 
 import { BUSINESS, addressForMarket, hasPrintedAddress, setPrintedIdentity } from './identity';
-import { SettingsProvider, useSettings } from './settings-store';
+import { SettingsProvider, useOptionalSettings, useSettings } from './settings-store';
 
 const WILLOW = {
   registeredName: 'Willow and Wick Ltd',
@@ -85,7 +85,7 @@ function Probe() {
       <button
         onClick={() =>
         void settings.savePreferences({
-          enabledCategories: ['cosmetics'],
+          enabledCategories: ['home-fragrance'],
           defaultMarket: null,
           defaultExport: null
         })
@@ -134,7 +134,7 @@ beforeEach(() => {
   });
   data.savePreferences.mockReset().mockResolvedValue({
     ok: true,
-    value: { enabledCategories: ['cosmetics'], defaultMarket: null, defaultExport: null }
+    value: { enabledCategories: ['home-fragrance'], defaultMarket: null, defaultExport: null }
   });
   data.createRequest.mockReset().mockResolvedValue({
     ok: true,
@@ -276,7 +276,7 @@ describe('the other three writes', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'save preferences' }));
 
-    await waitFor(() => expect(screen.getByText('categories:cosmetics')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('categories:home-fragrance')).toBeInTheDocument());
   });
 
   it('shows a recorded request only once the row exists', async () => {
@@ -313,5 +313,37 @@ describe('the other three writes', () => {
     expect(data.saveAddress).not.toHaveBeenCalled();
     expect(data.savePreferences).not.toHaveBeenCalled();
     expect(data.createRequest).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `useOptionalSettings` lost its coverage when WorkspaceProvider was deleted with the
+ * cosmetics and electronics verticals — that provider was what exercised it, and the test
+ * that did so went with the control it covered.
+ *
+ * The hook did not go anywhere. Specification and ArtefactDesigner both call it, precisely
+ * because they must still render in harnesses that mount one screen without the whole
+ * provider tree. That is the behaviour worth pinning: outside a provider it returns null
+ * rather than throwing, and a screen that reads it renders the placeholder identity instead
+ * of failing to mount.
+ */
+describe('useOptionalSettings, outside a provider', () => {
+  function Probe() {
+    const settings = useOptionalSettings();
+    return <p>{settings === null ? 'no store' : `store: ${settings.status}`}</p>;
+  }
+
+  it('returns null rather than throwing, so a screen can be mounted on its own', () => {
+    render(<Probe />);
+    expect(screen.getByText('no store')).toBeInTheDocument();
+  });
+
+  it('returns the store when there is one, so the same call site works either way', async () => {
+    render(
+      <SettingsProvider>
+        <Probe />
+      </SettingsProvider>
+    );
+    expect(await screen.findByText(/^store: /)).toBeInTheDocument();
   });
 });

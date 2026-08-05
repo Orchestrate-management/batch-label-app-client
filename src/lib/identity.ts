@@ -63,11 +63,10 @@ const UNSET = {
 /**
  * What each market's block MEANS, which is not a preference and is not editable.
  *
- * The GB block is the supplier and manufacturer; the EU block is the responsible person for
- * cosmetics, the economic operator under GPSR and the importer on a device label. A maker
- * fills in the lines; they do not get to relabel what the block is for, because the label and
- * the role are what decide which block a product prints, and a renamed block would print in
- * the wrong place.
+ * The GB block is the supplier and manufacturer; the EU block is the economic operator under
+ * GPSR. A maker fills in the lines; they do not get to relabel what the block is for, because
+ * the label and the role are what decide which block a product prints, and a renamed block
+ * would print in the wrong place.
  */
 export const ADDRESS_BLOCKS: Record<
   PrintedMarket,

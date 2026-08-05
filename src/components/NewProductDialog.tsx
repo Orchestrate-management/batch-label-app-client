@@ -10,12 +10,14 @@ import { useProducts } from '../lib/product-store';
 import { regimeById } from '../lib/regimes';
 import { CategoryId } from '../lib/model';
 import { ingredientById } from '../lib/material-index';
-import { useWorkspace } from '../lib/workspace';
 
 /**
- * Four fields, because everything else belongs in the pipeline. Category is
- * the only irreversible choice: it fixes the shape of the composition, the
- * regimes that attach and the outputs that follow.
+ * Three fields, because everything else belongs in the pipeline.
+ *
+ * There USED TO BE A FOURTH, and it was a category picker. Home fragrance is the only category,
+ * so the control offered one option, could not be set to anything else, and made the choice it
+ * claimed to be asking about. The category still fixes the shape of the composition, the regimes
+ * that attach and the outputs that follow — it is just not a question any more.
  *
  * IT NOW ACTUALLY CREATES SOMETHING. This dialog used to push onto an in-memory array and
  * raise a toast saying "Product created", which was true until the tab was reloaded. It
@@ -58,15 +60,13 @@ export function NewProductDialog({
 
 }: {onClose: () => void;fragranceId?: string;}) {
   const navigate = useNavigate();
-  const { enabledCategories } = useWorkspace();
   const { reload } = useProducts();
   const entitlement = useEntitlement();
-  const categories = CATEGORIES.filter((category) => enabledCategories.includes(category.id));
   const startingMaterial = fragranceId ? ingredientById(fragranceId) : undefined;
 
   const [name, setName] = useState('');
   const [sku, setSku] = useState('');
-  const [categoryId, setCategoryId] = useState<CategoryId>(categories[0]?.id ?? 'home-fragrance');
+  const [categoryId] = useState<CategoryId>(CATEGORIES[0].id);
   const category = categoryById(categoryId);
   const [productType, setProductType] = useState(category.productTypes[0]);
 
@@ -76,11 +76,6 @@ export function NewProductDialog({
   // Only `suspended`. Free, lapsed and past_due all create products — the SKU allowance is the
   // only thing a plan governs here, and SkuLimitNotice below is what states it.
   const suspended = !entitlement.loading && entitlement.status === 'suspended';
-
-  const changeCategory = (next: CategoryId) => {
-    setCategoryId(next);
-    setProductType(categoryById(next).productTypes[0]);
-  };
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -94,7 +89,7 @@ export function NewProductDialog({
         sku: sku.trim(),
         categoryId,
         productType,
-        fragranceId: category.specKind === 'mixture' ? fragranceId : undefined
+        fragranceId
       },
       entitlement.accountId
     );
@@ -197,22 +192,6 @@ export function NewProductDialog({
 
           </Field>
 
-          <Field
-            label="Category"
-            hint="Fixes the shape of the composition and the regimes that apply. It cannot be changed later.">
-
-            <Select
-              value={categoryId}
-              onChange={(event) => changeCategory(event.target.value as CategoryId)}>
-
-              {categories.map((option) =>
-              <option key={option.id} value={option.id}>
-                  {option.name}
-                </option>
-              )}
-            </Select>
-          </Field>
-
           <Field label="Product type">
             <Select value={productType} onChange={(event) => setProductType(event.target.value)}>
               {category.productTypes.map((option) =>
@@ -237,11 +216,10 @@ export function NewProductDialog({
             This product will be subject to{' '}
             {category.regimes.map((regime) => regimeById(regime).short).join(', ')}. Batchlabel
             will draw{' '}
-            {category.artefacts.length + (category.specKind === 'bom' ? 0 : 1)} previews for it
-            at actual size — {category.artefacts.length}{' '}
-            {category.artefacts.length === 1 ? 'label surface' : 'label surfaces'}
-            {category.specKind === 'bom' ? '' : ' and a draft safety data sheet'}. Producing a
-            print-ready file is not built yet.
+            {category.artefacts.length + 1} previews for it at actual size —{' '}
+            {category.artefacts.length}{' '}
+            {category.artefacts.length === 1 ? 'label surface' : 'label surfaces'} and a draft
+            safety data sheet. Producing a print-ready file is not built yet.
           </p>
 
           {/* Said here rather than discovered on the composition screen. The four fields above

@@ -164,7 +164,7 @@ export type RecordEvent = {
   materialId: string | null;
   batchCode: string;
   units: number | null;
-  identityKind: 'batch' | 'serial-range' | null;
+  identityKind: 'batch' | null;
   serialFrom: string;
   serialTo: string;
   obligationId: string;
@@ -438,13 +438,7 @@ function intOrNull(value: unknown): number | null {
   return null;
 }
 
-const KNOWN_ARTEFACT_TYPES: ArtefactType[] = [
-'unit-label',
-'carton',
-'leaflet',
-'listing',
-'rating-plate',
-'sds'];
+const KNOWN_ARTEFACT_TYPES: ArtefactType[] = ['unit-label', 'listing', 'sds'];
 
 
 function artefactType(value: unknown): ArtefactType {
@@ -478,7 +472,7 @@ function toEvent(row: EventRow, lots: RecordLot[], artefacts: ProducedArtefact[]
     materialId: nullableStr(row.material_id),
     batchCode: str(row.batch_code),
     units: intOrNull(row.units),
-    identityKind: identity === 'batch' || identity === 'serial-range' ? identity : null,
+    identityKind: identity === 'batch' ? identity : null,
     serialFrom: str(row.serial_from),
     serialTo: str(row.serial_to),
     obligationId: str(row.obligation_id),
