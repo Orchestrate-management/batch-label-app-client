@@ -42,11 +42,28 @@ describe('what comes out of the entry chunk', () => {
     expect(vendorChunkFor(inPackage('@supabase/auth-js'))).toBe('supabase');
   });
 
+  it('keeps the dropdown together, Radix packages and the two families only it pulls in', () => {
+    // Studio imports NewProductDialog, and that dialog has Selects in it, so the listbox is on
+    // the critical path whether or not anybody opens a dropdown. Naming only the umbrella would
+    // leave most of the 89 kB inside our own fingerprinted chunk — which is the caching
+    // regression this file exists to prevent, arriving as a new dependency rather than as a
+    // tidy-up.
+    expect(vendorChunkFor(inPackage('@radix-ui/react-select'))).toBe('listbox');
+    expect(vendorChunkFor(inPackage('@radix-ui/react-popper'))).toBe('listbox');
+    expect(vendorChunkFor(inPackage('@floating-ui/dom'))).toBe('listbox');
+    expect(vendorChunkFor(inPackage('react-remove-scroll'))).toBe('listbox');
+    expect(vendorChunkFor(inPackage('aria-hidden'))).toBe('listbox');
+  });
+
   it('leaves everything else where the bundler put it', () => {
     // THE LOAD-BEARING ONE. lucide-react is the canary: Vite emits two of its icons as their
     // own on-demand chunks today, and any blanket node_modules rule pulls them forward.
     expect(vendorChunkFor(inPackage('lucide-react'))).toBeUndefined();
     expect(vendorChunkFor(inPackage('tailwind-merge'))).toBeUndefined();
+    // tslib is shared helper code rather than the dropdown's. Pinning it to the listbox chunk
+    // would tie that chunk to whatever else imports it, which is the same mistake as the
+    // blanket rule above wearing a smaller hat.
+    expect(vendorChunkFor(inPackage('tslib'))).toBeUndefined();
   });
 
   it('reads the package name rather than a substring of the path', () => {
