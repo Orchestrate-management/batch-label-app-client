@@ -677,7 +677,7 @@ function TeamTab() {
  * column asserts nothing; a select does.
  */
 function PreferencesTab() {
-  const { enabledCategories, toggleCategory } = useWorkspace();
+  const { enabledCategories, toggleCategory, categoryWrite } = useWorkspace();
   const settings = useSettings();
   const persisting = settings.status === 'ready';
   // Mid-read is its own state and not a failure. The boxes are shown disabled rather than
@@ -719,33 +719,65 @@ function PreferencesTab() {
           </Callout>
         }
 
-        <Card className="divide-y divide-paper-line">
-          {CATEGORIES.map((category) =>
-          <label
-            key={category.id}
-            className="flex cursor-pointer flex-wrap items-center gap-4 px-5 py-4">
+        {/*
+            THE ROW SAYS WHAT THE CLICK DID, and before this it said nothing at all.
+            `savePreferences` is refused (42501, or a request that never lands): the box stays
+            ticked, because the stored row is what draws it, and until now that was the ONLY
+            thing that happened. No alert, no movement, not even a pending state — so the maker
+            reads the control as broken and clicks again, firing another failed write each time.
+            The mechanism is in lib/workspace.tsx; this is the mouth on it.
 
-              <input
-              type="checkbox"
-              checked={enabledCategories.includes(category.id)}
-              disabled={reading}
-              onChange={() => toggleCategory(category.id)}
-              className="h-4 w-4 flex-none accent-teal disabled:opacity-50" />
+            aria-busy rather than a disabled box, matching the consent checkbox in
+            settings/AccountTab.tsx and for its reason: disabling the control somebody has just
+            activated blurs it, and focus lands on the body, so a keyboard user is thrown to the
+            top of the document as their reward for ticking a box.
+         */}
+        <div aria-busy={categoryWrite.state === 'saving' || undefined}>
+          <Card className="divide-y divide-paper-line">
+            {CATEGORIES.map((category) =>
+            <label
+              key={category.id}
+              className="flex cursor-pointer flex-wrap items-center gap-4 px-5 py-4">
 
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-ink">{category.name}</p>
-                <p className="mt-0.5 text-2xs text-ink-tertiary">{category.blurb}</p>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {category.regimes.map((regime) =>
-              <Pill key={regime} tone="neutral">
-                    {regimeById(regime).short}
-                  </Pill>
-              )}
-              </div>
-            </label>
-          )}
-        </Card>
+                <input
+                type="checkbox"
+                checked={enabledCategories.includes(category.id)}
+                disabled={reading}
+                onChange={() => void toggleCategory(category.id)}
+                className="h-4 w-4 flex-none accent-teal disabled:opacity-50" />
+
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-ink">{category.name}</p>
+                  <p className="mt-0.5 text-2xs text-ink-tertiary">{category.blurb}</p>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {category.regimes.map((regime) =>
+                <Pill key={regime} tone="neutral">
+                      {regimeById(regime).short}
+                    </Pill>
+                )}
+                </div>
+              </label>
+            )}
+          </Card>
+
+          {categoryWrite.state === 'saving' &&
+          <p className="mt-2 text-2xs text-ink-tertiary">Saving…</p>
+          }
+          {/* A refusal is an alert; being told the last one has to stay on is not a failure and
+              is announced politely. Collapsing the two would put "something went wrong" over a
+              rule working exactly as written. */}
+          {categoryWrite.state === 'refused' &&
+          <div className="mt-2">
+              <FormError>{categoryWrite.message}</FormError>
+            </div>
+          }
+          {categoryWrite.state === 'declined' &&
+          <div className="mt-2">
+              <FormStatus>{categoryWrite.message}</FormStatus>
+            </div>
+          }
+        </div>
         <p className="mt-3 max-w-prose text-2xs leading-relaxed text-ink-tertiary">
           The last category cannot be switched off — you would have nothing to create a product
           from.

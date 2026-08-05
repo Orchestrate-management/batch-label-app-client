@@ -148,6 +148,12 @@ export default defineConfig({
         // does not error — it answers empty.
         'src/lib/evidence.ts',
         'src/lib/domain.ts',
+        // Third clause, and it is the widest instance of it in the repo: this is the only
+        // thing that can tell "PostgREST has stopped serving our schema" apart from "your
+        // account is having a quiet moment". Wrong here and every screen in the app goes on
+        // offering a Try again button against a fault no maker can affect, and the one person
+        // who can fix it is never told.
+        'src/lib/domain-schema.ts',
       ],
       thresholds: {
         lines: 70,

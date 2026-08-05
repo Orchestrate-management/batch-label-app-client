@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { observedFetch } from './domain-schema';
 import { sharedCookieStorage } from './session-storage';
 
 /**
@@ -27,6 +28,13 @@ export const isSupabaseConfigured = Boolean(url && anonKey);
 
 export const supabase: SupabaseClient | null = isSupabaseConfigured ?
 createClient(url as string, anonKey as string, {
+  // EVERY REQUEST PASSES THROUGH ONE OBSERVER, which is the only arrangement that catches the
+  // fault in lib/domain-schema.ts: the day the project stops exposing the `batchlabel` schema,
+  // every domain request 406s and each data layer says something that sounds temporary. A
+  // classifier the data layers have to remember to call would be correct at the five sites
+  // that know about it and silent at the sixth. This is transparent — same request, same
+  // response, and it only reads a body on a 406.
+  global: { fetch: observedFetch },
   auth: {
     persistSession: true,
     autoRefreshToken: true,

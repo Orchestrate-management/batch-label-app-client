@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { CategoryId } from './model';
 import { CATEGORIES, categoryById } from './categories';
 import { enabledCategoriesOf, useOptionalSettings, DEFAULT_PREFERENCES } from './settings-store';
@@ -19,17 +19,86 @@ import { enabledCategoriesOf, useOptionalSettings, DEFAULT_PREFERENCES } from '.
  * HERE and deliberately loud on the Preferences screen: nothing in this file claims a save,
  * and the screen that does claim one requires the provider before it says anything.
  *
+ * AND THE WRITE IS NOT FIRE-AND-FORGET ANY MORE. This file used to say, in the comment over
+ * `toggleCategory`, that "the Preferences screen wraps this with its own saving and error
+ * state". It did not, and it could not have: the function returned `void` and dropped the
+ * promise, so a refused save reached nobody. Unticking a category against a database that
+ * said no produced NOTHING — the box did not move, no alert appeared, no sentence anywhere
+ * said the save had failed — and the maker's reasonable next move was to click again, which
+ * fired another failed write. `toggleCategory` now returns what happened and this provider
+ * holds it as `categoryWrite`, so any screen drawing these boxes can say it without inventing
+ * a mechanism of its own.
+ *
  * The surface hue is not stored and is not a setting. It is decided by the product currently
  * on screen and lasts as long as that screen is mounted.
  */
 
+/**
+ * What a toggle DID. Never `void`, and that is the fix rather than a detail of it.
+ *
+ * `toggleCategory` used to return nothing and drop the promise. A save refused by the database
+ * therefore reached no caller and no screen: the box stayed where it was, no alert appeared, no
+ * sentence anywhere matched "could not save", and the click produced nothing at all — so the
+ * maker concluded the control was broken and clicked again, firing another failed write each
+ * time. The signature is what allowed that. A caller cannot now drop a refusal without deleting
+ * a value it was handed.
+ */
+export type CategoryToggle =
+/** The database accepted it and the row it returned is what is drawn. */
+{state: 'saved';} |
+/** No store above, or none read yet: held for this visit, and NOTHING WAS SENT. */
+{state: 'session-only';} |
+/** The last one may not be switched off. Nothing was sent and nothing is wrong. */
+{state: 'declined';message: string;} |
+/** The database was asked and said no, or was never reached. Nothing changed. */
+{state: 'refused';message: string;};
+
+/**
+ * The same answer, held for whichever screen is drawing the boxes.
+ *
+ * It lives on the provider and not on the Preferences screen because the provider is the only
+ * thing that knows a write was attempted at all, and because the next screen to draw a category
+ * toggle then gets the pending and refused states without re-implementing them. The comment
+ * that used to sit over `toggleCategory` asserted that the Preferences screen "wraps this with
+ * its own saving and error state". It did not, and there was nothing it could have wrapped.
+ */
+export type CategoryWrite =
+{state: 'idle';} |
+{state: 'saving';id: CategoryId;} |
+{state: 'declined';message: string;} |
+{state: 'refused';message: string;};
+
 type WorkspaceValue = {
   enabledCategories: CategoryId[];
-  toggleCategory: (id: CategoryId) => void;
+  toggleCategory: (id: CategoryId) => Promise<CategoryToggle>;
+  /** What the last toggle did, for the screen drawing these boxes to say out loud. */
+  categoryWrite: CategoryWrite;
   /** Surface hue set, driven only by the product currently in view. */
   surface: 'warm' | 'neutral';
   setSurfaceOverride: (id: CategoryId | null) => void;
 };
+
+/**
+ * Said when the write never came back at all — a dropped request, a rejected promise.
+ *
+ * Distinct from a refusal on purpose: a refusal is the database answering, and this is nobody
+ * answering. Both leave the stored row untouched, which is the only thing the sentence has to
+ * be right about.
+ */
+const NOT_DELIVERED =
+'That did not reach us, so your categories have not been saved. Check your connection and try ' +
+'again — nothing has changed.';
+
+/**
+ * Said when the last ticked box is clicked.
+ *
+ * `cardinality(enabled_categories) > 0` is a CHECK, so this write would be refused; refusing
+ * here means the box does not flicker on and off while a round trip proves what we already
+ * knew. It is NOT an error — nothing failed and nothing was sent — which is why it is its own
+ * state rather than a refusal with a friendlier sentence.
+ */
+const LAST_CATEGORY =
+'Leave at least one category switched on — you would have nothing to create a product from.';
 
 const WorkspaceContext = createContext<WorkspaceValue | null>(null);
 
@@ -39,6 +108,9 @@ export function WorkspaceProvider({ children }: {children: React.ReactNode;}) {
     DEFAULT_PREFERENCES.enabledCategories
   );
   const [surfaceOverride, setSurfaceOverride] = useState<CategoryId | null>(null);
+  const [write, setWrite] = useState<CategoryWrite>({ state: 'idle' });
+  /** Sequence number of the most recent toggle, so a slow earlier one cannot describe it. */
+  const latest = useRef(0);
 
   const surface: 'warm' | 'neutral' = surfaceOverride ?
   categoryById(surfaceOverride).surface :
@@ -61,20 +133,23 @@ export function WorkspaceProvider({ children }: {children: React.ReactNode;}) {
   const enabledCategories = persisting ? enabledCategoriesOf(settings) : sessionCategories;
 
   /**
-   * Toggling switches the box and asks the database to agree.
+   * Toggling switches the box and asks the database to agree — AND WAITS FOR THE ANSWER.
    *
-   * The last category may not be switched off — `cardinality(enabled_categories) > 0` is a
-   * CHECK, so the write would be refused anyway, and refusing here means the box does not
-   * flicker on and off while the round trip proves what we already knew.
+   * THE CHECKBOX STILL DOES NOT MOVE UNTIL THE ROW DOES, because the row is the truth:
+   * `savePreferences` replaces the held preferences with the row the database returned, so a
+   * refused save leaves the box where it was rather than where the click put it. That part was
+   * right and is unchanged. What was wrong is that a refusal then went nowhere at all, so
+   * "refused" and "nothing happened" looked identical from the maker's chair — and the fix for
+   * that is not a sentence on one screen, it is this function having an answer to give.
    *
-   * The write is fire-and-forget from here BECAUSE THE ROW IS THE TRUTH and the screen redraws
-   * from it: `savePreferences` replaces the held preferences with the row the database
-   * returned, so a refused save leaves the checkbox where it was rather than where the click
-   * put it. The Preferences screen wraps this with its own saving and error state; this
-   * provider deliberately has none, because a checkbox in the create dialog's filter list is
-   * not the place to report a database failure.
+   * A REJECTED PROMISE IS CAUGHT rather than left to the window. `savePreferences` resolves
+   * with `{ error }` today, but it is one `await` over a network call away from throwing, and
+   * a `void`-ed rejection is a silent no-op wearing an unhandled-rejection warning nobody sees.
+   *
+   * ONLY THE LATEST CLICK MAY SET THE STATE. Two quick clicks are two writes in flight, and
+   * the first one to come back is not necessarily the one that describes what is on screen.
    */
-  const toggleCategory = (id: CategoryId) => {
+  const toggleCategory = async (id: CategoryId): Promise<CategoryToggle> => {
     const wanted = new Set<CategoryId>(enabledCategories);
     if (wanted.has(id)) wanted.delete(id);else wanted.add(id);
 
@@ -84,22 +159,48 @@ export function WorkspaceProvider({ children }: {children: React.ReactNode;}) {
     wanted.has(category)
     );
 
-    if (next.length === 0) return;
+    if (next.length === 0) {
+      setWrite({ state: 'declined', message: LAST_CATEGORY });
+      return { state: 'declined', message: LAST_CATEGORY };
+    }
 
     if (!persisting) {
       setSessionCategories(next);
-      return;
+      setWrite({ state: 'idle' });
+      return { state: 'session-only' };
     }
-    void settings.savePreferences({
-      enabledCategories: next,
-      defaultMarket: settings.preferences?.defaultMarket ?? null,
-      defaultExport: settings.preferences?.defaultExport ?? null
-    });
+
+    const ticket = (latest.current += 1);
+    setWrite({ state: 'saving', id });
+
+    let outcome: CategoryToggle;
+    try {
+      const result = await settings.savePreferences({
+        enabledCategories: next,
+        defaultMarket: settings.preferences?.defaultMarket ?? null,
+        defaultExport: settings.preferences?.defaultExport ?? null
+      });
+      outcome = result.error ?
+      { state: 'refused', message: result.error } :
+      { state: 'saved' };
+    } catch {
+      outcome = { state: 'refused', message: NOT_DELIVERED };
+    }
+
+    if (latest.current === ticket) {
+      setWrite(
+        outcome.state === 'refused' ?
+        { state: 'refused', message: outcome.message } :
+        { state: 'idle' }
+      );
+    }
+    return outcome;
   };
 
   const value: WorkspaceValue = {
     enabledCategories,
     toggleCategory,
+    categoryWrite: write,
     surface,
     setSurfaceOverride
   };
