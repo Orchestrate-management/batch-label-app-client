@@ -637,7 +637,7 @@ than faked:
 - **Exporting data.** No endpoint exists yet.
 
 The privacy notice promises the last two within a month, by email to
-privacy@batchlabel.co.uk. Until they are built, that promise is the product.
+hello@batchlabel.xyz. Until they are built, that promise is the product.
 
 That the export is still a toast is also why no "activation" event is sent to Meta:
 an advertising event for an action that produces nothing is a fabricated conversion.
@@ -652,9 +652,8 @@ The app loads the Meta Pixel for one event, `InitiateCheckout`, gated on
 `brand_memberships.advertising_opt_in` and failing closed in every other case. It has
 no cookie banner and sends no `PageView`. See `docs/META_TRACKING.md`, and
 `batch-label/docs/CONSENT.md` for the consent model both sites obey.
-Settings → Identity and Settings → Team still read from fixtures. The SKU count on the billing
-page is the fixture product list, because there is no `products` table yet; the **allowance**
-it is measured against is real, read from `entitlements.sku_limit`.
+The SKU count on the billing page is real and is counted by the database over
+`batchlabel.products`, and so is the allowance it is measured against.
 
 What was removed rather than left looking real: the `PLANS` array in `src/lib/products.ts`
 (Maker £24 for 3 products, Studio £58 for 10, House £140 for 40 — three tiers at three prices
@@ -662,9 +661,29 @@ that existed nowhere but that file, rendered to signed-in customers), along with
 card on file, invoice history and renewal date beside them.
 
 Not built, and therefore not sold anywhere in this app: the exporter, SDS upload, an archive,
-editor-seat invitations, multi-client workspaces, bulk generation and the API. Editor seats
-appear on `/billing` because they are a real column on the plan and on the account, and they
-are labelled as not yet available rather than offered.
+bulk generation and the API.
+
+**Editor seats and roles have moved out of that list**, and the paragraph they used to sit in
+was rewritten rather than softened. Since `20260805120000_member_roles_and_seats.sql`:
+
+- `public.account_members.role` is a foreign key to `public.account_roles`, and thirty-seven
+  write policies gate on `public.can(account_id, '<capability>')`, so a viewer and an editor no
+  longer have identical database rights.
+- The seat ceiling is enforced at commit by a deferred constraint trigger. Pending invitations
+  reserve a seat; read-only members are free and unlimited on every tier.
+- Settings → Team lists the real members, changes roles, removes people and shows seats used
+  against the plan. Settings → Identity has read and written `batchlabel.business_identity`
+  since the settings rail landed, and neither tab reads a fixture.
+- Multi-account membership is real: `public.my_accounts()` is the app's source of account
+  identity, and `src/lib/active-account.tsx` asks which workspace somebody is in rather than
+  guessing.
+
+**What is still not built is the part that SENDS an invitation email.**
+`public.create_account_invite` is service-role only by design, so it can only be reached
+through a www endpoint, and `batch-label-www/api/` does not have one yet. `sendInvite` in
+`src/lib/team.ts` posts to `/api/account/invite` and reads a 404 as its own state, with copy
+that says so and gives an address to write to. Accepting an invitation IS built and reachable,
+at `/invite/:token`.
 
 `src/components/PlanNotice.test.ts` scans every billing surface for sentences describing any
 of them and fails the build on one.

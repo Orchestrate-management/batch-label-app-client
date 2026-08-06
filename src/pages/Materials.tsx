@@ -4,6 +4,7 @@ import { ArrowLeftIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '../components/AppShell';
 import { NoAccountNotice } from '../components/NoAccountNotice';
+import { ReadOnlyNotice } from '../components/ReadOnlyNotice';
 import {
   Button,
   Callout,
@@ -30,6 +31,7 @@ import {
   removeChildRow } from
 '../lib/materials';
 import type { MaterialUsage } from '../lib/materials';
+import { useCan } from '../lib/active-account';
 import { useMaterials } from '../lib/materials-store';
 import {
   DocumentKind,
@@ -118,6 +120,9 @@ export function Materials() {
   const { materialClass, materialId } = useParams();
   const navigate = useNavigate();
   const { status, materials, error, refresh } = useMaterials();
+  // ABOVE THE EARLY RETURNS. `useCan` is a hook and this component returns the detail screen
+  // from inside a conditional a few lines down, so calling it later would be a conditional hook.
+  const mayWrite = useCan().can('write_data');
   const [adding, setAdding] = useState(false);
 
   const activeClass: MaterialClass = materialClass === 'packaging' ? 'packaging' : 'ingredient';
@@ -160,7 +165,7 @@ export function Materials() {
         title="Materials"
         description="Everything you buy, held with what its supplier document says about it. Your own materials are the ones a classification is calculated from; where Batchlabel publishes a material for the same thing, yours wins."
         actions={
-        status === 'ready' ?
+        status === 'ready' && mayWrite ?
         <Button variant="primary" onClick={() => setAdding(true)}>
               <PlusIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
               Add a material
@@ -204,6 +209,8 @@ export function Materials() {
         }
 
         {status === 'no-account' && <NoAccountNotice />}
+
+        <ReadOnlyNotice capability="write_data" />
 
         {status === 'unavailable' &&
         <Callout tone="warn" title="Your materials are not available">
@@ -255,10 +262,12 @@ export function Materials() {
               'Add what you actually buy, with what its supplier document says, and the classification follows from it.'
               }
               action={
+              mayWrite ?
               <Button variant="primary" onClick={() => setAdding(true)}>
                       <PlusIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
                       Add a material
-                    </Button>
+                    </Button> :
+              undefined
               } /> :
 
 
@@ -486,7 +495,13 @@ function MaterialDetail({ material }: {material: Material;}) {
   const [busy, setBusy] = useState(false);
   const [confirmingArchive, setConfirmingArchive] = useState(false);
 
+  // TWO DIFFERENT QUESTIONS AND BOTH HAVE TO BE YES. `own` is a fact about the ROW: a reference
+  // material Batchlabel publishes cannot be edited by anybody, because a shared row moving under
+  // a maker is the failure the override rule exists to prevent. `mayWrite` is a fact about the
+  // PERSON. Conflating them would have let a viewer edit their own account's materials.
   const own = material.source === 'account';
+  const mayWrite = useCan().can('write_data');
+  const editable = own && mayWrite;
 
   const takeOver = async () => {
     setBusy(true);
@@ -508,7 +523,7 @@ function MaterialDetail({ material }: {material: Material;}) {
   const archive = async () => {
     if (!own) return;
     setBusy(true);
-    const result = await archiveMaterial(material.id);
+    const result = await archiveMaterial(material.id, accountId);
     setBusy(false);
     setConfirmingArchive(false);
     if (!result.ok) {
@@ -541,12 +556,12 @@ function MaterialDetail({ material }: {material: Material;}) {
               <ArrowLeftIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
               Register
             </Button>
-            {!own &&
+            {!own && mayWrite &&
           <Button variant="primary" disabled={busy} onClick={takeOver}>
                 Hold my own version
               </Button>
           }
-            {own && material.archived !== true &&
+            {editable && material.archived !== true &&
           <Button
             variant="secondary"
             disabled={busy}
@@ -598,11 +613,11 @@ function MaterialDetail({ material }: {material: Material;}) {
         }
 
         {material.class === 'ingredient' ?
-        <IngredientDetail material={material} editable={own} /> :
+        <IngredientDetail material={material} editable={editable} /> :
         <PackagingDetail material={material} />
         }
 
-        <DocumentSection material={material} editable={own} />
+        <DocumentSection material={material} editable={editable} />
       </div>
     </main>);
 
@@ -836,6 +851,7 @@ function RemoveButton({
 
 
 }: {label: string;rowId: string;table: 'material_hazards' | 'material_allergens' | 'material_ifra_limits';onDone: () => Promise<void>;}) {
+  const { accountId } = useMaterials();
   const [busy, setBusy] = useState(false);
   return (
     <Button
@@ -845,7 +861,7 @@ function RemoveButton({
       disabled={busy}
       onClick={async () => {
         setBusy(true);
-        const result = await removeChildRow(table, rowId);
+        const result = await removeChildRow(table, rowId, accountId);
         if (!result.ok) {
           setBusy(false);
           toast('Nothing was removed', { description: result.message });

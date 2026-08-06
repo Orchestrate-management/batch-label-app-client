@@ -1,9 +1,11 @@
 import { Suspense } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
+import { AccountGate } from './components/AccountChooser';
 import { AppShell } from './components/AppShell';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ScreenLoading } from './components/ScreenLoading';
+import { ActiveAccountProvider } from './lib/active-account';
 import { AuthProvider, RequireAuth } from './lib/auth';
 import { EntitlementProvider } from './lib/entitlement';
 import { lazyScreen } from './lib/lazy-screen';
@@ -54,6 +56,9 @@ import('./pages/Settings').then((module) => ({ default: module.Settings }))
 const Billing = lazyScreen('Billing', () =>
 import('./pages/Billing').then((module) => ({ default: module.Billing }))
 );
+const AcceptInvite = lazyScreen('invitation', () =>
+import('./pages/AcceptInvite').then((module) => ({ default: module.AcceptInvite }))
+);
 /*
  * NOT lazy, deliberately, and it is the only screen singled out.
  *
@@ -101,6 +106,20 @@ export function App() {
       <AuthProvider>
         <RequireAuth>
           <MetaTrackingProvider>
+            {/* WHICH ACCOUNT, BEFORE ANYTHING THAT DEPENDS ON ONE.
+
+                It sits above the entitlement because the entitlement is now an answer ABOUT an
+                account rather than about a person: `public.account_entitlement(id)` is keyed on
+                the account, which is the only way an invited member gets an allowance at all.
+                It sits above the router because a screen must never render before the account
+                its data would be scoped to is settled.
+
+                AccountGate is the one thing between the provider and the rest of the app, and
+                it intervenes in exactly one state: more than one account with none chosen. Every
+                other state falls through, including having no account at all, because the
+                screens already say that better than a gate could. */}
+            <ActiveAccountProvider>
+              <AccountGate>
             <EntitlementProvider>
               {/* THREE ACCOUNT-SCOPED READS, ALL INSIDE THE ENTITLEMENT AND ALL OUTSIDE THE
                   ROUTER, and the nesting order between them carries no meaning: nothing in one
@@ -124,6 +143,8 @@ export function App() {
                 </MaterialsProvider>
               </SettingsProvider>
             </EntitlementProvider>
+              </AccountGate>
+            </ActiveAccountProvider>
           </MetaTrackingProvider>
         </RequireAuth>
       </AuthProvider>
@@ -190,6 +211,11 @@ function RoutedScreens() {
             path="/products/:productId/artefacts/:artefactType"
             element={<ArtefactDesigner />} />
 
+          {/* An invitation link. The token is in the path rather than in a query string so it
+              stays out of a Referer header when the page loads a third-party resource, and it
+              is exchanged for a membership by an RPC that reads the caller's own verified email
+              before it accepts anything. */}
+          <Route path="/invite/:token" element={<AcceptInvite />} />
           <Route path="/records" element={<Records />} />
           <Route path="/records/:recordCode" element={<Records />} />
           <Route path="/compliance" element={<Navigate to="/" replace />} />

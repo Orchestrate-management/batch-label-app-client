@@ -485,12 +485,19 @@ export type ArtefactStock = {
   sheet: string;
 };
 
-export type TeamMember = {
-  name: string;
-  email: string;
-  role: 'Owner' | 'Maker' | 'Read only';
-  lastActive: string;
-};
+/*
+ * `TeamMember` USED TO LIVE HERE AND IS DELETED RATHER THAN MOVED.
+ *
+ * It declared `role: 'Owner' | 'Maker' | 'Read only'` and was fed by three invented people in
+ * the fixtures. That is a FOURTH role vocabulary, and it disagreed with the only one that
+ * decides anything: `public.account_members.role`, which is viewer | editor | admin | owner and
+ * is a foreign key to `public.account_roles`. An app carrying two role unions is an app where
+ * one screen believes somebody is a "Maker" and the database believes they are an editor, and
+ * the two spellings are close enough that nobody notices until a gate reads the wrong one.
+ *
+ * The real shapes are `AccountRole` and `Capability` in lib/permissions.ts, mirroring the two
+ * tables the database holds the matrix in, and `AccountMember` in lib/team.ts for a row of it.
+ */
 
 export function formatDate(iso?: string): string {
   if (!iso || iso === '—') return '—';

@@ -4,6 +4,7 @@ import { ArrowRightIcon, PackageIcon, PlusIcon, RefreshCwIcon } from 'lucide-rea
 import { PageHeader } from '../components/AppShell';
 import { NewProductDialog } from '../components/NewProductDialog';
 import { NoAccountNotice } from '../components/NoAccountNotice';
+import { ReadOnlyNotice } from '../components/ReadOnlyNotice';
 import { PlanNotice } from '../components/PlanNotice';
 import { SkuLimitNotice } from '../components/SkuLimitNotice';
 import {
@@ -15,6 +16,7 @@ import {
   SectionTitle,
   Skeleton } from
 '../components/ui/Primitives';
+import { useCan } from '../lib/active-account';
 import { categoryById } from '../lib/categories';
 import { derive } from '../lib/derive';
 import { useEntitlement } from '../lib/entitlement';
@@ -44,6 +46,8 @@ import { useProducts } from '../lib/product-store';
 export function Studio() {
   const { status, products, error, refresh } = useProducts();
   const entitlement = useEntitlement();
+  const { can: mayDo } = useCan();
+  const mayWrite = mayDo('write_data');
   /**
    * SUBSCRIBED TO, AND IN THE MEMO KEY BELOW, because this queue's answer depends on it.
    *
@@ -127,7 +131,11 @@ export function Studio() {
    * create would have worked — is the one that costs a maker a product. See the comment on
    * that function; it is doing the arguing.
    */
-  const offerCreate = !createIsCertainToFail(entitlement);
+  // AND THE ROLE. `createIsCertainToFail` answers the money-and-setup half of the question;
+  // `can('write_data')` answers the permission half, and the two are separate facts. A viewer on
+  // a healthy Consultant plan is refused by the INSERT policy on specifications with a bare
+  // 42501, so offering the form would collect four fields in order to be told nothing useful.
+  const offerCreate = !createIsCertainToFail(entitlement) && mayWrite;
 
   /**
    * How many products the ACCOUNT holds, which is not the length of the list on this screen.
@@ -234,6 +242,8 @@ export function Studio() {
             nothing anywhere telling them that is what happened. Same sentences the products
             screen shows, because it is the same fact. */}
         {status === 'no-account' && <NoAccountNotice />}
+
+        <ReadOnlyNotice capability="write_data" />
 
         {ready && products.length === 0 &&
         <EmptyState

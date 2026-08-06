@@ -66,6 +66,22 @@ const NO_ACCOUNT_MESSAGE =
 'There is no account to record this against yet, so nothing has been saved. Finish setting up ' +
 'your account and this will work.';
 
+/**
+ * Said when a write reached this file with no account id.
+ *
+ * Everything here is APPEND-ONLY. `authenticated` holds SELECT and INSERT on `record_events`
+ * and nothing more, and a trigger refuses an UPDATE or DELETE from any session carrying a JWT.
+ * So a row filed against the wrong account cannot be moved or removed by anybody, which is why
+ * this refuses rather than letting the column default guess.
+ */
+const ACCOUNT_UNRESOLVED_MESSAGE =
+'We have not worked out which workspace this belongs to, so nothing was sent and nothing has ' +
+'been recorded. Reload the page and try again.';
+
+function refuseWithoutAccount(): {ok: false;reason: WriteFailure;message: string;} {
+  return { ok: false, reason: 'no_account', message: ACCOUNT_UNRESOLVED_MESSAGE };
+}
+
 const REFUSED_MESSAGE =
 'That was refused, so nothing has been recorded and nothing has changed. Waiting will not clear ' +
 'it and trying again will not either — get in touch and we will tell you why and put it right.';
@@ -110,6 +126,10 @@ type EvidenceInput = {
 export async function recordEvidence(input: EvidenceInput): Promise<WriteResult<RecordedEvidence>> {
   const client = domainClient();
   if (!client) return { ok: false, reason: 'not_configured', message: NOT_CONFIGURED_MESSAGE };
+  // The account is REQUIRED and is no longer allowed to fall through to the column default.
+  // record_events is append-only and the browser holds neither UPDATE nor DELETE on it, so a
+  // row filed against the wrong account is a row nobody can afterwards move.
+  if (!input.accountId) return refuseWithoutAccount();
 
   const summary = input.summary.trim();
   if (!summary) {
@@ -123,13 +143,12 @@ export async function recordEvidence(input: EvidenceInput): Promise<WriteResult<
     };
   }
 
-  const account = input.accountId ? { account_id: input.accountId } : {};
   const kind = input.obligationId ? eventKindFor(input.obligationId) : SDS_REVIEW_KIND;
 
   const { data, error } = await client.
   from('record_events').
   insert({
-    ...account,
+    account_id: input.accountId,
     kind,
     product_id: input.product.id,
     // The composition this evidence was recorded against, so the log can still say which
@@ -246,6 +265,7 @@ export async function recordArtefactPrinted(input: {
 }): Promise<WriteResult<RecordedPrint>> {
   const client = domainClient();
   if (!client) return { ok: false, reason: 'not_configured', message: NOT_CONFIGURED_MESSAGE };
+  if (!input.accountId) return refuseWithoutAccount();
 
   const { data: hash, error: hashError } = await client.rpc('artefact_source_fingerprint', {
     p_product_id: input.product.id
@@ -272,13 +292,12 @@ export async function recordArtefactPrinted(input: {
   const held = (highest as {version?: number | string | null;} | null)?.version;
   const version = Number.isFinite(Number(held)) ? Number(held) + 1 : 1;
 
-  const account = input.accountId ? { account_id: input.accountId } : {};
   const at = input.occurredAt || new Date().toISOString();
 
   const { data: artefact, error: artefactError } = await client.
   from('artefacts').
   insert({
-    ...account,
+    account_id: input.accountId,
     product_id: input.product.id,
     artefact_type: input.artefactType,
     version,
@@ -310,7 +329,7 @@ export async function recordArtefactPrinted(input: {
   // and it says which half landed — the same rule saveComposition follows for its own
   // non-atomic pair.
   const { error: logError } = await client.from('record_events').insert({
-    ...account,
+    account_id: input.accountId,
     kind: 'artefact.printed',
     product_id: input.product.id,
     specification_id: input.product.specificationId ?? null,

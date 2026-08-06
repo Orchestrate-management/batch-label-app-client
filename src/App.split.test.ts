@@ -54,6 +54,7 @@ describe('App.tsx', () => {
 
   it('splits every other screen out', () => {
     expect(matches(SPLIT_SCREEN).sort()).toEqual([
+    'AcceptInvite',
     'ArtefactDesigner',
     'Billing',
     'Materials',

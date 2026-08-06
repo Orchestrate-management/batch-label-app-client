@@ -42,6 +42,9 @@ function row(overrides: Partial<EntitlementRow> = {}): EntitlementRow {
     skuCount: null,
     skuUnlimited: false,
     editorSeatLimit: 1,
+    seatsInUse: null,
+    callerRole: null,
+
     canModify: null,
     ...overrides
   };
@@ -418,6 +421,9 @@ describe('reading the raw row', () => {
       skuCount: null,
       skuUnlimited: null,
       editorSeatLimit: null,
+      seatsInUse: null,
+      callerRole: null,
+
       canModify: null
     });
   });
@@ -501,6 +507,10 @@ describe('reading the raw row', () => {
       skuUnlimited: false,
       skuCount: 12,
       editorSeatLimit: 3,
+      // Both null off the VIEW, which carries neither column. They arrive only from
+      // `public.account_entitlement`, which is keyed on the account rather than on who owns it.
+      seatsInUse: null,
+      role: null,
       canModify: null,
       currentPeriodEnd: '2026-09-14T00:00:00Z',
       cancelAtPeriodEnd: false,

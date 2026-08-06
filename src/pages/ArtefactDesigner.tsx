@@ -24,6 +24,7 @@ import {
   Select,
   Skeleton } from
 '../components/ui/Primitives';
+import { useCan } from '../lib/active-account';
 import { useEntitlement } from '../lib/entitlement';
 import { ArtefactRenderer } from '../components/artefact/ArtefactRenderer';
 import { ArtefactType, Market, Product, formatDate } from '../lib/model';
@@ -144,6 +145,10 @@ function ArtefactDesignerView({ product }: {product: Product;}) {
    */
   const entitlement = useEntitlement();
   const canExport = entitlement.active;
+  // A PRINT RECORD IS A WRITE INTO THE APPEND-ONLY LOG, and it is the row the drift check reads
+  // to decide whether a label already on a shelf still matches the recipe. A viewer's insert is
+  // refused by the policy on artefacts with a bare 42501, so the button is not offered.
+  const mayWrite = useCan().can('write_data');
 
   // The safety data sheet is a document, not a designed surface. It is produced
   // on the product screen and previewed in the rail, never laid out here.
@@ -290,10 +295,12 @@ function ArtefactDesignerView({ product }: {product: Product;}) {
 
               Export PDF
             </Button>
-            <Button variant="primary" onClick={() => setRecording(true)}>
-              <StampIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
-              Record a print
-            </Button>
+            {mayWrite &&
+          <Button variant="primary" onClick={() => setRecording(true)}>
+                <StampIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
+                Record a print
+              </Button>
+          }
           </>
         }
         meta={

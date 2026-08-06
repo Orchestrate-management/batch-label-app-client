@@ -4,6 +4,7 @@ import { Button, Card, Field, FormError, Input, Select } from './ui/Primitives';
 import { PlanNotice } from './PlanNotice';
 import { SkuLimitNotice } from './SkuLimitNotice';
 import { CATEGORIES, categoryById } from '../lib/categories';
+import { useCan } from '../lib/active-account';
 import { useEntitlement } from '../lib/entitlement';
 import { createProduct, type WriteFailure } from '../lib/products';
 import { useProducts } from '../lib/product-store';
@@ -76,6 +77,11 @@ export function NewProductDialog({
   // Only `suspended`. Free, lapsed and past_due all create products — the SKU allowance is the
   // only thing a plan governs here, and SkuLimitNotice below is what states it.
   const suspended = !entitlement.loading && entitlement.status === 'suspended';
+  // AND THE ROLE, WHICH IS A DIFFERENT QUESTION FROM THE PLAN. Every surface that opens this
+  // dialog already hides its button for a viewer; this is the backstop for the one that does
+  // not, and for a role that changed while the dialog was open.
+  const { can, reason } = useCan();
+  const mayWrite = can('write_data');
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -141,6 +147,25 @@ export function NewProductDialog({
     onClose();
     navigate(`/products/${result.value.id}`);
   };
+
+  // SAID BEFORE ANYTHING IS TYPED, and as an early return rather than a disabled button, because
+  // there is nothing on this form for somebody who cannot create a product. The suspended branch
+  // below is the same shape for the same reason.
+  if (!mayWrite) {
+    return (
+      <Dialog>
+        <h2 className="font-display text-lg font-medium text-ink">New product</h2>
+        <p className="mt-4 max-w-prose text-sm leading-relaxed text-ink-secondary">
+          {reason('write_data')}
+        </p>
+        <div className="flex justify-end pt-4">
+          <Button type="button" variant="quiet" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      </Dialog>);
+
+  }
 
   if (suspended) {
     return (

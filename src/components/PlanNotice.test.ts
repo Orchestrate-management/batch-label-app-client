@@ -69,7 +69,7 @@ describe('the notice, state by state', () => {
     // They may well already be paying. An upgrade button here would be insulting and would
     // not fix anything.
     const copy = copyFor('suspended', 'Exporting', 'Consultant');
-    expect(copy?.action).toMatchObject({ kind: 'external', href: 'mailto:hello@batchlabel.co.uk' });
+    expect(copy?.action).toMatchObject({ kind: 'external', href: 'mailto:hello@batchlabel.xyz' });
     expect(copy?.body).not.toMatch(/upgrade|plan again/i);
   });
 

@@ -49,6 +49,15 @@ const db = vi.hoisted(() => {
     // difference between null and a falsy value is the difference between a field left blank
     // and a false declaration.
     updatePayloads: [] as Array<[string, Record<string, unknown>]>,
+    /**
+     * Every `.eq()` an UPDATE sent, by table.
+     *
+     * Recorded because an update is now scoped by account AND by row id. RLS is still the
+     * boundary; what the account filter adds is that this app never sends a row id without
+     * saying which account it believes it is in, and a test is the only thing that can hold
+     * that convention in place.
+     */
+    updateFilters: [] as Array<[string, string, unknown]>,
     // Which Postgres schema each read and write went through. Recorded rather than
     // ignored: the domain tables moved out of `public` so a second brand can have
     // its own `products`, and a client that quietly went back to `public` would
@@ -147,26 +156,39 @@ const db = vi.hoisted(() => {
           });
           return q;
         },
-        update: (payload: Record<string, unknown>) => ({
-          eq: (_column: string, value: unknown) => {
+        // CHAINABLE, because every UPDATE now carries two filters: the account and the row.
+        // The recording moved from `.eq()` to the terminal for the same reason — with two
+        // filters, recording on each one would count every write twice.
+        update: (payload: Record<string, unknown>) => {
+          const filters: Array<[string, unknown]> = [];
+          const settle = () => {
+            const rowId = String(filters.find(([column]) => column === 'id')?.[1] ?? '');
             if (payload.archived_at) {
-              state.archived.push(String(value));
-              return Promise.resolve({ data: null, error: null });
+              state.archived.push(rowId);
+              return { data: null, error: null };
             }
             state.updated.push(table);
             state.updatePayloads.push([table, payload]);
-            const result = () =>
-            table === 'specifications' ? state.specUpdate : state.productUpdate;
-            // `.select()` after `.eq()` is what makes an UPDATE return the rows it touched.
+            return table === 'specifications' ? state.specUpdate : state.productUpdate;
+          };
+          const q: Record<string, unknown> = {};
+          Object.assign(q, {
+            eq: (column: string, value: unknown) => {
+              filters.push([column, value]);
+              state.updateFilters.push([table, column, value]);
+              return q;
+            },
+            // `.select()` after the filters is what makes an UPDATE return the rows it touched.
             // Without it PostgREST answers 204 and supabase-js reports success whether one row
             // changed or none did — which is how a write refused by an RLS `using` clause used
             // to be reported to a maker as a successful save. The mock has to be able to hand
             // back an empty array, because that is the shape the bug arrives in.
-            return Object.assign(Promise.resolve(result()), {
-              select: () => Promise.resolve(result())
-            });
-          }
-        })
+            select: () => Promise.resolve(settle()),
+            then: (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+            Promise.resolve(settle()).then(resolve, reject)
+          });
+          return q;
+        }
       };
     }
   };
@@ -640,12 +662,20 @@ describe('creating a product', () => {
     expect(db.state.productPayload?.account_id).toBe('acct-1111');
   });
 
-  it('omits the column entirely when no account has been resolved', async () => {
-    // Omitted means the database's own default decides. Sending null would be an explicit
-    // claim that the row belongs to no account, and would fail the NOT NULL constraint.
-    await createProduct(input);
-    expect(db.state.specPayload).not.toHaveProperty('account_id');
-    expect(db.state.productPayload).not.toHaveProperty('account_id');
+  it('refuses outright when no account has been resolved, and sends nothing', async () => {
+    // THIS ASSERTION IS THE REVERSE OF WHAT IT USED TO BE, and the reversal is the change.
+    // The column used to be omitted so that `public.current_account_id()` could decide, which
+    // was correct for exactly as long as every person held exactly one account. That function
+    // returns NULL for anybody holding two and its own comment says it will not be taught to
+    // disambiguate, so the omission stopped meaning "the database will work it out" and started
+    // meaning "this row is refused, or filed against whichever account they happen to be in".
+    // Refusing here is what makes the failure loud instead of silent.
+    const result = await createProduct(input, null);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('no_account');
+    expect(db.state.specPayload).toBeNull();
+    expect(db.state.productPayload).toBeNull();
   });
 
   /**
@@ -682,16 +712,17 @@ describe('creating a product', () => {
     expect(db.state.productPayload).not.toHaveProperty('accountId');
   });
 
-  it('sends no account at all when the session has none, whatever the caller passed', async () => {
-    // The unresolved case is where a supplied id would be most tempting and most wrong: with
-    // nothing to check it against, the column default — current_account_id() — is the only
-    // thing entitled to decide.
+  it('sends nothing at all when the session has no account, whatever the caller passed', async () => {
+    // The unresolved case is where a supplied id would be most tempting and most wrong: there
+    // is nothing to check it against. The answer is not to fall back to the column default and
+    // not to trust the caller. It is to refuse before a request is made.
     const fromTheScreen = { ...input, account_id: 'acct-somebody-elses' } as NewProductInput;
 
-    await createProduct(fromTheScreen);
+    const result = await createProduct(fromTheScreen, null);
 
-    expect(db.state.specPayload).not.toHaveProperty('account_id');
-    expect(db.state.productPayload).not.toHaveProperty('account_id');
+    expect(result.ok).toBe(false);
+    expect(db.state.specPayload).toBeNull();
+    expect(db.state.productPayload).toBeNull();
   });
 
   /**
@@ -945,14 +976,18 @@ describe('saving a composition', () => {
     expect(recordLog.changed).toHaveLength(0);
   });
 
-  it('still saves when no account was passed, and simply does not log it', async () => {
-    const result = await saveComposition(product, product.spec);
+  it('refuses to save at all when no account was passed, and sends nothing', async () => {
+    // THE OPPOSITE OF WHAT THIS USED TO ASSERT. The account was optional here, "for the log
+    // line only", while both UPDATE statements leaned on row level security alone. That stopped
+    // being defensible when zero-rows-changed became the way a VIEWER's write is refused as well
+    // as a suspended member's: an UPDATE with a row id and no account is one this app cannot say
+    // anything true about when it comes back empty.
+    const result = await saveComposition(product, product.spec, null);
 
-    expect(result.ok).toBe(true);
-    // The stub records the call; the real implementation returns early on a null account. A
-    // composition edit refusing to commit because we could not file its log entry would be the
-    // tail wagging the dog.
-    expect(recordLog.changed[0]?.[0] ?? null).toBeNull();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('no_account');
+    expect(db.state.updated).toEqual([]);
+    expect(recordLog.changed).toHaveLength(0);
   });
 
 
@@ -964,7 +999,7 @@ describe('saving a composition', () => {
     // rather than as one nobody has picked yet.
     const unfinished = { ...product.spec, baseId: '', dyeId: '', packagingId: '', netQuantity: 0 };
 
-    const result = await saveComposition(product, unfinished);
+    const result = await saveComposition(product, unfinished, 'acct-1111');
 
     expect(result.ok).toBe(true);
     const [[, specPayload], [, packPayload]] = db.state.updatePayloads;
@@ -978,7 +1013,7 @@ describe('saving a composition', () => {
 
   it('does not offer a retry on a write the policy refused', async () => {
     db.state.specUpdate = { data: null, error: { code: '42501', message: 'refused' } };
-    const result = await saveComposition(product, product.spec);
+    const result = await saveComposition(product, product.spec, 'acct-1111');
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -1000,7 +1035,7 @@ describe('saving a composition', () => {
     // specification screen open. It used to return {ok: true}; the screen said it had saved
     // and then reloaded into "No such product".
     db.state.specUpdate = { data: [], error: null };
-    const result = await saveComposition(product, product.spec);
+    const result = await saveComposition(product, product.spec, 'acct-1111');
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -1017,7 +1052,7 @@ describe('saving a composition', () => {
     // the direction that makes somebody stop trying — and stopping is what makes it durable,
     // because pressing save again heals it.
     db.state.productUpdate = { data: null, error: { message: 'Failed to fetch' } };
-    const result = await saveComposition(product, product.spec);
+    const result = await saveComposition(product, product.spec, 'acct-1111');
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -1034,7 +1069,7 @@ describe('saving a composition', () => {
     // came back from it — so this is a half-save however the pack failed, and the copy that
     // says so is the only one available.
     db.state.productUpdate = { data: [], error: null };
-    const result = await saveComposition(product, product.spec);
+    const result = await saveComposition(product, product.spec, 'acct-1111');
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('partial_save');
@@ -1042,7 +1077,7 @@ describe('saving a composition', () => {
   });
 
   it('writes both halves when both succeed', async () => {
-    const result = await saveComposition(product, product.spec);
+    const result = await saveComposition(product, product.spec, 'acct-1111');
     expect(result.ok).toBe(true);
     expect(db.state.updated).toEqual(['specifications', 'products']);
   });
@@ -1052,7 +1087,7 @@ describe('saving a composition', () => {
     // proceed would be to pick a specification, and a wrong pick rewrites the classification —
     // the fragrance, the base, the load — of a DIFFERENT product. Silently. So it does not
     // proceed, and it sends nothing.
-    const result = await saveComposition({ ...product, specificationId: '' }, product.spec);
+    const result = await saveComposition({ ...product, specificationId: '' }, product.spec, 'acct-1111');
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('failed');

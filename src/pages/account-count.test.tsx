@@ -83,6 +83,9 @@ const ROW: EntitlementRow = {
   skuCount: 0,
   skuUnlimited: false,
   editorSeatLimit: 1,
+  seatsInUse: null,
+  callerRole: null,
+
   canModify: true
 };
 

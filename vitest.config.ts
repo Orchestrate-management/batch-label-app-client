@@ -163,6 +163,25 @@ export default defineConfig({
         // the property the whole auth change exists for; both halves were carried by tests
         // this list did not look at.
         'src/lib/auth.tsx',
+        // The permission and membership rail, added with roles and seats. All three clauses of
+        // the rule above apply and the third one hardest.
+        //
+        // permissions.ts is the app's copy of a matrix the database holds in two tables, and it
+        // decides which controls a person is offered. Being wrong here does not cost an
+        // unauthorised write (SQL refuses those whatever this file said) but it does cost a
+        // viewer being invited to fill in a form in order to be refused, or an owner being told
+        // their own account is read-only.
+        //
+        // team.ts is every read and write of who is in an account: the member list, the
+        // invitations, the role changes and the removals. A removal reported as done when it did
+        // not happen leaves somebody with access their employer believes they no longer have,
+        // which is the kind of sentence this product exists to be able to make truthfully.
+        //
+        // active-account.tsx decides WHICH account everything else is scoped to. Getting it
+        // wrong files a maker's product in a different business of theirs.
+        'src/lib/permissions.ts',
+        'src/lib/team.ts',
+        'src/lib/active-account.tsx',
       ],
       thresholds: {
         lines: 70,

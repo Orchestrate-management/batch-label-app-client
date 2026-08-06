@@ -65,7 +65,7 @@ export const HOME_URL = MARKETING_URL;
  * never finished setting up. Published on the marketing site's footer, so it is a real
  * address rather than one invented here.
  */
-export const SUPPORT_EMAIL = 'hello@batchlabel.co.uk';
+export const SUPPORT_EMAIL = 'hello@batchlabel.xyz';
 
 /**
  * Reset by email, for someone who cannot supply their current password.

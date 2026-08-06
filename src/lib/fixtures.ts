@@ -6,7 +6,7 @@ import {
   PackagingMaterial,
   Product,
   ProductEvidence,
-  TeamMember } from
+  } from
 './model';
 
 /**
@@ -386,10 +386,13 @@ export function driftFor(product: Product): Drift | null {
 
 /* ------------------------------------------------------------- workspace */
 
-export const TEAM: TeamMember[] = [
-{ name: 'Nadia Osei', email: 'nadia@hearthandhollow.co.uk', role: 'Owner', lastActive: 'Today' },
-{ name: 'Tom Rivers', email: 'tom@hearthandhollow.co.uk', role: 'Maker', lastActive: 'Yesterday' },
-{ name: 'Priya Shah', email: 'priya@kelder-compliance.eu', role: 'Read only', lastActive: '12 July' }];
+/*
+ * `TEAM` IS DELETED. It held Nadia Osei, Tom Rivers and Priya Shah, and it was the only thing
+ * feeding the `TeamMember` type that model.ts no longer declares. The team tab lists
+ * `public.account_members` now, so a fixture of three people who do not exist has nothing left
+ * to render into, and leaving it here would keep a fourth role vocabulary alive in the type
+ * layer for the next person who autocompletes an import.
+ */
 
 
 /**

@@ -92,6 +92,20 @@ const NO_ACCOUNT_MESSAGE =
 'There is no account to save this into yet — your signup was not finished, so nothing has ' +
 'been saved. Finish setting up your account and this will work.';
 
+/**
+ * Said when a write reached this file with no account id, which is now a refusal rather than a
+ * fallback to the column default. The argument is in lib/products.ts beside its own copy: the
+ * conditional spread this replaces was correct only while nobody was in two accounts, and it
+ * failed silently rather than loudly on the day that stopped being true.
+ */
+const ACCOUNT_UNRESOLVED_MESSAGE =
+'We have not worked out which workspace this belongs to, so nothing was sent and nothing has ' +
+'been saved. Reload the page and try again.';
+
+function refuseWithoutAccount(): {ok: false;reason: MaterialWriteFailure;message: string;} {
+  return { ok: false, reason: 'no_account', message: ACCOUNT_UNRESOLVED_MESSAGE };
+}
+
 const ACCOUNT_AMBIGUOUS_MESSAGE =
 'You are a member of more than one account, and this screen cannot yet ask you which one this ' +
 'belongs to — so nothing has been saved, and trying again will not change that. Get in touch ' +
@@ -818,11 +832,11 @@ accountId: string | null)
 : Promise<MaterialWriteResult<string>> {
   const client = domainClient();
   if (!client) return { ok: false, reason: 'not_configured', message: NOT_CONFIGURED_MESSAGE };
+  if (!accountId) return refuseWithoutAccount();
 
-  const account = accountId ? { account_id: accountId } : {};
   const { data, error } = await client.
   from('materials').
-  insert({ ...account, ...materialColumns(input) }).
+  insert({ account_id: accountId, ...materialColumns(input) }).
   select('id').
   single();
 
@@ -837,10 +851,12 @@ accountId: string | null)
 
 export async function updateMaterial(
 materialId: string,
-input: NewMaterialInput)
+input: NewMaterialInput,
+accountId: string | null)
 : Promise<MaterialWriteResult<void>> {
   const client = domainClient();
   if (!client) return { ok: false, reason: 'not_configured', message: NOT_CONFIGURED_MESSAGE };
+  if (!accountId) return refuseWithoutAccount();
 
   const columns = materialColumns(input);
   // The override link is not editable. Which of ours a row replaces is set once, at the
@@ -852,6 +868,7 @@ input: NewMaterialInput)
   const { data, error } = await client.
   from('materials').
   update(editable).
+  eq('account_id', accountId).
   eq('id', materialId).
   select('id');
 
@@ -884,13 +901,18 @@ input: NewMaterialInput)
  * maker pressing "archive" is not discovering afterwards what they agreed to. See
  * `productsUsingMaterial`.
  */
-export async function archiveMaterial(materialId: string): Promise<MaterialWriteResult<void>> {
+export async function archiveMaterial(
+materialId: string,
+accountId: string | null)
+: Promise<MaterialWriteResult<void>> {
   const client = domainClient();
   if (!client) return { ok: false, reason: 'not_configured', message: NOT_CONFIGURED_MESSAGE };
+  if (!accountId) return refuseWithoutAccount();
 
   const { data, error } = await client.
   from('materials').
   update({ archived_at: new Date().toISOString() }).
+  eq('account_id', accountId).
   eq('id', materialId).
   select('id');
 
@@ -981,12 +1003,12 @@ accountId: string | null)
 : Promise<MaterialWriteResult<void>> {
   const client = domainClient();
   if (!client) return { ok: false, reason: 'not_configured', message: NOT_CONFIGURED_MESSAGE };
+  if (!accountId) return refuseWithoutAccount();
 
-  const account = accountId ? { account_id: accountId } : {};
   const { data, error } = await client.
   from('material_hazards').
   insert({
-    ...account,
+    account_id: accountId,
     material_id: materialId,
     code: input.code.trim(),
     statement: input.statement.trim(),
@@ -1011,12 +1033,12 @@ accountId: string | null)
 : Promise<MaterialWriteResult<void>> {
   const client = domainClient();
   if (!client) return { ok: false, reason: 'not_configured', message: NOT_CONFIGURED_MESSAGE };
+  if (!accountId) return refuseWithoutAccount();
 
-  const account = accountId ? { account_id: accountId } : {};
   const { data, error } = await client.
   from('material_allergens').
   insert({
-    ...account,
+    account_id: accountId,
     material_id: materialId,
     name: input.name.trim(),
     pct: input.pct
@@ -1035,12 +1057,12 @@ accountId: string | null)
 : Promise<MaterialWriteResult<void>> {
   const client = domainClient();
   if (!client) return { ok: false, reason: 'not_configured', message: NOT_CONFIGURED_MESSAGE };
+  if (!accountId) return refuseWithoutAccount();
 
-  const account = accountId ? { account_id: accountId } : {};
   const { data, error } = await client.
   from('material_ifra_limits').
   insert({
-    ...account,
+    account_id: accountId,
     material_id: materialId,
     category: input.category.trim(),
     description: textOrNull(input.description),
@@ -1078,12 +1100,12 @@ accountId: string | null)
 : Promise<MaterialWriteResult<void>> {
   const client = domainClient();
   if (!client) return { ok: false, reason: 'not_configured', message: NOT_CONFIGURED_MESSAGE };
+  if (!accountId) return refuseWithoutAccount();
 
-  const account = accountId ? { account_id: accountId } : {};
   const { data, error } = await client.
   from('material_documents').
   insert({
-    ...account,
+    account_id: accountId,
     material_id: materialId,
     document_kind: input.documentKind,
     reference: textOrNull(input.reference),
@@ -1116,12 +1138,19 @@ type ChildTable =
  */
 export async function removeChildRow(
 table: ChildTable,
-id: string)
+id: string,
+accountId: string | null)
 : Promise<MaterialWriteResult<void>> {
   const client = domainClient();
   if (!client) return { ok: false, reason: 'not_configured', message: NOT_CONFIGURED_MESSAGE };
+  if (!accountId) return refuseWithoutAccount();
 
-  const { data, error } = await client.from(table).delete().eq('id', id).select('id');
+  const { data, error } = await client.
+  from(table).
+  delete().
+  eq('account_id', accountId).
+  eq('id', id).
+  select('id');
   if (error) return { ok: false, ...classifyMaterialError(error) };
   if (!data || data.length === 0) {
     return { ok: false, reason: 'reached_nothing', message: REACHED_NOTHING_MESSAGE };

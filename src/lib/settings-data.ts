@@ -456,7 +456,7 @@ kind: DataRequestKind)
   if (error) return failed(describeWriteFailure(error));
   if (!data) {
     return failed(
-      'We could not confirm that your request was recorded. Please email privacy@batchlabel.co.uk so it is not lost.'
+      'We could not confirm that your request was recorded. Please email hello@batchlabel.xyz so it is not lost.'
     );
   }
   return { ok: true, value: toRequest(data as Record<string, unknown>) };

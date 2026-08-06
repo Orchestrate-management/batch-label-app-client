@@ -49,32 +49,34 @@ export { DOMAIN_SCHEMA, domainClient };
  *      that is precisely why the right one has to be written now rather than backfilled onto
  *      live customer data later.
  *
- *   2. THE ACCOUNT ID IS SENT WHEN WE KNOW IT, AND OMITTED WHEN WE DO NOT. This file used to
- *      state the opposite as an absolute — "never, not even one it read back from the
- *      entitlement" — which contradicted the schema this file is written against. Item 1 of
- *      THE account_id CONTRACT in the migration header: "THE APP MAY — AND SHOULD — SEND
- *      account_id EXPLICITLY. The id to send is the one it already reads back from
- *      entitlements / get_entitlement(BRAND_SLUG). Send it on every insert into specifications
- *      and products." (Quoted rather than paraphrased, and quoted from where the rule now
- *      lives: an earlier draft of this file attributed it to a sentence about
- *      current_account_id() that is in no migration on the schema branch, so anybody grepping
- *      to check the two sides agreed found nothing and had to wonder whether they had
- *      drifted.) Both rules agree today, because only
- *      `batchlabel` is seeded in public.brands and every user therefore has exactly one
- *      account; they stop agreeing the day a sibling Orchestrate brand ships and one person
- *      holds an account on each. current_account_id() then refuses to guess and returns NULL
- *      — correctly, it must not file a maker's product in the wrong workspace — and an app
- *      that can only ever omit the column would leave that customer unable to create a
- *      product on EITHER brand, permanently. The database now says which of the two null
- *      cases it is (hint `account_ambiguous`), so at least the screen can stop telling them
- *      to wait; sending the id is what actually lets them work.
+ *   2. THE ACCOUNT ID IS ALWAYS SENT. NOT "when we know it". THIS CHANGED, AND THE CHANGE IS
+ *      THE POINT. Every insert below used to spread `accountId ? { account_id: accountId } : {}`
+ *      and let `public.current_account_id()` decide when the id was absent. That worked, and it
+ *      worked SILENTLY, for exactly as long as every person held exactly one account.
+ *
+ *      current_account_id() returns the account for somebody with exactly ONE active
+ *      membership and NULL for anybody with two, and its own comment says it will not be taught
+ *      to disambiguate. So the day the first person is invited into a second workspace, the
+ *      conditional stops meaning "the database will work it out" and starts meaning "the row
+ *      is refused, or worse, filed against whichever single account they happen to be in".
+ *      The conditional is what made that failure silent, so the conditional is gone: a write
+ *      with no account id is refused HERE, by name, and never sent.
+ *
+ *      Item 1 of THE account_id CONTRACT in the migration header says this in the schema's own
+ *      voice: "THE APP MAY — AND SHOULD — SEND account_id EXPLICITLY. The id to send is the one
+ *      it already reads back from entitlements / get_entitlement(BRAND_SLUG). Send it on every
+ *      insert into specifications and products."
  *
  *      Sending it weakens no isolation. The INSERT policy on both tables is
  *      `with check (public.is_member_of(account_id))`, so an id that is not yours is refused
- *      by the database, and `entitlements.account_id` is itself resolved by the database for
- *      THIS deployment's brand (membership.ts filters on BRAND_SLUG) rather than chosen here.
- *      When the entitlement has not resolved one, the column is omitted and the default —
- *      current_account_id() — still decides, exactly as before.
+ *      by the database. The id itself is resolved by the database (my_accounts(), filtered to
+ *      accounts this caller is an active member of) rather than chosen here.
+ *
+ *      UPDATE AND DELETE CARRY IT TOO, as a filter beside the row id. Row level security still
+ *      decides; what the filter adds is that this app never sends a row id without stating
+ *      which account it believes it is in. That matters more now than it did: with roles
+ *      enforced, "zero rows changed" is also how a viewer's write is refused, so a statement
+ *      that reached nothing has to be distinguishable from one that reached the wrong place.
  *
  *      NOTHING IN THIS FILE EVER TAKES AN ACCOUNT ID FROM A FORM, a URL or a props chain that
  *      a screen could influence. It comes from the entitlement read and nowhere else.
@@ -228,6 +230,28 @@ const NO_ACCOUNT_MESSAGE =
 'There is no account to save this into yet — your signup was not finished, so nothing has been ' +
 'saved. Finish setting up your account and this will work. If you think it is already set up, ' +
 'get in touch and we will sort it out.';
+
+/**
+ * Said when a write reached this file with no account id at all.
+ *
+ * NOT NO_ACCOUNT_MESSAGE, which asserts that signup did not finish. That is one of the three
+ * ways to get here and the other two are an entitlement read that has not landed and one that
+ * failed, so pointing all three at the setup step would be wrong twice. It says what is true of
+ * all three: nothing was sent, and a reload is what resolves it.
+ *
+ * IT IS A BACKSTOP AND NOT COPY ANYBODY SHOULD MEET. Every create control in the app is
+ * disabled without an account, so reaching this means a screen offered something it should not
+ * have. It exists because the alternative is sending the write and letting the column default
+ * decide, which is exactly the silent behaviour this change removed.
+ */
+const ACCOUNT_UNRESOLVED_MESSAGE =
+'We have not worked out which workspace this belongs to, so nothing was sent and nothing has ' +
+'been saved. Reload the page and try again.';
+
+/** The refusal every write in this file makes before it sends anything, when it has no account. */
+function refuseWithoutAccount(): {ok: false;reason: WriteFailure;message: string;} {
+  return { ok: false, reason: 'no_account', message: ACCOUNT_UNRESOLVED_MESSAGE };
+}
 
 /**
  * Said when the database could not tell WHICH account — hint `account_ambiguous`.
@@ -1104,21 +1128,24 @@ function packColumns(spec: Spec) {
  */
 export async function createProduct(
 input: NewProductInput,
-accountId: string | null = null)
+accountId: string | null)
 : Promise<WriteResult<Product>> {
   const client = domainClient();
   if (!client) return { ok: false, reason: 'not_configured', message: NOT_CONFIGURED_MESSAGE };
+  // NO ACCOUNT, NO WRITE. The default parameter that used to sit on this signature is gone as
+  // well as the fallback: `createProduct(input)` compiled, sent no account id, and was correct
+  // only for as long as nobody was in two accounts.
+  if (!accountId) return refuseWithoutAccount();
 
   const category = categoryById(input.categoryId);
   const spec = blankSpec(input.productType, input.fragranceId);
   const name = input.name.trim();
   const sku = input.sku.trim();
-  const account = accountId ? { account_id: accountId } : {};
 
   const { data: specRow, error: specError } = await client.
   from('specifications').
   insert({
-    ...account,
+    account_id: accountId,
     name,
     category_id: category.id,
     kind: 'mixture',
@@ -1136,7 +1163,7 @@ accountId: string | null = null)
   const { data: productRow, error: productError } = await client.
   from('products').
   insert({
-    ...account,
+    account_id: accountId,
     specification_id: specificationId,
     name,
     sku: sku || null,
@@ -1151,6 +1178,7 @@ accountId: string | null = null)
     const { data: existing, error: lookupError } = await client.
     from('products').
     select(PRODUCT_COLUMNS).
+    eq('account_id', accountId).
     eq('specification_id', specificationId).
     is('archived_at', null).
     limit(1).
@@ -1170,6 +1198,7 @@ accountId: string | null = null)
       await client.
       from('specifications').
       update({ archived_at: new Date().toISOString() }).
+      eq('account_id', accountId).
       eq('id', specificationId);
     }
 
@@ -1235,15 +1264,21 @@ export async function saveComposition(
 product: Product,
 spec: Spec,
 /**
- * The entitlement's account id, for the log line only. Optional, and absent means the change
- * is saved and not logged rather than not saved: a composition edit that refused to commit
- * because we could not tell which account to file its log entry under would be the tail
- * wagging the dog.
+ * The account this edit belongs to. REQUIRED NOW, AND IT USED TO BE OPTIONAL "for the log line
+ * only".
+ *
+ * That was a defensible call while both updates leaned on row level security alone and the log
+ * line was the only thing the id was for. It stopped being defensible when "zero rows changed"
+ * became the way a VIEWER's write is refused as well as the way a suspended member's is: an
+ * UPDATE sent with a row id and no account is an UPDATE this app cannot say anything true about
+ * when it comes back empty. Both statements are scoped now, so an empty result means the row was
+ * not this account's to change, and that is what the screen says.
  */
-accountId: string | null = null)
+accountId: string | null)
 : Promise<WriteResult<void>> {
   const client = domainClient();
   if (!client) return { ok: false, reason: 'not_configured', message: NOT_CONFIGURED_MESSAGE };
+  if (!accountId) return refuseWithoutAccount();
   if (!product.specificationId) {
     return { ok: false, reason: 'failed', message: GENERIC_WRITE_FAILURE };
   }
@@ -1251,6 +1286,7 @@ accountId: string | null = null)
   const { data: specRows, error: specError } = await client.
   from('specifications').
   update(specColumns(spec)).
+  eq('account_id', accountId).
   eq('id', product.specificationId).
   select('id');
 
@@ -1267,6 +1303,7 @@ accountId: string | null = null)
   const { data: productRows, error: productError } = await client.
   from('products').
   update(packColumns(spec)).
+  eq('account_id', accountId).
   eq('id', product.id).
   select('id');
 
