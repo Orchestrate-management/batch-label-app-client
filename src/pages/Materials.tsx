@@ -15,7 +15,14 @@ import {
   Pill,
   SectionTitle,
   Select,
-  Skeleton } from
+  Skeleton,
+  TD,
+  TH,
+  THead,
+  TR,
+  Table,
+  TableFrame,
+  rowLinkClass } from
 '../components/ui/Primitives';
 import { MATERIAL_CLASSES, materialOrigin } from '../lib/material-index';
 import {
@@ -185,7 +192,7 @@ export function Materials() {
 
       }
 
-      <div className="space-y-6 px-6 py-8 lg:px-10">
+      <div className="page-enter page-shell space-y-6 px-5 py-8 sm:px-6 lg:px-10">
         <OverrideRule />
 
         {status === 'loading' &&
@@ -223,9 +230,23 @@ export function Materials() {
 
         {status === 'ready' &&
         <>
+            {/*
+              The class switch. Still an underlined tab strip, which is the right
+              pattern — two classes, always both visible, and the count beside each
+              is half the reason to look.
+
+              What changed is that the count is now a chip rather than loose grey
+              digits, and it takes the teal tint on the selected tab. It was
+              tertiary ink at 11px sitting directly beside the label, so on the
+              inactive tab the number and the word ran together into one grey
+              string and the count read as part of the noun.
+
+              The underline is 2px of teal at 8.55:1 against the paper, so the
+              selected tab is identifiable by more than its font weight.
+            */}
             <nav
             aria-label="Material classes"
-            className="flex flex-wrap items-center gap-1 border-b border-paper-line">
+            className="flex flex-wrap items-center gap-1 border-b border-paper-rule">
 
               {MATERIAL_CLASSES.map((entry) => {
               const active = entry.id === activeClass;
@@ -235,14 +256,20 @@ export function Materials() {
                   type="button"
                   onClick={() => navigate(`/materials/${entry.id}`)}
                   aria-current={active ? 'page' : undefined}
-                  className={`-mb-px flex items-center gap-2 border-b-2 px-3 py-2.5 text-sm transition-colors ${
+                  className={`-mb-px flex items-center gap-2 border-b-2 px-3.5 py-3 text-sm transition-colors ${
                   active ?
-                  'border-teal font-medium text-ink' :
-                  'border-transparent text-ink-secondary hover:text-ink'}`
+                  'border-teal font-semibold text-ink' :
+                  'border-transparent text-ink-secondary hover:border-paper-rule hover:text-ink'}`
                   }>
 
                     {entry.label}
-                    <span className="tabular text-2xs text-ink-tertiary">{counts[entry.id]}</span>
+                    <span
+                    className={`tabular rounded-full px-1.5 py-0.5 text-2xs font-medium transition-colors ${
+                    active ? 'bg-teal-tint text-teal-hover' : 'bg-paper-panel text-ink-tertiary'}`
+                    }>
+
+                      {counts[entry.id]}
+                    </span>
                   </button>);
 
             })}
@@ -271,21 +298,19 @@ export function Materials() {
               } /> :
 
 
-            <Card className="overflow-hidden">
-                  <div className="overflow-x-auto">
-                    {activeClass === 'ingredient' ?
-                <IngredientTable
-                  items={items as IngredientMaterial[]}
-                  onOpen={(id) => navigate(`/materials/ingredient/${id}`)} /> :
+            <TableFrame label={`${definition.label} register`}>
+                  {activeClass === 'ingredient' ?
+              <IngredientTable
+                items={items as IngredientMaterial[]}
+                onOpen={(id) => navigate(`/materials/ingredient/${id}`)} /> :
 
 
-                <PackagingTable
-                  items={items as PackagingMaterial[]}
-                  onOpen={(id) => navigate(`/materials/packaging/${id}`)} />
+              <PackagingTable
+                items={items as PackagingMaterial[]}
+                onOpen={(id) => navigate(`/materials/packaging/${id}`)} />
 
-                }
-                  </div>
-                </Card>
+              }
+                </TableFrame>
             }
 
               {/* Said once, at the foot of the list, rather than implied by an empty table.
@@ -333,7 +358,7 @@ function MaterialNotFound({ materialClass }: {materialClass: MaterialClass;}) {
   return (
     <main className="flex-1 pb-24 xl:pb-0">
       <PageHeader eyebrow="Materials" title="No such material" description="" />
-      <div className="px-6 py-8 lg:px-10">
+      <div className="page-enter page-shell px-5 py-8 sm:px-6 lg:px-10">
         <EmptyState
           title="That material is not in your register"
           body="The link may be out of date, or the material may belong to another account. It has not been archived — an archived material is still shown here, because products already built on it still use it."
@@ -350,10 +375,27 @@ function MaterialNotFound({ materialClass }: {materialClass: MaterialClass;}) {
 
 /* ------------------------------------------------------------- tables */
 
-const headRow =
-'border-b border-paper-line bg-paper-panel/60 text-2xs uppercase tracking-[0.1em] text-ink-tertiary';
-const cell = 'px-5 py-3.5 text-ink-secondary';
-const rowClass = 'cursor-pointer border-b border-paper-line last:border-0 hover:bg-teal-tint';
+/**
+ * A hazard code, set as a token rather than dropped into a comma list.
+ *
+ * `item.hazards.map((h) => h.code).join(', ')` produced "H226, H304, H315, H319,
+ * H411" — five codes as one run of prose, in the same face and size as the
+ * supplier name two columns over. These are the most consequential strings on the
+ * screen and they are read by matching a shape, not by reading a sentence: a
+ * maker is checking whether H317 is present, not reading a list.
+ *
+ * Mono, boxed and individually delimited, so a scan down the column can find one
+ * code without parsing the row. No colour, deliberately — a hazard code is not a
+ * verdict, and painting them clay would say something about severity that the
+ * codes themselves do not carry and that this app is not entitled to imply.
+ */
+function HazardCode({ code }: {code: string;}) {
+  return (
+    <span className="inline-flex items-center rounded border border-paper-line bg-paper-sunken px-1.5 py-0.5 font-mono text-2xs font-medium text-ink-secondary">
+      {code}
+    </span>);
+
+}
 
 /**
  * Whose row this is, on every line of every table.
@@ -397,45 +439,51 @@ function IngredientTable({
 
 }: {items: IngredientMaterial[];onOpen: (id: string) => void;}) {
   return (
-    <table className="w-full min-w-[900px] text-left text-sm">
-      <thead>
-        <tr className={headRow}>
-          <th scope="col" className="px-5 py-3 font-medium">Name</th>
-          <th scope="col" className="px-5 py-3 font-medium">Source</th>
-          <th scope="col" className="px-5 py-3 font-medium">Supplier</th>
-          <th scope="col" className="px-5 py-3 font-medium">Read from</th>
-          <th scope="col" className="px-5 py-3 font-medium">Hazards at 100 percent</th>
-          <th scope="col" className="px-5 py-3 font-medium">Allergens</th>
+    <Table minWidth={940}>
+      <THead>
+        <tr>
+          <TH>Name</TH>
+          <TH>Source</TH>
+          <TH>Supplier</TH>
+          <TH>Read from</TH>
+          <TH>Hazards at 100 percent</TH>
+          <TH align="right">Allergens</TH>
         </tr>
-      </thead>
+      </THead>
       <tbody>
         {items.map((item) =>
-        <tr key={item.id} className={rowClass} onClick={() => onOpen(item.id)}>
-            <td className="px-5 py-3.5">
+        <TR key={item.id} className={rowLinkClass} onClick={() => onOpen(item.id)}>
+            <TD>
               <span className="font-medium text-ink">{item.name}</span>
               {item.supplierCode &&
             <span className="tabular ml-2 text-2xs text-ink-tertiary">{item.supplierCode}</span>
             }
-              <span className="block text-2xs text-ink-tertiary">{item.role}</span>
-            </td>
-            <td className="px-5 py-3.5"><SourcePill material={item} /></td>
-            <td className={cell}>{item.supplier ?? 'Not recorded'}</td>
-            <td className={cell}>{documentCell(item)}</td>
+              <span className="mt-0.5 block text-2xs text-ink-tertiary">{item.role}</span>
+            </TD>
+            <TD><SourcePill material={item} /></TD>
+            <TD>{item.supplier ?? 'Not recorded'}</TD>
+            <TD className="text-2xs leading-relaxed">{documentCell(item)}</TD>
             {/* "Not classified" would be a finding. An ingredient with no hazard rows is one
                 nobody has entered hazards for, which is a different thing from one a supplier
                 has classified as non-hazardous — and only the maker knows which. */}
-            <td className={cell}>
+            <TD>
               {item.hazards.length ?
-            item.hazards.map((hazard) => hazard.code).join(', ') :
-            'None entered'}
-            </td>
-            <td className={cell}>
-              {item.allergens.length ? `${item.allergens.length} declared` : 'None entered'}
-            </td>
-          </tr>
+            <span className="flex flex-wrap gap-1">
+                  {item.hazards.map((hazard) =>
+              <HazardCode key={hazard.code} code={hazard.code} />
+              )}
+                </span> :
+            <span className="text-ink-tertiary">None entered</span>}
+            </TD>
+            <TD align="right" className="tabular whitespace-nowrap">
+              {item.allergens.length ?
+            `${item.allergens.length} declared` :
+            <span className="text-ink-tertiary">None entered</span>}
+            </TD>
+          </TR>
         )}
       </tbody>
-    </table>);
+    </Table>);
 
 }
 
@@ -447,43 +495,48 @@ function PackagingTable({
 
 }: {items: PackagingMaterial[];onOpen: (id: string) => void;}) {
   return (
-    <table className="w-full min-w-[900px] text-left text-sm">
-      <thead>
-        <tr className={headRow}>
-          <th scope="col" className="px-5 py-3 font-medium">Name</th>
-          <th scope="col" className="px-5 py-3 font-medium">Source</th>
-          <th scope="col" className="px-5 py-3 font-medium">Supplier</th>
-          <th scope="col" className="px-5 py-3 font-medium">Format</th>
-          <th scope="col" className="px-5 py-3 font-medium">Capacity</th>
-          <th scope="col" className="px-5 py-3 font-medium">Label area</th>
+    <Table minWidth={940}>
+      <THead>
+        <tr>
+          <TH>Name</TH>
+          <TH>Source</TH>
+          <TH>Supplier</TH>
+          <TH>Format</TH>
+          {/* Both are measurements, and a maker picking a container compares them
+              down the column — which needs a common right edge and the tabular
+              figures the app now sets globally. */}
+          <TH align="right">Capacity</TH>
+          <TH align="right">Label area</TH>
         </tr>
-      </thead>
+      </THead>
       <tbody>
         {items.map((item) =>
-        <tr key={item.id} className={rowClass} onClick={() => onOpen(item.id)}>
-            <td className="px-5 py-3.5">
+        <TR key={item.id} className={rowLinkClass} onClick={() => onOpen(item.id)}>
+            <TD>
               <span className="font-medium text-ink">{item.name}</span>
               {item.supplierCode &&
             <span className="tabular ml-2 text-2xs text-ink-tertiary">{item.supplierCode}</span>
             }
-            </td>
-            <td className="px-5 py-3.5"><SourcePill material={item} /></td>
-            <td className={cell}>{item.supplier ?? 'Not recorded'}</td>
-            <td className={cell}>{item.format ?? 'Not recorded'}</td>
+            </TD>
+            <TD><SourcePill material={item} /></TD>
+            <TD>{item.supplier ?? 'Not recorded'}</TD>
+            <TD>{item.format ?? 'Not recorded'}</TD>
             {/* Capacity decides the minimum label size under CLP Annex I Table 1.3, so an
                 unrecorded one may not render as a number. */}
-            <td className={`tabular ${cell}`}>
-              {item.capacityMl != null ? `${item.capacityMl} ml` : 'Not recorded'}
-            </td>
-            <td className={`tabular ${cell}`}>
+            <TD align="right" className="tabular whitespace-nowrap">
+              {item.capacityMl != null ?
+            `${item.capacityMl} ml` :
+            <span className="text-ink-tertiary">Not recorded</span>}
+            </TD>
+            <TD align="right" className="tabular whitespace-nowrap">
               {item.labelAreaMm ?
             `${item.labelAreaMm.width} × ${item.labelAreaMm.height} mm` :
-            'Not recorded'}
-            </td>
-          </tr>
+            <span className="text-ink-tertiary">Not recorded</span>}
+            </TD>
+          </TR>
         )}
       </tbody>
-    </table>);
+    </Table>);
 
 }
 
@@ -583,7 +636,7 @@ function MaterialDetail({ material }: {material: Material;}) {
 
       }
 
-      <div className="space-y-6 px-6 py-8 lg:px-10">
+      <div className="page-enter page-shell space-y-6 px-5 py-8 sm:px-6 lg:px-10">
         {/* An archived material is still reachable, and still what live products are
             classified from, so the screen says which it is rather than looking identical to a
             live one. */}

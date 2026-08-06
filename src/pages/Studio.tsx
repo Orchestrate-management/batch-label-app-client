@@ -201,7 +201,7 @@ export function Studio() {
 
       {creating && <NewProductDialog onClose={() => setCreating(false)} />}
 
-      <div className="px-6 py-8 lg:px-10">
+      <div className="page-enter page-shell px-5 py-8 sm:px-6 lg:px-10">
         <SkuLimitNotice className="mb-6" />
 
         {/* The one thing this screen may say instead of a work queue. `states` keeps it to
@@ -314,10 +314,19 @@ export function Studio() {
           <div className="space-y-4">
                 {outstanding.map(({ product, issues }) =>
             <Card key={product.id} className="overflow-hidden">
-                    <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-paper-line bg-paper-panel/60 px-5 py-3">
+                    {/*
+                      The product name is the heading of this card and was set at
+                      13px medium — the same size as the count opposite it and
+                      smaller than the issue labels underneath, so the thing that
+                      says WHICH PRODUCT this queue belongs to was the quietest
+                      text on the card. It is the display face at 15px semibold
+                      now, and the band it sits on is the sunken surface so the
+                      head separates from the rows.
+                    */}
+                    <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-paper-line bg-paper-sunken px-5 py-3.5">
                       <Link
                   to={`/products/${product.id}`}
-                  className="text-[0.8125rem] font-medium text-ink hover:text-teal">
+                  className="font-display text-[0.9375rem] font-semibold text-ink transition-colors hover:text-teal">
 
                         {product.name}
                       </Link>
@@ -326,26 +335,35 @@ export function Studio() {
                         <span className="tabular">{issues.length}</span> outstanding
                       </p>
                     </div>
+                    {/*
+                      Each row gains a hover wash and the whole row becomes the
+                      target for the eye, with "Resolve" pinned to the right. It
+                      was three loose columns with no relationship on hover, so on
+                      a card with six issues there was nothing tying a label on the
+                      left to the link on the right that acts on it.
+                    */}
                     <ul className="divide-y divide-paper-line">
                       {issues.map((issue) =>
                 <li
                   key={`${issue.stage.id}-${issue.label}`}
-                  className="flex flex-wrap items-start gap-3 px-5 py-3.5">
+                  className="group flex flex-wrap items-start gap-x-4 gap-y-2 px-5 py-4 transition-colors hover:bg-paper-panel/60 focus-within:bg-paper-panel/60">
 
-                          <Pill tone="quiet">{issue.stage.label}</Pill>
+                          <Pill tone="quiet" className="mt-px w-[7.5rem] justify-start">
+                            {issue.stage.label}
+                          </Pill>
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium text-clay-dark">{issue.label}</p>
-                            <p className="mt-0.5 max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
+                            <p className="text-sm font-semibold text-clay-dark">{issue.label}</p>
+                            <p className="mt-1 max-w-prose text-[0.8125rem] leading-relaxed text-ink-secondary">
                               {issue.detail}
                             </p>
                           </div>
                           <Link
                     to={issue.to}
-                    className="mt-0.5 flex flex-none items-center gap-1 text-[0.8125rem] font-medium text-teal hover:text-teal-hover">
+                    className="mt-px flex flex-none items-center gap-1 text-[0.8125rem] font-semibold text-teal transition-colors hover:text-teal-hover">
 
                             Resolve
                             <ArrowRightIcon
-                      className="h-3.5 w-3.5"
+                      className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5"
                       strokeWidth={1.5}
                       aria-hidden="true" />
 

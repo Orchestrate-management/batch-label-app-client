@@ -59,7 +59,7 @@ export function ArtefactDesigner() {
 
   if (status === 'loading') {
     return (
-      <main className="flex-1 px-6 py-8 lg:px-10" aria-busy="true" aria-label="Loading product">
+      <main className="page-enter page-shell flex-1 px-5 py-8 sm:px-6 lg:px-10" aria-busy="true" aria-label="Loading product">
         <Skeleton className="h-4 w-40 bg-paper-line/70" />
         <Skeleton className="mt-4 h-8 w-72 bg-paper-line/70" />
         <Skeleton className="mt-6 h-64 w-full bg-paper-line/70" />
@@ -69,7 +69,7 @@ export function ArtefactDesigner() {
 
   if (status === 'error') {
     return (
-      <main className="flex-1 px-6 py-8 lg:px-10">
+      <main className="page-enter page-shell flex-1 px-5 py-8 sm:px-6 lg:px-10">
         <Callout tone="warn" role="alert" title="We could not read this product">
           <p className="max-w-prose leading-relaxed">
             {error} Nothing has been changed, and nothing here has been laid out from a guess.
@@ -88,7 +88,7 @@ export function ArtefactDesigner() {
   // in your products with this address" is not true of it.
   if (status === 'unavailable') {
     return (
-      <main className="flex-1 px-6 py-8 lg:px-10">
+      <main className="page-enter page-shell flex-1 px-5 py-8 sm:px-6 lg:px-10">
         <PlanNotice states={['suspended']} />
       </main>);
 
@@ -99,7 +99,7 @@ export function ArtefactDesigner() {
   // the screen a maker opens to check what they are about to print.
   if (status === 'no-account') {
     return (
-      <main className="flex-1 px-6 py-8 lg:px-10">
+      <main className="page-enter page-shell flex-1 px-5 py-8 sm:px-6 lg:px-10">
         <NoAccountNotice />
       </main>);
 
@@ -107,7 +107,7 @@ export function ArtefactDesigner() {
 
   if (!product) {
     return (
-      <main className="flex-1 px-6 py-8 lg:px-10">
+      <main className="page-enter page-shell flex-1 px-5 py-8 sm:px-6 lg:px-10">
         <EmptyState
           icon={<PackageIcon className="h-5 w-5" strokeWidth={1.25} aria-hidden="true" />}
           title="No such product"
@@ -340,7 +340,7 @@ function ArtefactDesignerView({ product }: {product: Product;}) {
         <PrintState product={product} artefactType={artefact.type} />
       </div>
 
-      <div className="grid gap-8 px-6 py-8 lg:px-10 xl:grid-cols-[330px_minmax(0,1fr)]">
+      <div className="page-enter page-shell grid gap-8 px-5 py-8 sm:px-6 lg:px-10 xl:grid-cols-[330px_minmax(0,1fr)]">
         <section aria-label="Blocks and settings" className="space-y-5">
           <Card className="space-y-4 px-5 py-5">
             <div>
@@ -360,19 +360,42 @@ function ArtefactDesignerView({ product }: {product: Product;}) {
                       type="button"
                       aria-pressed={active}
                       onClick={() => openSurface(item.type)}
-                      className={`rounded-control border px-3 py-2 text-[0.8125rem] transition-colors ${
+                      className={`rounded-control border px-3.5 py-2 text-[0.8125rem] transition-colors ${
                       active ?
-                      'border-teal bg-teal-tint text-teal-hover' :
-                      'border-paper-line bg-paper text-ink-secondary hover:bg-paper-panel'}`
+                      'border-teal bg-teal-tint font-semibold text-teal-hover' :
+                      'border-paper-edge bg-paper-raised text-ink-secondary hover:bg-paper-panel hover:border-ink-tertiary'}`
                       }>
-                      
+
                       {item.label}
+                      {/*
+                        THE "NO LONGER MATCHES" MARKER WAS A MIDDLE DOT IN A `title`
+                        ATTRIBUTE, and both halves of that were a problem.
+
+                        A `·` at 13px in clay is roughly four pixels of punctuation
+                        carrying the single most important fact about a surface —
+                        that the label currently on the maker's jars is not the one
+                        this composition now produces. It was also the only signal,
+                        so it was colour and a hover tooltip, which is nothing at all
+                        on a touch screen and nothing at all to a screen reader
+                        (`title` is not reliably announced).
+
+                        It is now a filled clay disc, at the size the rest of the app
+                        uses for a status dot, with the same sentence moved into an
+                        `sr-only` span so it is actually read out. Still not a word on
+                        screen — the surface list is a compact switcher and there is
+                        no room for one — but present in two channels rather than
+                        half of one.
+                      */}
                       {item.currency === 'out-of-date' &&
-                      <span
-                        className="ml-1.5 text-clay"
-                        title="The last print you recorded no longer matches this composition">
-                          ·
-                        </span>}
+                      <>
+                          <span
+                          aria-hidden="true"
+                          className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-clay align-middle" />
+
+                          <span className="sr-only">
+                            The last print you recorded no longer matches this composition
+                          </span>
+                        </>}
                     </button>);
 
                 })}
@@ -732,7 +755,12 @@ function RecordPrintDialog({
               value={when}
               onChange={(event) => setWhen(event.target.value)}
               aria-label="Date printed"
-              className="tabular w-full rounded-control border border-paper-line bg-paper px-3 py-2 text-sm text-ink" />
+              /* Was a hand-rolled skin on `paper-line`, which is a 1.2:1 border and
+                 half a shade off every other field in the app. These two are the
+                 form that writes a production record, so they get the shared
+                 field skin like everything else. See the `paper-edge` note in
+                 src/index.css. */
+              className="tabular w-full rounded-control border border-paper-edge bg-paper-raised px-3.5 py-2.5 text-sm text-ink transition-colors hover:border-ink-tertiary focus:border-teal" />
 
           </Field>
           <Field label="Note" hint="Optional. Which printer, which stock, how many.">
@@ -741,7 +769,7 @@ function RecordPrintDialog({
               placeholder={stockName ? `Printed on ${stockName}` : 'Anything worth remembering'}
               onChange={(event) => setNotes(event.target.value)}
               aria-label="Note"
-              className="w-full rounded-control border border-paper-line bg-paper px-3 py-2 text-sm text-ink" />
+              className="w-full rounded-control border border-paper-edge bg-paper-raised px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-tertiary transition-colors hover:border-ink-tertiary focus:border-teal" />
 
           </Field>
 

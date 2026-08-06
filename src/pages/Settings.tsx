@@ -14,7 +14,13 @@ import {
   Input,
   Pill,
   SectionTitle,
-  Skeleton } from
+  Skeleton,
+  TD,
+  TH,
+  THead,
+  TR,
+  Table,
+  TableFrame } from
 '../components/ui/Primitives';
 import { ARTEFACT_LABELS, STOCK } from '../lib/categories';
 import { ADDRESS_BLOCKS, type PrintedMarket } from '../lib/identity';
@@ -80,17 +86,37 @@ export function Settings() {
     <main className="flex-1 pb-24 xl:pb-0">
       <PageHeader eyebrow="Settings" title={active.title} description={active.description} />
 
-      <div className="border-b border-paper-line px-6 lg:px-10">
-        <nav className="flex flex-wrap items-center gap-1" aria-label="Settings sections">
+      {/*
+        THE TAB STRIP IS STICKY AND SITS ON THE SUNKEN BAND.
+
+        Identity and Preferences are both long enough to scroll, and the strip used
+        to leave with them — so halfway down Identity there was no visible way back
+        to Account without scrolling up. It now holds at the top of the content
+        area, under the page header, which is where a tab strip has to be to still
+        be a tab strip.
+
+        Wrapped in `overflow-x-auto` with `whitespace-nowrap` rather than
+        `flex-wrap`: four tabs wrapped onto two rows at 375px and the second row's
+        underline collided with the container border, which read as a rendering
+        fault. Scrolling one row is the honest behaviour on a phone.
+
+        The selected tab keeps its 2px teal underline (8.55:1 on this ground) and
+        gains a weight change, so it is identifiable without relying on the colour.
+      */}
+      <div className="sticky top-0 z-10 border-b border-paper-rule bg-paper-sunken/60 px-5 backdrop-blur-sm sm:px-6 lg:px-10">
+        <nav
+          className="page-shell flex items-center gap-1 overflow-x-auto whitespace-nowrap"
+          aria-label="Settings sections">
+
           {TABS.map((entry) =>
           <NavLink
             key={entry.id}
             to={`/settings/${entry.id}`}
             className={({ isActive }) =>
-            `-mb-px border-b-2 px-3 py-2.5 text-sm transition-colors ${
+            `-mb-px shrink-0 border-b-2 px-3.5 py-3 text-sm transition-colors ${
             isActive || entry.id === 'identity' && !tab ?
-            'border-teal font-medium text-ink' :
-            'border-transparent text-ink-secondary hover:text-ink'}`
+            'border-teal font-semibold text-ink' :
+            'border-transparent text-ink-secondary hover:border-paper-rule hover:text-ink'}`
 
             }>
 
@@ -100,7 +126,7 @@ export function Settings() {
         </nav>
       </div>
 
-      <div className="space-y-8 px-6 py-8 lg:px-10">
+      <div className="page-enter page-shell space-y-8 px-5 py-8 sm:px-6 lg:px-10">
         {active.id === 'identity' && <IdentityTab />}
         {active.id === 'team' && <TeamTab />}
         {active.id === 'account' && <AccountTab />}
@@ -536,7 +562,28 @@ function AddressBlock({
             setSaved(false);
           }}
           placeholder={`One line each, three to six lines.\nName\nStreet\nTown and postcode`}
-          className="w-full rounded-control border border-paper-line bg-paper px-3 py-2.5 text-sm leading-relaxed text-ink placeholder:text-ink-tertiary focus:border-teal focus:outline-none" />
+          /*
+            THE `focus:outline-none` THAT USED TO BE ON THIS LINE IS DELETED, and it
+            is the one place in the app that still had it.
+
+            components/ui/Primitives.tsx carries a standing instruction above the
+            shared input skin — "NO `focus:outline-none` HERE, AND NOTHING MAY PUT
+            IT BACK" — because index.css gives every focusable thing a 2px teal ring
+            and opting out leaves a 1px border colour change as the whole focus
+            indicator. This textarea is not built from that skin, so it never
+            inherited the rule, and it was the only control in the app a keyboard
+            user could land on with no visible ring.
+
+            It matters more here than almost anywhere: this box is the supplier
+            address block that gets PRINTED ON THE LABEL. The border colour change
+            stays as the second signal for a mouse user; the ring is back for
+            everyone else.
+
+            Everything else on this line is the shared field skin, so the address
+            box now matches the fields above and below it instead of being a third
+            of a shade off them.
+          */
+          className="w-full rounded-control border border-paper-edge bg-paper-raised px-3.5 py-2.5 text-sm leading-relaxed text-ink placeholder:text-ink-tertiary transition-colors hover:border-ink-tertiary focus:border-teal" />
 
         <p className="text-2xs leading-relaxed text-ink-tertiary">
           {market === 'EU' ?
@@ -614,34 +661,35 @@ function PreferencesTab() {
           What the artefact designer offers when you choose a stock. Shipped with the app rather
           than set here, and the same for everybody.
         </p>
-        <Card className="px-5 py-5">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="text-2xs uppercase tracking-[0.1em] text-ink-tertiary">
-                <th scope="col" className="pb-2 font-medium">Preset</th>
-                <th scope="col" className="pb-2 font-medium">Surface</th>
-                <th scope="col" className="pb-2 font-medium">Size</th>
-                <th scope="col" className="pb-2 font-medium">Per sheet</th>
+        {/* Two of these four columns are measurements a maker compares between
+            presets when choosing a stock, so they are right aligned onto a common
+            edge like every other numeric column in the app. */}
+        <TableFrame label="Stock presets">
+          <Table minWidth={560}>
+            <THead>
+              <tr>
+                <TH>Preset</TH>
+                <TH>Surface</TH>
+                <TH align="right">Size</TH>
+                <TH align="right">Per sheet</TH>
               </tr>
-            </thead>
+            </THead>
             <tbody>
               {STOCK.map((stock) =>
-              <tr key={stock.id} className="border-t border-paper-line">
-                  <td className="py-2.5 text-ink">{stock.name}</td>
-                  <td className="py-2.5 text-ink-secondary">
-                    {ARTEFACT_LABELS[stock.artefactType]}
-                  </td>
-                  <td className="tabular py-2.5 text-ink-secondary">
+              <TR key={stock.id}>
+                  <TD className="font-medium text-ink">{stock.name}</TD>
+                  <TD>{ARTEFACT_LABELS[stock.artefactType]}</TD>
+                  <TD align="right" className="tabular whitespace-nowrap">
                     {stock.widthMm} × {stock.heightMm} mm
-                  </td>
-                  <td className="tabular py-2.5 text-ink-secondary">
+                  </TD>
+                  <TD align="right" className="tabular whitespace-nowrap">
                     {stock.perSheet} on {stock.sheet}
-                  </td>
-                </tr>
+                  </TD>
+                </TR>
               )}
             </tbody>
-          </table>
-        </Card>
+          </Table>
+        </TableFrame>
       </section>
     </>);
 

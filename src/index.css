@@ -22,13 +22,67 @@
    marketing site's large type and not fine here: this is a dense tool whose
    tertiary ink carries 11px meta labels. These values keep every step at 5:1 or
    better while staying in the same warm neutral family. */
+/* THE SURFACE SCALE, AND WHY IT GAINED THREE STEPS.
+
+   It used to be three tokens: ground, band, hairline. `Card` was `bg-paper` on a
+   `bg-paper` page, so every card in the app was the same colour as the thing
+   behind it and a 1px hairline was the only evidence a card existed at all. On a
+   dense screen — a materials register, a specification, a batch record — that
+   reads as one undifferentiated wash with lines ruled through it, and a maker
+   scanning for "where does this table end and the next thing begin" has nothing
+   to catch. Depth is not decoration here; it is the grouping.
+
+   --paper-raised is the brand's card white, the same #FBF8F3 already in the
+   Tailwind `white` token and the same value the reversed mark knocks out to. A
+   card is now a sheet of paper on a desk rather than a rectangle drawn on the
+   desk.
+
+   --paper-sunken is the other direction: table headers, wells and toolbars sit
+   BELOW the card surface, so a header band reads as part of the furniture rather
+   than as the first row of data. It sits between panel and line so it separates
+   from both.
+
+   --paper-rule is a heavier hairline for boundaries that mean something — the end
+   of a section, the underside of a page header — as distinct from --paper-line,
+   which rules between rows of the same kind. One line weight for two jobs was why
+   a table's outer edge and its row dividers looked identical.
+
+   Contrast is unchanged and re-checked: ink on raised is 15.6:1, secondary ink on
+   raised 8.9:1, tertiary ink on raised 5.4:1, and tertiary ink on sunken 5.0:1 —
+   every step still at or past the 5:1 the note below sets as this app's floor. */
 :root {
   --paper: 243 238 230;
   --paper-panel: 239 231 218;
   --paper-line: 227 218 205;
+  --paper-raised: 251 248 243;
+  --paper-sunken: 235 228 217;
+  --paper-rule: 214 203 187;
+  /* THE BORDER OF ANYTHING YOU CAN TYPE IN OR PICK FROM, AND IT IS A WCAG FIX
+     RATHER THAN A PREFERENCE.
+
+     Inputs, selects and checkboxes were drawn with --paper-line, which is 1.20:1
+     against the page ground. SC 1.4.11 asks for 3:1 on the visual information
+     needed to identify a control, and 1.2:1 is not a boundary anybody can see —
+     on the identity form and the specification pickers the field edges were
+     essentially invisible, so a form read as floating labels over a blank wash.
+
+     This is the brand pack's ink.muted (#8A7F72), which the note below rejects
+     for TEXT at 3.4:1 and which is exactly right for a BORDER, where 3:1 is the
+     bar: 3.70:1 on the raised card surface, 3.39:1 on the page ground, so a
+     field is identifiable wherever a form happens to sit.
+
+     --paper-line stays what it was and keeps its job: ruling between rows of the
+     same kind, where the line is a reading aid rather than the edge of a
+     control. */
+  --paper-edge: 138 127 114;
   --ink: 30 27 24;
   --ink-secondary: 74 68 61;
   --ink-tertiary: 107 98 89;
+  /* The widest a column of dense data is allowed to get. Tables were previously
+     unbounded, so on a 27 inch monitor a five column products table stretched the
+     full 2400px and the eye had to travel the width of the desk to carry a
+     product name to its status. This is a reading constraint, not a breakpoint. */
+  --content-max: 84rem;
 }
 html,
 body,
@@ -59,8 +113,115 @@ body {
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum' 1;
 }
+/* Every figure in this app is a quantity somebody may have to compare against
+   another one — a percentage in a formula, a net weight, a batch count, a date.
+   Proportional digits make a column of them ragged and make two of them hard to
+   line up by eye, so the whole app is set in tabular figures and the `.tabular`
+   class above is left in place for the handful of tests that look for it and for
+   the rare span inside prose. Headings keep proportional figures, because a
+   heading is read rather than compared. */
+body {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+h1,
+h2,
+h3 {
+  font-variant-numeric: normal;
+  font-feature-settings: normal;
+}
 .surface-shift {
   transition: background-color 240ms ease, border-color 240ms ease;
+}
+/* The reading measure for a screen of dense data. See --content-max. */
+.page-shell {
+  width: 100%;
+  max-width: var(--content-max);
+}
+/* A table header that stays put while the rows scroll under it.
+
+   On a register of ninety materials the column headings used to leave the
+   viewport after the first screenful, so the rest of the scroll was columns of
+   figures with nothing naming them. `position: sticky` on the cells rather than
+   the row, because a `<tr>` is not a positioning context in every engine. */
+.sticky-head th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background-color: rgb(var(--paper-sunken));
+}
+/* One page entrance, staggered, and nothing else moves on load.
+
+   The alternative that was tempting and is wrong for this product: animating each
+   card, row and pill in turn. This is a compliance record a maker opens twenty
+   times a day, and a screen that performs on every visit is a screen that is
+   slower to read on the twentieth. So it is one short, small translation on the
+   page body, and the sidebar and header do not move at all.
+
+   `prefers-reduced-motion` is honoured by the global block at the foot of this
+   file, which flattens every animation in the app to 0.001ms. */
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.page-enter {
+  animation: page-enter 260ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+/* THE SLIDERS IN THE ARTEFACT DESIGNER, GIVEN A THUMB THEY CAN RELY ON.
+
+   Font size and line spacing are `appearance-none` ranges carrying `accent-teal`.
+   Those two do not combine: `appearance: none` removes the native control that
+   `accent-color` would have tinted, so the thumb becomes whatever the engine
+   leaves behind. Chrome happens to leave something usable; WebKit leaves one that
+   is easy to lose against the track, and neither is a size a finger can find on
+   the screen where a maker is nudging a label's type size by half a point.
+
+   Drawn explicitly at 18px with a paper-coloured ring, which is a target as well
+   as a mark, and given a wider focus offset — a slider is one of the few controls
+   whose outline sits on a 6px-tall element and needs the extra room to clear the
+   track.
+
+   Scoped to the element rather than a class because the app has one slider
+   treatment and no reason for a second.
+
+   NOTE THIS CHANGES NO MEASUREMENT. The sliders set `fontPt` and `lineSpacing`,
+   which the renderer converts to real units; this is the size of the handle you
+   drag, not the size of anything it sets. */
+input[type='range'] {
+  cursor: pointer;
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 18px;
+  width: 18px;
+  border-radius: 9999px;
+  background-color: #14514F;
+  border: 2px solid rgb(var(--paper-raised));
+  box-shadow: 0 1px 3px 0 rgb(30 27 24 / 0.25);
+}
+input[type='range']::-moz-range-thumb {
+  height: 18px;
+  width: 18px;
+  border: 2px solid rgb(var(--paper-raised));
+  border-radius: 9999px;
+  background-color: #14514F;
+  box-shadow: 0 1px 3px 0 rgb(30 27 24 / 0.25);
+}
+input[type='range']:focus-visible {
+  outline-offset: 4px;
+}
+input[type='range']:disabled::-webkit-slider-thumb {
+  background-color: rgb(var(--ink-tertiary));
+}
+input[type='range']:disabled::-moz-range-thumb {
+  background-color: rgb(var(--ink-tertiary));
 }
 /* Faint millimetre grid used behind every true-size artefact preview. */
 .mm-grid {
