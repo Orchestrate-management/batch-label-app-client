@@ -13,7 +13,13 @@ import {
   Pill,
   SectionTitle,
   Select,
-  Skeleton } from
+  Skeleton,
+  TD,
+  TH,
+  THead,
+  TR,
+  Table,
+  TableFrame } from
 '../components/ui/Primitives';
 import { DerivationPanel } from '../components/DerivationPanel';
 import { NoAccountNotice } from '../components/NoAccountNotice';
@@ -79,7 +85,7 @@ export function Specification() {
 
   if (status === 'loading') {
     return (
-      <main className="flex-1 px-6 py-8 lg:px-10" aria-busy="true" aria-label="Loading product">
+      <main className="page-enter page-shell flex-1 px-5 py-8 sm:px-6 lg:px-10" aria-busy="true" aria-label="Loading product">
         <Skeleton className="h-4 w-40 bg-paper-line/70" />
         <Skeleton className="mt-4 h-8 w-72 bg-paper-line/70" />
         <Skeleton className="mt-6 h-40 w-full bg-paper-line/70" />
@@ -89,7 +95,7 @@ export function Specification() {
 
   if (status === 'error') {
     return (
-      <main className="flex-1 px-6 py-8 lg:px-10">
+      <main className="page-enter page-shell flex-1 px-5 py-8 sm:px-6 lg:px-10">
         <Callout tone="warn" role="alert" title="We could not read this product">
           <p className="max-w-prose leading-relaxed">
             {error} Nothing has been changed. This is not the same as the product not existing
@@ -106,7 +112,7 @@ export function Specification() {
 
   if (status === 'unavailable') {
     return (
-      <main className="flex-1 px-6 py-8 lg:px-10">
+      <main className="page-enter page-shell flex-1 px-5 py-8 sm:px-6 lg:px-10">
         <PlanNotice states={['suspended']} />
       </main>);
 
@@ -120,7 +126,7 @@ export function Specification() {
   // what they need is to be told to go and finish.
   if (status === 'no-account') {
     return (
-      <main className="flex-1 px-6 py-8 lg:px-10">
+      <main className="page-enter page-shell flex-1 px-5 py-8 sm:px-6 lg:px-10">
         <NoAccountNotice />
       </main>);
 
@@ -128,7 +134,7 @@ export function Specification() {
 
   if (!product) {
     return (
-      <main className="flex-1 px-6 py-8 lg:px-10">
+      <main className="page-enter page-shell flex-1 px-5 py-8 sm:px-6 lg:px-10">
         <EmptyState
           icon={<PackageIcon className="h-5 w-5" strokeWidth={1.25} aria-hidden="true" />}
           title="No such product"
@@ -321,7 +327,7 @@ function SpecificationView({ product }: {product: Product;}) {
 
         <ProductPipeline stages={stages} activeId={stage} onSelect={setStage} />
 
-        <div className="space-y-10 px-6 py-8 lg:px-10">
+        <div className="page-enter page-shell space-y-10 px-5 py-8 sm:px-6 lg:px-10">
           <ReadOnlyNotice capability="write_data" />
           {/* Two different failures and two different titles, because they are not the same
               news. A refused save changed nothing, so the reassurance below it is true. A
@@ -361,19 +367,41 @@ function SpecificationView({ product }: {product: Product;}) {
 
             <Card className="px-5 py-5">
               <SectionTitle className="mb-3">Market</SectionTitle>
-              <div className="flex flex-wrap gap-2">
+              {/*
+                A SEGMENTED CONTROL RATHER THAN TWO LOOSE BUTTONS.
+
+                These are two states of one setting — which market this product is
+                being labelled for — and they were drawn as two independent buttons
+                with a gap between them, so the pair read as two separate actions
+                rather than as one switch with two positions. On a screen where the
+                selected market changes the address block on the label and the whole
+                GB/EU comparison below, "which one am I on" is the question the
+                control most has to answer.
+
+                Joined into one track on a sunken well, the chosen half raised and
+                in teal, the other flat. `aria-pressed` was already right and is
+                untouched; this is the visual half catching up with the semantic one.
+
+                The selected half is `bg-paper-raised` with a teal border and teal
+                ink at 8.55:1, so it is identifiable by fill, by border and by
+                weight rather than by colour alone.
+              */}
+              <div
+                role="group"
+                className="inline-flex flex-wrap gap-1 rounded-control border border-paper-line bg-paper-sunken p-1">
+
                 {(['GB', 'EU'] as Market[]).map((option) =>
                 <button
                   key={option}
                   type="button"
                   onClick={() => setMarket(option)}
                   aria-pressed={market === option}
-                  className={`rounded-control border px-4 py-2 text-sm transition-colors ${
+                  className={`rounded-[0.625rem] px-4 py-2 text-sm transition-colors ${
                   market === option ?
-                  'border-teal bg-teal-tint text-teal-hover' :
-                  'border-paper-line bg-paper text-ink-secondary hover:bg-paper-panel'}`
+                  'bg-paper-raised font-semibold text-teal shadow-card ring-1 ring-teal/40' :
+                  'text-ink-secondary hover:bg-paper-panel hover:text-ink'}`
                   }>
-                  
+
                     {option === 'GB' ? 'Great Britain' : 'European Union and Northern Ireland'}
                   </button>
                 )}
@@ -466,7 +494,7 @@ function SpecificationView({ product }: {product: Product;}) {
         {compare &&
         <section
           aria-label="Market comparison"
-          className="border-t border-paper-line px-6 py-8 lg:px-10">
+          className="page-shell border-t border-paper-rule px-5 py-8 sm:px-6 lg:px-10">
           
             <SectionTitle className="mb-4">Great Britain and the European Union, side by side</SectionTitle>
             <div className="grid gap-6 lg:grid-cols-2">
@@ -500,20 +528,18 @@ function SpecificationView({ product }: {product: Product;}) {
             )}
             </div>
 
-            <Card className="mt-6 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[720px] text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-paper-line bg-paper-panel/60 text-2xs uppercase tracking-[0.1em] text-ink-tertiary">
-                      <th scope="col" className="px-5 py-3 font-medium">Element</th>
-                      <th scope="col" className="px-5 py-3 font-medium">Great Britain</th>
-                      <th scope="col" className="px-5 py-3 font-medium">European Union</th>
+            <TableFrame label="Label elements compared across markets" className="mt-6">
+                <Table minWidth={720}>
+                  <THead>
+                    <tr>
+                      <TH>Element</TH>
+                      <TH>Great Britain</TH>
+                      <TH>European Union</TH>
                     </tr>
-                  </thead>
+                  </THead>
                   <tbody>{comparisonRows(product)}</tbody>
-                </table>
-              </div>
-            </Card>
+                </Table>
+              </TableFrame>
           </section>
         }
       </main>
@@ -963,12 +989,29 @@ function DiffRow({
 
 
 }: {element: string;gb: string;eu: string;differs?: boolean;}) {
+  /*
+    A ROW WHERE THE TWO MARKETS DISAGREE IS THE ONLY THING ANYBODY OPENS THIS
+    TABLE TO FIND, and it was marked with a clay wash across the row and clay ink
+    in two of the three cells. That is colour doing the work on its own: to a
+    reader who cannot separate the wash from the paper, the differing rows and the
+    identical rows are the same table.
+
+    A 3px clay bar down the leading edge of the row adds the second channel, in
+    the same grammar the callouts use. The wash stays as the supporting signal and
+    is lifted slightly so it survives on the raised card surface.
+  */
   return (
-    <tr className={`border-b border-paper-line last:border-0 ${differs ? 'bg-clay-tint/60' : ''}`}>
-      <td className="px-5 py-3 text-ink">{element}</td>
-      <td className={`px-5 py-3 ${differs ? 'text-clay-dark' : 'text-ink-secondary'}`}>{gb}</td>
-      <td className={`px-5 py-3 ${differs ? 'text-clay-dark' : 'text-ink-secondary'}`}>{eu}</td>
-    </tr>);
+    <TR
+      className={
+      differs ?
+      'bg-clay-tint/70 [&>td:first-child]:relative [&>td:first-child]:before:absolute [&>td:first-child]:before:inset-y-0 [&>td:first-child]:before:left-0 [&>td:first-child]:before:w-[3px] [&>td:first-child]:before:bg-clay [&>td:first-child]:before:content-[""]' :
+      ''
+      }>
+
+      <TD className={differs ? 'font-medium text-ink' : 'text-ink'}>{element}</TD>
+      <TD className={differs ? 'text-clay-dark' : ''}>{gb}</TD>
+      <TD className={differs ? 'text-clay-dark' : ''}>{eu}</TD>
+    </TR>);
 
 }
 
@@ -1271,7 +1314,7 @@ function MixtureEditor({
         <SectionTitle className="mb-3">Composition</SectionTitle>
         <table className="w-full text-left text-sm">
           <thead>
-            <tr className="text-2xs uppercase tracking-[0.1em] text-ink-tertiary">
+            <tr className="text-2xs uppercase tracking-[0.1em] text-ink-secondary">
               <th scope="col" className="pb-2 font-medium">Component</th>
               <th scope="col" className="pb-2 text-right font-medium">Share</th>
             </tr>
@@ -1325,8 +1368,41 @@ function CompositionRow({
   const tone = quiet || !name ? 'text-ink-tertiary' : 'text-ink';
   return (
     <tr className="border-t border-paper-line">
-      <td className={`py-2 ${tone}`}>{name ?? missing}</td>
-      <td className="tabular py-2 text-right text-ink-tertiary">
+      <td className={`py-2.5 pr-4 ${tone}`}>
+        {name ?? missing}
+        {/*
+          THE SHARE, DRAWN AS WELL AS WRITTEN — and it is drawn from the same
+          number that is printed beside it, not from a second source.
+
+          A fragrance load is the single figure a maker changes most often on this
+          screen and the one most likely to be wrong in a way that matters: it
+          decides the hazard classification, the IFRA position and half the label.
+          As three right-aligned decimals it was accurate and completely
+          uninformative about proportion — 12.0 and 1.2 look alike at 13px, and the
+          difference between them is the difference between a compliant candle and
+          one that is not.
+
+          The bar is `aria-hidden` because the percentage next to it already says
+          the number exactly, and a screen reader reading a decorative bar would be
+          repetition rather than information.
+
+          Rendered only when there IS a component, on the same rule as the
+          percentage itself: a bar beside "No fragrance oil chosen yet" would draw a
+          proportion of nothing.
+        */}
+        {name &&
+        <span
+          aria-hidden="true"
+          className="mt-1.5 block h-1 w-full max-w-[200px] overflow-hidden rounded-full bg-paper-sunken">
+
+            <span
+            className={`block h-full rounded-full ${quiet ? 'bg-ink-tertiary/50' : 'bg-teal/70'}`}
+            style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
+
+          </span>
+        }
+      </td>
+      <td className={`tabular py-2.5 text-right align-top ${name ? 'font-medium text-ink-secondary' : 'text-ink-tertiary'}`}>
         {name ? `${pct.toFixed(1)} %` : '—'}
       </td>
     </tr>);

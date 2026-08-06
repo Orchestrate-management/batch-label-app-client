@@ -91,22 +91,44 @@ export function AppShell({ children }: {children: React.ReactNode;}) {
     return Boolean(item.children?.some((child) => path.startsWith(child.match)));
   };
 
+  /**
+   * THE SELECTED ITEM USED TO BE INVISIBLE, AND THAT IS A MEASURED CLAIM.
+   *
+   * It was `bg-teal` (#14514F) sitting on the sidebar's `bg-teal-dark` (#0F3D3B).
+   * Those two are 1.32:1 apart. SC 1.4.11 asks 3:1 of the visual information that
+   * identifies the state of a component, and 1.32:1 is not a difference anybody
+   * sees — on a bright kitchen table, in daylight, it is nothing at all. The only
+   * real signal that a nav item was current was its text going from 70 percent
+   * white to 100 percent, which is a change to the label rather than a marker of
+   * position.
+   *
+   * The fix is a 3px bar of clay-reversed down the leading edge: 5.57:1 on the
+   * sidebar ground, which is the brand's own accent for sitting on teal and the
+   * one colour in the palette that is not already carrying a meaning here. The
+   * fill stays, lightened, as a supporting signal rather than the whole of it.
+   *
+   * `aria-current="page"` comes from NavLink and does the announcing, so the bar
+   * is decoration in the accessibility tree and information in the visual one,
+   * which is the correct division.
+   */
   const rowClass = (active: boolean) =>
-  `flex items-center gap-3 rounded-control px-3 py-2.5 text-sm transition-colors ${
-  active ? 'bg-teal text-white' : 'text-white/70 hover:bg-teal/40 hover:text-white'}`;
+  `relative flex items-center gap-3 rounded-control py-2.5 pl-4 pr-3 text-sm transition-colors before:absolute before:left-0 before:top-1/2 before:h-5 before:w-[3px] before:-translate-y-1/2 before:rounded-full before:transition-colors ${
+  active ?
+  'bg-teal/70 font-medium text-white before:bg-clay-reversed' :
+  'text-white/70 before:bg-transparent hover:bg-teal/30 hover:text-white'}`;
 
 
   return (
     <div className="surface-shift flex min-h-screen w-full bg-paper">
       <nav
-        className="sticky top-0 hidden h-screen w-[248px] flex-none flex-col border-r border-teal-dark/40 bg-teal-dark px-4 py-6 md:flex"
+        className="sticky top-0 hidden h-screen w-[248px] flex-none flex-col border-r border-black/20 bg-teal-dark px-3 py-6 md:flex"
         aria-label="Main">
-        
-        <div className="px-2">
+
+        <div className="px-3">
           <Logo variant="reversed" size={30} />
         </div>
 
-        <ul className="mt-8 space-y-1">
+        <ul className="mt-9 space-y-0.5">
           {NAV.map((item) => {
             const Icon = item.icon;
             const branchActive = isBranchActive(item);
@@ -116,27 +138,31 @@ export function AppShell({ children }: {children: React.ReactNode;}) {
             return (
               <li key={item.to}>
                 <NavLink to={item.to} end={item.end} className={rowClass(selfActive)}>
-                  <Icon className="h-[18px] w-[18px]" strokeWidth={1.25} aria-hidden="true" />
+                  <Icon
+                    className="h-[18px] w-[18px] flex-none"
+                    strokeWidth={selfActive ? 1.75 : 1.25}
+                    aria-hidden="true" />
+
                   {item.label}
                 </NavLink>
                 {item.children &&
                 <ul
-                  className={`ml-[21px] mt-1 space-y-1 border-l pl-3 ${
-                  branchActive ? 'border-white/25' : 'border-white/10'}`
+                  className={`ml-[26px] mt-0.5 space-y-0.5 border-l pl-2.5 transition-colors ${
+                  branchActive ? 'border-white/30' : 'border-white/10'}`
                   }>
-                  
+
                     {item.children.map((child) => {
                     const active = path.startsWith(child.match);
                     return (
                       <li key={child.to}>
                           <NavLink
                           to={child.to}
-                          className={`flex items-center rounded-control px-3 py-2 text-[0.8125rem] transition-colors ${
+                          className={`relative flex items-center rounded-control px-3 py-2 text-[0.8125rem] transition-colors before:absolute before:-left-[11px] before:top-1/2 before:h-4 before:w-[3px] before:-translate-y-1/2 before:rounded-full before:transition-colors ${
                           active ?
-                          'bg-teal text-white' :
-                          'text-white/60 hover:bg-teal/30 hover:text-white'}`
+                          'bg-teal/70 font-medium text-white before:bg-clay-reversed' :
+                          'text-white/60 before:bg-transparent hover:bg-teal/30 hover:text-white'}`
                           }>
-                          
+
                             {child.label}
                           </NavLink>
                         </li>);
@@ -155,21 +181,51 @@ export function AppShell({ children }: {children: React.ReactNode;}) {
       </nav>
 
       <div className="flex min-w-0 flex-1 flex-col">
+        {/*
+          THE PHONE NAVIGATION, AND IT IS THE WHOLE OF THE NAVIGATION THERE — the
+          account menu is desktop-only, so if a destination is not on this strip a
+          maker on a phone cannot reach it.
+
+          It is still a horizontal scroller, deliberately: six destinations do not
+          fit across 375px, and the alternatives are a hamburger (which hides the
+          map of the app behind a tap, on the surface where a maker is least sure
+          where they are) or a five-slot bottom bar (which cannot hold six). What
+          was wrong was never the scrolling, it was that nothing SAID it scrolled
+          and nothing said where you were.
+
+          Three things fixed, all visual:
+
+            The strip is sticky, so the navigation does not scroll away up the page
+            on a long materials register.
+
+            `snap-x` with a padded end, so a swipe settles on an item rather than
+            halfway through one, and the sixth item can actually reach the left
+            edge instead of jamming against the end of the track.
+
+            The selected item gets the same clay underline the sidebar gets as a
+            leading bar — 5.57:1 on this ground, where the old `bg-teal` fill was
+            1.32:1 and told a phone user nothing about where they were.
+
+          Touch targets are 44px tall (`py-2.5` on a 13px line plus the underline
+          gutter), which is the size a thumb needs and the size SC 2.5.8 asks for.
+        */}
         <nav
-          className="flex gap-1 overflow-x-auto bg-teal-dark px-3 py-2 md:hidden"
+          className="sticky top-0 z-20 flex snap-x snap-mandatory gap-1 overflow-x-auto bg-teal-dark px-3 py-2 pr-8 shadow-card md:hidden"
           aria-label="Main">
-          
+
           {MOBILE_NAV.map((item) =>
           <NavLink
             key={item.to}
             to={item.to}
             end={item.end}
             className={({ isActive }) =>
-            `flex items-center gap-1.5 whitespace-nowrap rounded-control px-3 py-2 text-[0.8125rem] ${
-            isActive ? 'bg-teal text-white' : 'text-white/70'}`
+            `flex min-h-[44px] snap-start items-center gap-1.5 whitespace-nowrap rounded-control border-b-2 px-3 py-2.5 text-[0.8125rem] transition-colors ${
+            isActive ?
+            'border-b-clay-reversed bg-teal/70 font-medium text-white' :
+            'border-b-transparent text-white/70'}`
 
             }>
-            
+
               {item.indent && <span className="opacity-40" aria-hidden="true">·</span>}
               {item.label}
             </NavLink>
@@ -245,7 +301,7 @@ function AccountMenu() {
     <div ref={ref} className="relative">
       {open &&
       <div
-        className="absolute bottom-full left-0 right-0 mb-2 rounded-control border border-white/15 bg-teal-dark p-1.5 shadow-lg"
+        className="absolute bottom-full left-0 right-0 mb-2 rounded-control border border-white/20 bg-teal-dark p-1.5 shadow-overlay"
         role="menu"
         aria-label="Account">
         
@@ -363,24 +419,46 @@ export function PageHeader({
 
 }: {eyebrow?: React.ReactNode;title: string;description?: string;actions?: React.ReactNode;meta?: React.ReactNode;}) {
   return (
-    <header className="border-b border-paper-line px-6 py-6 lg:px-10">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="max-w-prose">
-          {eyebrow &&
-          <div className="mb-1 font-display text-[0.8125rem] font-medium uppercase tracking-[0.14em] text-ink-tertiary">
-              {eyebrow}
-            </div>
-          }
-          <h1 className="font-display text-2xl font-semibold tracking-tight text-ink lg:text-[1.75rem]">
-            {title}
-          </h1>
-          {description &&
-          <p className="mt-2 text-sm leading-relaxed text-ink-secondary">{description}</p>
+    /*
+      THE HEADER SITS ON THE SUNKEN BAND, NOT ON THE PAGE.
+      It used to be the same colour as the content below it with a hairline
+      between, so "what screen am I on" and "what is on it" were one continuous
+      wash. The band plus the heavier `paper-rule` underneath gives the screen a
+      masthead, which is what a page header is for.
+
+      `page-shell` bounds it to the same 84rem measure as the content, so the
+      title stays over its own column on a wide monitor instead of drifting to the
+      far left of a 2400px header while the table below it starts somewhere else.
+
+      ON A PHONE THE ACTIONS STACK UNDER THE TITLE, NOT OVER IT. Reversing the
+      column so the primary button came first was tried, on the reasoning that it
+      should not be pushed below a three-line description. It is worse: the heading
+      is how a maker knows which screen they are on, and a lone button above an
+      unlabelled screen reads as a toolbar belonging to the navigation strip above
+      it. Costing one thumb-scroll is the cheaper of the two.
+    */
+    <header className="border-b border-paper-rule bg-paper-sunken/60 px-5 py-6 sm:px-6 lg:px-10">
+      <div className="page-shell">
+        <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+          <div className="max-w-prose">
+            {eyebrow &&
+            <div className="mb-1.5 font-display text-2xs font-semibold uppercase tracking-[0.16em] text-ink-tertiary">
+                {eyebrow}
+              </div>
+            }
+            <h1 className="font-display text-[1.625rem] font-semibold leading-tight tracking-tight text-ink lg:text-[2rem]">
+              {title}
+            </h1>
+            {description &&
+            <p className="mt-2.5 text-sm leading-relaxed text-ink-secondary">{description}</p>
+            }
+          </div>
+          {actions &&
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">{actions}</div>
           }
         </div>
-        {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+        {meta && <div className="mt-5 flex flex-wrap items-center gap-2">{meta}</div>}
       </div>
-      {meta && <div className="mt-4 flex flex-wrap items-center gap-2">{meta}</div>}
     </header>);
 
 }

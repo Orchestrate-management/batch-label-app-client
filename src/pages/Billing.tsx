@@ -149,7 +149,7 @@ export function Billing() {
         description="What you are on, what it allows, and where to change it. Prices are in pounds and exclude VAT; Stripe adds VAT at checkout from your address and your VAT number." />
 
 
-      <div className="space-y-8 px-6 py-8 lg:px-10">
+      <div className="page-enter page-shell space-y-8 px-5 py-8 sm:px-6 lg:px-10">
         {/* THE ONE CAPABILITY WITH NO DATABASE BEHIND IT. `manage_billing` is enforced at the www
             endpoints, which take the actor from a verified token; no table in this database is
             gated on it. So on this screen the client-side gate is the only gate the app itself
@@ -309,7 +309,9 @@ function usePlanCatalogue(): CatalogueState {
 
 function CatalogueSkeleton() {
   return (
-    <div className="grid gap-4 md:grid-cols-3" aria-hidden="true">
+    <div
+      className="grid grid-cols-[repeat(auto-fit,minmax(15rem,1fr))] gap-4"
+      aria-hidden="true">
       <Skeleton className="h-56" />
       <Skeleton className="h-56" />
       <Skeleton className="h-56" />
@@ -526,9 +528,30 @@ function PlanLadder({
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 md:grid-cols-3">{ladder.map(card)}</div>
+      {/*
+        `auto-fit` RATHER THAN A FIXED THREE COLUMNS, because the length of the
+        ladder is data. The plans come from GET /api/plans on the origin that owns
+        the plan contract, and this repo is forbidden from knowing what is in it —
+        so `md:grid-cols-3` was a guess that happens to be right today. Two ladder
+        plans rendered as two thirds of a row with a hole in it; four would have
+        rendered as 3 + 1 and read as a rung that had fallen off.
+
+        `repeat(auto-fit, minmax(15rem, 1fr))` asks the browser to fit as many
+        equal columns as will hold a 240px card and share the remainder between
+        them, so any count from one upward lays out as one even ladder.
+
+        THE CONSULTANT CARD BELOW IS NOT PART OF THAT AND IS NOT MEANT TO BE. See
+        SET_APART above: a consultant is a different buyer from a maker moving up a
+        rung, so it is deliberately not a fourth step. What has changed is only
+        that the separation now looks deliberate — the card is capped at half the
+        width and labelled by its own rule, instead of being a full-bleed card
+        under the ladder, which read as the ladder having overflowed.
+      */}
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(15rem,1fr))] gap-4">
+        {ladder.map(card)}
+      </div>
       {apart.length > 0 &&
-      <div className="grid gap-4">{apart.map(card)}</div>
+      <div className="grid gap-4 pt-2 sm:max-w-md">{apart.map(card)}</div>
       }
 
       {!purchasable &&
@@ -580,20 +603,49 @@ function PlanCard({
   const monthsFree = interval === 'annual' ? monthsFreeOnAnnual(plan) : null;
 
   return (
-    <Card className={`flex flex-col px-5 py-5 ${current ? 'border-teal' : ''}`}>
-      <div className="flex items-baseline justify-between gap-2">
-        <h3 className="font-display text-base font-medium text-ink">{plan.displayName}</h3>
+    /*
+      THE PLAN YOU ARE ON HAS TO BE OBVIOUS BEFORE ANY OF THE PRICES ARE.
+
+      It was marked by swapping the card's 1px border from `paper-line` to teal —
+      a hairline change on one edge, on a card that was otherwise identical to the
+      two beside it. A maker scanning three cards to work out what they are
+      already paying for had to read the small chip in the corner to find out.
+
+      Now: a 2px teal ring, a teal-tinted head band behind the plan name, and the
+      chip. Three signals, none of which is colour alone (the ring is a thickness
+      change and the band is a fill change). The card also lifts to `shadow-raised`
+      so the current plan sits slightly proud of the ladder.
+
+      The price is the other change. It was 2xl in the display face next to 13px
+      grey — good — but the SKU and seat rows under it were a flat 13px list with
+      the label and the figure at the same weight, so the allowance a maker is
+      actually comparing across three cards was the quietest thing on each. The
+      figures are now ink and semibold against tertiary labels, and the rows are
+      ruled so they line up across the three cards side by side.
+    */
+    <Card
+      className={`flex flex-col overflow-hidden p-0 ${
+      current ? 'ring-2 ring-teal shadow-raised' : ''}`
+      }>
+
+      <div
+        className={`flex items-baseline justify-between gap-2 border-b px-5 py-3.5 ${
+        current ? 'border-teal-selected bg-teal-tint' : 'border-paper-line bg-paper-sunken/60'}`
+        }>
+
+        <h3 className="font-display text-base font-semibold text-ink">{plan.displayName}</h3>
         {current && <Pill tone="good">Your plan</Pill>}
       </div>
 
-      <p className="mt-3">
+      <div className="flex flex-1 flex-col px-5 py-5">
+      <p>
         {amount === null ?
         <span className="text-sm text-ink-secondary">
             {plan.purchasable ? `Not sold ${intervalNoun(interval)}` : 'Free'}
           </span> :
 
         <>
-            <span className="tabular font-display text-2xl font-semibold text-ink">
+            <span className="tabular font-display text-[2rem] font-semibold leading-none tracking-tight text-ink">
               {formatPence(amount, currency)}
             </span>
             <span className="ml-1.5 text-[0.8125rem] text-ink-secondary">
@@ -604,25 +656,25 @@ function PlanCard({
       </p>
 
       {monthsFree !== null &&
-      <p className="mt-1 text-2xs text-ink-tertiary">
+      <p className="mt-2 text-2xs text-ink-tertiary">
           {monthsFree === 1 ? 'One month' : `${monthsFree} months`} free against the monthly price.
         </p>
       }
 
-      <dl className="mt-4 space-y-1.5 text-[0.8125rem]">
-        <div className="flex items-baseline justify-between gap-2">
-          <dt className="text-ink-secondary">SKUs</dt>
-          <dd className="tabular text-ink">{planAllowanceLabel(plan)}</dd>
+      <dl className="mt-5 divide-y divide-paper-line border-y border-paper-line text-[0.8125rem]">
+        <div className="flex items-baseline justify-between gap-2 py-2.5">
+          <dt className="text-ink-tertiary">SKUs</dt>
+          <dd className="tabular font-semibold text-ink">{planAllowanceLabel(plan)}</dd>
         </div>
-        <div className="flex items-baseline justify-between gap-2">
-          <dt className="text-ink-secondary">Editor seats</dt>
-          <dd className="tabular text-ink">
+        <div className="flex items-baseline justify-between gap-2 py-2.5">
+          <dt className="text-ink-tertiary">Editor seats</dt>
+          <dd className="tabular font-semibold text-ink">
             {plan.editorSeatLimit === null ? 'Unavailable' : plan.editorSeatLimit}
           </dd>
         </div>
       </dl>
 
-      <div className="mt-5 pt-1">
+      <div className="mt-auto pt-5">
         {buyable && purchasable ?
         <Button
           variant={current ? 'secondary' : 'primary'}
@@ -637,6 +689,7 @@ function PlanCard({
             Free is the absence of a subscription. There is nothing to buy and nothing to cancel.
           </p> :
         null}
+      </div>
       </div>
     </Card>);
 
@@ -657,8 +710,15 @@ function IntervalToggle({
     type="button"
     aria-pressed={value === next}
     onClick={() => onChange(next)}
-    className={`rounded-control px-3 py-1.5 text-[0.8125rem] transition-colors ${
-    value === next ? 'bg-paper text-ink shadow-sm' : 'text-ink-secondary hover:text-ink'}`
+    /* The chosen half was `bg-paper` on a `bg-paper-panel` track — a four percent
+       lightness step, which is not a state anybody can see. It is the raised card
+       surface with a shadow and a weight change now, matching the market switch on
+       the specification screen so the app has one segmented control rather than
+       two that behave alike and look different. */
+    className={`min-h-[36px] rounded-[0.625rem] px-3.5 py-1.5 text-[0.8125rem] transition-colors ${
+    value === next ?
+    'bg-paper-raised font-semibold text-ink shadow-card' :
+    'text-ink-secondary hover:bg-paper-panel hover:text-ink'}`
     }>
 
       {label}
@@ -667,7 +727,7 @@ function IntervalToggle({
 
   return (
     <div
-      className="inline-flex items-center gap-1 rounded-control border border-paper-line bg-paper-panel p-1"
+      className="inline-flex items-center gap-1 rounded-control border border-paper-line bg-paper-sunken p-1"
       role="group"
       aria-label="Billing interval">
 

@@ -2,7 +2,22 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { PackageIcon, PlusIcon, RefreshCwIcon } from 'lucide-react';
 import { PageHeader } from '../components/AppShell';
-import { Button, Callout, Card, EmptyState, Pill, SectionTitle, Skeleton } from '../components/ui/Primitives';
+import {
+  Button,
+  Callout,
+  Card,
+  EmptyState,
+  Pill,
+  SectionTitle,
+  Skeleton,
+  TD,
+  TH,
+  THead,
+  TR,
+  Table,
+  TableFrame,
+  rowLinkClass } from
+'../components/ui/Primitives';
 import { NewProductDialog } from '../components/NewProductDialog';
 import { ReadOnlyNotice } from '../components/ReadOnlyNotice';
 import { NoAccountNotice } from '../components/NoAccountNotice';
@@ -82,7 +97,7 @@ export function Products() {
 
       {creating && <NewProductDialog onClose={() => setCreating(false)} />}
 
-      <div className="space-y-10 px-6 py-8 lg:px-10">
+      <div className="page-enter page-shell space-y-10 px-5 py-8 sm:px-6 lg:px-10">
         <ReadOnlyNotice capability="write_data" />
         <SkuLimitNotice />
 
@@ -144,28 +159,38 @@ export function Products() {
           const inCategory = products.filter((product) => product.categoryId === category.id);
           return (
             <section key={category.id} aria-label={category.name}>
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                 <SectionTitle>{category.name}</SectionTitle>
                 <p className="text-2xs text-ink-tertiary">{category.blurb}</p>
               </div>
 
-              <Card className="overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[760px] text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-paper-line bg-paper-panel/60 text-2xs uppercase tracking-[0.1em] text-ink-tertiary">
-                        <th scope="col" className="px-5 py-3 font-medium">Product</th>
-                        <th scope="col" className="px-5 py-3 font-medium">Composition</th>
+              <TableFrame label={`${category.name} products`}>
+                <Table minWidth={780}>
+                    <THead>
+                      <tr>
+                        <TH>Product</TH>
+                        <TH>Composition</TH>
                         {/* NOT "Outputs", which read as outputs the product HOLDS. Batchlabel
                             generates no file, so this is still the count of surfaces this
                             product needs — never a count of files anybody has. What CAN be
                             counted now is how many of them the maker has recorded printing,
-                            which is the clause after the comma. */}
-                        <th scope="col" className="px-5 py-3 font-medium">Outputs to produce</th>
-                        <th scope="col" className="px-5 py-3 font-medium">Last print recorded</th>
-                        <th scope="col" className="px-5 py-3 font-medium">Status</th>
+                            which is the clause after the comma.
+
+                            LEFT ALIGNED, and that is a decision rather than an oversight. Every
+                            other numeric column in this app is right aligned onto a common edge
+                            so a maker can compare down it. This cell is not purely numeric: when
+                            recorded prints have gone stale it reads "3, 3 no longer matching",
+                            one sentence whose first character happens to be a digit. Right
+                            aligning it either presses a clause of prose against the right rule
+                            or breaks that clause onto its own line, where the leading comma is
+                            orphaned and reads as a rendering fault. The count itself is a single
+                            character: there is nothing to gain by aligning it and a sentence to
+                            break by doing so. */}
+                        <TH>Outputs to produce</TH>
+                        <TH>Last print recorded</TH>
+                        <TH>Status</TH>
                       </tr>
-                    </thead>
+                    </THead>
                     <tbody>
                       {inCategory.map((product) => {
                         /**
@@ -204,11 +229,11 @@ export function Products() {
                         sort();
                         return (
                           <React.Fragment key={product.id}>
-                            <tr
-                              className="cursor-pointer border-b border-paper-line last:border-0 hover:bg-teal-tint"
+                            <TR
+                              className={rowLinkClass}
                               onClick={() => navigate(`/products/${product.id}`)}>
 
-                              <td className="px-5 py-3.5">
+                              <TD>
                                 <Link
                                   to={`/products/${product.id}`}
                                   className="font-medium text-ink hover:text-teal">
@@ -218,59 +243,58 @@ export function Products() {
                                 <p className="tabular mt-0.5 text-2xs text-ink-tertiary">
                                   {product.sku || 'No product code'}
                                 </p>
-                              </td>
-                              <td className="px-5 py-3.5 text-ink-secondary">
+                              </TD>
+                              <TD>
                                 {specSummary(product.spec)}
                                 <span className="tabular block text-2xs text-ink-tertiary">
                                   {product.spec.netQuantity}
                                   {product.spec.netUnit}
                                 </span>
-                              </td>
-                              <td className="tabular px-5 py-3.5 text-ink-secondary">
+                              </TD>
+                              <TD className="tabular">
                                 {product.artefacts.length}
                                 {stale > 0 &&
                                 <span className="text-clay-dark">
                                     , {stale} no longer matching
                                   </span>
                                 }
-                              </td>
+                              </TD>
                               {/* The most recent print this account RECORDED, or a dash.
                                   It used to read `product.artefacts[0]?.printedOn`, which was
                                   the em dash placeholder on every row of every real account
                                   under a heading saying "Last produced" — a column that could
                                   only ever be empty. It now has a source, and an empty one
                                   still means nothing was recorded rather than nothing exists. */}
-                              <td className="tabular px-5 py-3.5 text-ink-secondary">
+                              <TD className="tabular whitespace-nowrap">
                                 {printed.length ?
                                 formatDate(printed[printed.length - 1]) :
                                 <span className="text-ink-tertiary">No print recorded</span>}
-                              </td>
+                              </TD>
                               {/* THREE STATES, BECAUSE THERE ARE THREE. Work we found, work we
                                   found none of, and a check that could not run — the last of
                                   which used to be painted with the second. "Complete" is also
                                   gone as a word: what an empty queue establishes is that
                                   nothing Batchlabel checks is outstanding, which is not the
                                   same claim as a finished product. */}
-                              <td className="px-5 py-3.5">
+                              <TD>
                                 {outstanding ?
                                 <Pill tone="warn">{outstanding} outstanding</Pill> :
                                 queue.blocked.length ?
                                 <Pill tone="quiet">Not fully checked</Pill> :
                                 <Pill tone="good">Nothing outstanding</Pill>}
                                 {queue.blocked.length > 0 &&
-                                <p className="mt-1 max-w-[22ch] text-2xs leading-relaxed text-ink-tertiary">
+                                <p className="mt-1.5 max-w-[22ch] text-2xs leading-relaxed text-ink-tertiary">
                                     {queue.blocked.join(', and ')}.
                                   </p>
                                 }
-                              </td>
-                            </tr>
+                              </TD>
+                            </TR>
                           </React.Fragment>);
 
                       })}
                     </tbody>
-                  </table>
-                </div>
-              </Card>
+                </Table>
+              </TableFrame>
             </section>);
 
         })}

@@ -68,22 +68,39 @@ export function DerivationPanel({
 }: {derivation: Derivation;help: string;}) {
   return (
     <div className="space-y-5">
-      <Card className="px-5 py-5">
-        <div className="flex items-start justify-between gap-4">
-          <dl className="grid flex-1 gap-4 sm:grid-cols-3">
+      {/*
+        THE CLASSIFICATION HEADLINE. This is the answer the whole screen exists to
+        produce, and it was three label-and-value pairs in a plain grid on a plain
+        card, at much the same visual weight as the help text underneath it.
+
+        The figures now sit in a ruled band on the sunken surface: values in the
+        display face at 20px, small tertiary labels above them, and vertical rules
+        between the columns so the three read as one instrument panel rather than
+        as three loose facts. The band runs edge to edge inside the card, which is
+        what makes it read as a readout rather than as more content.
+
+        THE PICTOGRAMS ARE DELIBERATELY UNTOUCHED. `sizeMm={12}` is a real
+        millimetre measurement — CLP Annex I sets a minimum pictogram size and this
+        app renders true to it — so the value, the element and the
+        `.artefact-surface` rules in index.css that protect it are all exactly as
+        they were. Only the box around them moved.
+      */}
+      <Card className="overflow-hidden p-0">
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-paper-line bg-paper-sunken/60 px-5 py-4">
+          <dl className="flex flex-1 flex-wrap divide-x divide-paper-line">
             {derivation.summary.map((entry) =>
-            <div key={entry.label}>
-                <dt className="text-2xs uppercase tracking-[0.1em] text-ink-tertiary">
+            <div key={entry.label} className="min-w-[9rem] flex-1 px-4 first:pl-0 last:pr-0">
+                <dt className="text-2xs font-medium uppercase tracking-[0.12em] text-ink-tertiary">
                   {entry.label}
                 </dt>
-                <dd className="tabular mt-1 font-display text-lg font-medium text-ink">
+                <dd className="tabular mt-1.5 font-display text-xl font-semibold leading-tight text-ink">
                   {entry.value}
                 </dd>
               </div>
             )}
           </dl>
           {derivation.clp && derivation.clp.pictograms.length > 0 &&
-          <div className="flex flex-none gap-2">
+          <div className="flex flex-none items-center gap-2">
               {derivation.clp.pictograms.map((code) =>
             <span key={code} title={PICTOGRAM_NAMES[code]}>
                   <Pictogram code={code} sizeMm={12} />
@@ -92,11 +109,11 @@ export function DerivationPanel({
             </div>
           }
         </div>
-        <p className="mt-4 max-w-prose text-2xs leading-relaxed text-ink-tertiary">{help}</p>
+        <p className="max-w-prose px-5 py-4 text-2xs leading-relaxed text-ink-tertiary">{help}</p>
       </Card>
 
       {derivation.proximity.length > 0 &&
-      <div className="rounded-control border border-clay/30 bg-clay-tint px-4 py-3">
+      <div className="rounded-control border border-l-[3px] border-clay/40 border-l-clay bg-clay-tint px-4 py-3.5">
           <p className="flex items-center gap-2 text-[0.8125rem] font-medium text-clay-dark">
             <TriangleAlertIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
             Close to a threshold
@@ -115,18 +132,23 @@ export function DerivationPanel({
       }
 
       {derivation.groups.map((group) =>
-      <Card key={group.id} className="px-5 py-2">
-          <div className="flex items-center justify-between gap-3 py-3">
+      /* The group heading now sits on its own banded strip rather than floating
+         above the first row with only padding separating them — on a group whose
+         first item was long, the title and that item ran together. */
+      <Card key={group.id} className="overflow-hidden p-0">
+          <div className="flex items-center justify-between gap-3 border-b border-paper-line bg-paper-sunken/60 px-5 py-3">
             <SectionTitle>{group.title}</SectionTitle>
             <Pill tone="quiet">{regimeById(group.regimeId).short}</Pill>
           </div>
+          <div className="px-5">
           {group.items.length === 0 ?
-        <p className="pb-4 text-sm text-ink-secondary">
+        <p className="py-4 text-sm text-ink-secondary">
               {group.emptyText ?? 'Nothing required here.'}
             </p> :
 
         group.items.map((item, index) => <Expandable key={`${item.text}-${index}`} item={item} />)
         }
+          </div>
         </Card>
       )}
 

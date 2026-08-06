@@ -140,7 +140,7 @@ export function Records() {
 
       }
 
-      <div className="space-y-8 px-6 py-8 lg:px-10">
+      <div className="page-enter page-shell space-y-8 px-5 py-8 sm:px-6 lg:px-10">
         {log.status === 'unavailable' && <PlanNotice states={['suspended']} />}
         {log.status === 'no-account' && <NoAccountNotice />}
 
@@ -239,9 +239,39 @@ export function Records() {
               {log.events.length === 0 ?
             <EmptyLog filtered={Boolean(group !== 'all' || productId || recordCode)} /> :
 
-            <ol className="space-y-3">
+            /*
+              A TIMELINE, BECAUSE THE THING THIS SCREEN IS FOR IS THE ORDER.
+
+              It was a flat stack of identical cards. Every entry carried its own
+              date, so the chronology was there to be read — but only by reading
+              each card's top right corner in turn, which is the opposite of how
+              anybody uses this screen. A maker opens Records to answer "what
+              happened, and in what order" — most urgently during a recall, working
+              backwards from a batch to the lots that went into it.
+
+              The rail makes the order structural instead of textual: one hairline
+              down the left, a marker per entry, and the entries hanging off it
+              newest first. The marker is filled for a production event and hollow
+              for everything else, which is the same filled/hollow grammar the
+              status chips use, so the rail can be skimmed for "when did I actually
+              make something" without reading a word.
+
+              The rail is `aria-hidden` and drawn with a pseudo-element on the list,
+              so nothing is added to what a screen reader walks: this is still an
+              ordered list of entries, which is exactly what it was and what it
+              should announce as.
+            */
+            <ol className="relative space-y-3 before:absolute before:bottom-2 before:left-[7px] before:top-2 before:w-px before:bg-paper-rule before:content-['']">
                   {log.events.map((event) =>
-              <li key={event.id}>
+              <li key={event.id} className="relative pl-8">
+                      <span
+                  aria-hidden="true"
+                  className={`absolute left-0 top-[18px] h-[15px] w-[15px] rounded-full border-2 border-paper ${
+                  EVENT_GROUP[event.kind] === 'production' ?
+                  'bg-teal' :
+                  'bg-paper-rule'}`
+                  } />
+
                       <LogEntry event={event} product={productsById.get(event.productId ?? '')} />
                     </li>
               )}
@@ -271,7 +301,7 @@ function LogEntry({ event, product }: {event: RecordEvent;product?: Product;}) {
 
   return (
     <Card className="overflow-hidden">
-      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-paper-line bg-paper-panel/60 px-5 py-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1.5 border-b border-paper-line bg-paper-sunken px-5 py-3">
         <span className="flex flex-wrap items-center gap-2">
           <Pill tone={group === 'production' ? 'good' : 'quiet'}>{EVENT_LABELS[event.kind]}</Pill>
           {product ?
@@ -299,49 +329,82 @@ function LogEntry({ event, product }: {event: RecordEvent;product?: Product;}) {
       </div>
 
       <div className="px-5 py-4">
-        <p className="text-sm font-medium text-ink">{event.summary}</p>
+        <p className="text-sm font-medium leading-relaxed text-ink">{event.summary}</p>
 
-        <dl className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-2xs text-ink-secondary">
+        {/*
+          THE FACTS OF THE ENTRY, STACKED RATHER THAN RUN TOGETHER.
+
+          These four were a single line of 11px text with the labels and the values
+          in the same size and nearly the same weight, separated only by word
+          spacing — "Batch H-2408 Units 120 Reference PO-4471". On the entry a
+          recall actually turns on, the batch code was the hardest thing on the card
+          to find.
+
+          Each pair is now a block: the label small, upper case and tertiary above
+          the value in ink at a readable size. It costs one line of height and makes
+          the batch code the thing the eye lands on, which is what it is for.
+        */}
+        <dl className="mt-3.5 flex flex-wrap gap-x-8 gap-y-3">
           {event.batchCode &&
-          <span>
-              <dt className="inline text-ink-tertiary">Batch </dt>
-              <dd className="inline tabular font-medium text-ink">{event.batchCode}</dd>
-            </span>
+          <div>
+              <dt className="text-2xs font-medium uppercase tracking-[0.1em] text-ink-tertiary">
+                Batch
+              </dt>
+              <dd className="tabular mt-0.5 text-sm font-semibold text-ink">{event.batchCode}</dd>
+            </div>
           }
           {typeof event.units === 'number' &&
-          <span>
-              <dt className="inline text-ink-tertiary">Units </dt>
-              <dd className="inline tabular">{event.units}</dd>
-            </span>
+          <div>
+              <dt className="text-2xs font-medium uppercase tracking-[0.1em] text-ink-tertiary">
+                Units
+              </dt>
+              <dd className="tabular mt-0.5 text-sm text-ink-secondary">{event.units}</dd>
+            </div>
           }
           {event.reference &&
-          <span>
-              <dt className="inline text-ink-tertiary">Reference </dt>
-              <dd className="inline tabular">{event.reference}</dd>
-            </span>
+          <div>
+              <dt className="text-2xs font-medium uppercase tracking-[0.1em] text-ink-tertiary">
+                Reference
+              </dt>
+              <dd className="tabular mt-0.5 text-sm text-ink-secondary">{event.reference}</dd>
+            </div>
           }
           {event.obligationId &&
-          <span>
-              <dt className="inline text-ink-tertiary">Obligation </dt>
-              <dd className="inline">{event.obligationId}</dd>
-            </span>
+          <div>
+              <dt className="text-2xs font-medium uppercase tracking-[0.1em] text-ink-tertiary">
+                Obligation
+              </dt>
+              <dd className="mt-0.5 text-sm text-ink-secondary">{event.obligationId}</dd>
+            </div>
           }
         </dl>
 
+        {/*
+          THE TRACEABILITY BLOCKS SIT IN A WELL, and that is the point of them.
+
+          Input lots and the label version are the two things a recall is answered
+          with, and they were loose lists indented under a tiny caption — visually
+          identical to the note underneath, which is free text somebody typed. A
+          sunken panel with a ruled caption separates "this is what the record
+          says" from "this is what somebody wrote about it", which is a distinction
+          that matters when the record is the evidence.
+
+          Rows are ruled rather than spaced, so a lot list of fifteen reads as a
+          table of fifteen rather than a paragraph of fifteen lines.
+        */}
         {event.lots.length > 0 &&
-        <div className="mt-3">
-            <p className="text-2xs font-medium uppercase tracking-[0.1em] text-ink-tertiary">
+        <div className="mt-4 overflow-hidden rounded-control border border-paper-line bg-paper-sunken/70">
+            <p className="border-b border-paper-line px-3.5 py-2 text-2xs font-medium uppercase tracking-[0.1em] text-ink-secondary">
               Input lots
             </p>
-            <ul className="mt-1 space-y-0.5 text-[0.8125rem] text-ink-secondary">
+            <ul className="divide-y divide-paper-line/70 text-[0.8125rem] text-ink-secondary">
               {event.lots.map((lot) =>
-            <li key={lot.id}>
-                  <span className="tabular font-medium text-ink">{lot.lot}</span>
-                  {lot.materialRef && <span> · {lot.materialRef}</span>}
+            <li key={lot.id} className="flex flex-wrap items-baseline gap-x-2 px-3.5 py-2">
+                  <span className="tabular font-semibold text-ink">{lot.lot}</span>
+                  {lot.materialRef && <span>· {lot.materialRef}</span>}
                   {typeof lot.quantity === 'number' &&
-              <span className="tabular">
-                      {' '}
-                      · {lot.quantity}
+              <span className="tabular ml-auto text-ink-tertiary">
+                      {lot.quantity}
                       {lot.unit ? ` ${lot.unit}` : ''}
                     </span>
               }
@@ -352,17 +415,17 @@ function LogEntry({ event, product }: {event: RecordEvent;product?: Product;}) {
         }
 
         {event.artefacts.length > 0 &&
-        <div className="mt-3">
-            <p className="text-2xs font-medium uppercase tracking-[0.1em] text-ink-tertiary">
+        <div className="mt-3 overflow-hidden rounded-control border border-paper-line bg-paper-sunken/70">
+            <p className="border-b border-paper-line px-3.5 py-2 text-2xs font-medium uppercase tracking-[0.1em] text-ink-secondary">
               Label version applied
             </p>
-            <ul className="mt-1 space-y-0.5 text-[0.8125rem] text-ink-secondary">
+            <ul className="divide-y divide-paper-line/70 text-[0.8125rem] text-ink-secondary">
               {event.artefacts.map((artefact) =>
-            <li key={artefact.id}>
-                  {ARTEFACT_LABELS[artefact.artefactType]}{' '}
-                  <span className="tabular">v{artefact.version}</span>
+            <li key={artefact.id} className="flex flex-wrap items-baseline gap-x-2 px-3.5 py-2">
+                  <span className="text-ink">{ARTEFACT_LABELS[artefact.artefactType]}</span>
+                  <span className="tabular font-semibold text-ink">v{artefact.version}</span>
                   {artefact.isPlaceholder &&
-              <span className="text-ink-tertiary"> · your own artwork, recorded here</span>
+              <span className="text-ink-tertiary">· your own artwork, recorded here</span>
               }
                 </li>
             )}
